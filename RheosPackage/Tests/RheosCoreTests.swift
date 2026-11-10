@@ -830,6 +830,47 @@ final class RheosCoreTests: XCTestCase {
         }
     }
 
+    func testWatchFaceShowsAgeAndRespectsReloadBudget() {
+        let now = date(day: 3, hour: 8)
+        let reading = WatchFaceReading(
+            glucose: "96",
+            trend: "FortyFiveDown",
+            readingDate: now.addingTimeInterval(-3 * 60),
+            rheosMode: "schatten"
+        )
+        XCTAssertEqual(reading.trendArrow, "↘")
+        XCTAssertEqual(reading.modeLabel, "Schatten")
+        XCTAssertEqual(reading.ageLabel(at: now), "3m")
+        XCTAssertFalse(reading.isStale(at: now))
+        XCTAssertTrue(reading.isStale(at: now.addingTimeInterval(15 * 60)))
+        XCTAssertEqual(WatchFaceTrend.arrow(for: "DoubleUp"), "↑↑")
+
+        XCTAssertTrue(WatchFaceBudget.shouldReload(lastReload: nil, contentChanged: true, now: now))
+        XCTAssertFalse(WatchFaceBudget.shouldReload(
+            lastReload: now.addingTimeInterval(-60),
+            contentChanged: true,
+            now: now
+        ))
+        XCTAssertTrue(WatchFaceBudget.shouldReload(
+            lastReload: now.addingTimeInterval(-5 * 60),
+            contentChanged: true,
+            now: now
+        ))
+        XCTAssertFalse(WatchFaceBudget.shouldReload(
+            lastReload: now.addingTimeInterval(-5 * 60),
+            contentChanged: false,
+            now: now
+        ))
+        XCTAssertEqual(WatchFaceBudget.entryDates(from: now).count, 15)
+
+        let suite = "trio.watchface.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite) ?? .standard
+        WatchFaceStore.save(reading, defaults: defaults)
+        XCTAssertEqual(WatchFaceStore.load(defaults: defaults), reading)
+        WatchFaceStore.markReloaded(now, defaults: defaults)
+        XCTAssertEqual(WatchFaceStore.lastReload(defaults: defaults), now)
+    }
+
     private func stableGlucose(days: ClosedRange<Int>, invertFrom: Int? = nil) -> [RheosGlucosePoint] {
         var points: [RheosGlucosePoint] = []
         for day in days {

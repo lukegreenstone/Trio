@@ -57,6 +57,14 @@ The phone sheet and the watch page can silence alarms for 1, 2, 4 or 6 hours, or
 
 Watch buttons for Showtime, Sport, Snack ("small carbs, observe"), Standardfrühstück and Alkohol send a confirm message. Suggestion rows send confirm or reject. A short text field uses the watch keyboard, including its dictation button, and the phone answers with the same chat engine as the phone screen. None of those messages include a bolus amount. If a payload also contains a bolus or carb key, Rheos ignores it and the existing treatment handler keeps it. A bolus is still only the existing watch bolus flow and its confirmation.
 
+## Watch face
+
+Trio already shipped a WidgetKit complication (`Trio Watch Complication`, kind `TrioWatchComplication`). It drew the app icon and used a timeline policy of `.never`, so the watch face did not show glucose. That same extension now offers circular, corner, rectangular, and inline families. The rectangular family is the one watchOS puts in the Smart Stack.
+
+The face shows glucose, the trend arrow, how old the reading is, and the Rheos mode (Aus, Schatten, Scharf). The watch app writes that snapshot into the existing Trio app group (`$(APP_GROUP_ID)`). The Browser Build instructions already attach that group to the watch app and the complication identifiers. No new group identifier is added. The complication only reads the snapshot.
+
+WidgetKit has a small daily reload budget and can defer reloads. The watch app calls `reloadTimelines` at most every 5 minutes, and only when glucose, trend, or Rheos mode changed. Each timeline contains one entry per minute for 15 minutes, so the age label moves without another reload. A reading 15 minutes or older is shown as stale. With the phone nearby, the face is typically within about 5 minutes of the latest value stored on the watch. It is not a live every-minute trace, and it does not replace Trio's glucose alarms.
+
 ## Storage
 
 Rheos files live under Application Support `/Rheos` in this app's container. The bundle ID does not change, so an update or a later build of this fork keeps the same directory. The canonical file is `rheos-state.json`. It has a schema version. Older files are copied to `rheos-state.vN.bak` and then rewritten forward. A file from a newer build is not rewritten back down, and a file that cannot be parsed is left in place. Nothing in that directory is marked excluded from the device backup. On iPhone the file is written with complete-until-first-unlock protection.

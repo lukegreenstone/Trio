@@ -250,6 +250,7 @@ import WatchConnectivity
         else { return false }
         DispatchQueue.main.async {
             self.applyRheosFields(message)
+            self.publishWatchFace()
             self.showSyncingAnimation = false
         }
         return true
@@ -613,6 +614,19 @@ import WatchConnectivity
         }
 
         applyRheosFields(message)
+        publishWatchFace()
+    }
+
+    private func publishWatchFace() {
+        let readingDate = glucoseValues.max(by: { $0.date < $1.date })?.date
+            ?? lastWatchStateUpdate.map { Date(timeIntervalSince1970: $0) }
+            ?? Date()
+        WatchFacePublisher.publish(
+            glucose: currentGlucose,
+            trend: trend ?? "",
+            readingDate: readingDate,
+            rheosMode: rheosMode
+        )
     }
 
     func applyRheosFields(_ message: [String: Any]) {

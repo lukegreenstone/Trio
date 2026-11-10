@@ -589,6 +589,7 @@
 		BD7DA9AC2AE06EB900601B20 /* BolusCalculatorConfigRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD7DA9AB2AE06EB900601B20 /* BolusCalculatorConfigRootView.swift */; };
 		BD7DB88E2D2C4A17003D3155 /* BolusCalculationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD7DB88D2D2C4A0A003D3155 /* BolusCalculationManager.swift */; };
 		BD8207C42D2B42E60023339D /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6B1A8D182B14D91600E76752 /* WidgetKit.framework */; };
+		C0E05A7C0000000000000F24 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6B1A8D182B14D91600E76752 /* WidgetKit.framework */; };
 		BD8207C52D2B42E60023339D /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6B1A8D1A2B14D91600E76752 /* SwiftUI.framework */; };
 		BD8207CE2D2B42E70023339D /* Trio Watch Complication Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = BD8207C32D2B42E50023339D /* Trio Watch Complication Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		BD8E6B212D9036CA00ABF8FA /* OnboardingProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD8E6B202D9036CA00ABF8FA /* OnboardingProvider.swift */; };
@@ -1016,6 +1017,9 @@
 		A11C0DE2E10A0000000000C4 /* RheosCare.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000C3 /* RheosCare.swift */; };
 		A11C0DE2E10A0000000000A6 /* AlarmSilencePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000A5 /* AlarmSilencePolicy.swift */; };
 		A11C0DE2E10A0000000000A8 /* RheosWatchMessages.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000A7 /* RheosWatchMessages.swift */; };
+		A11C0DE2E10A0000000000B7 /* WatchFaceReading.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000B5 /* WatchFaceReading.swift */; };
+		A11C0DE2E10A0000000000B8 /* WatchFaceReading.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000B5 /* WatchFaceReading.swift */; };
+		A11C0DE2E10A0000000000B9 /* WatchFacePublisher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000BA /* WatchFacePublisher.swift */; };
 		B1E05A7C0000000000000E12 /* RheosWatchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1E05A7C0000000000000E11 /* RheosWatchView.swift */; };
 		A11C0DE2E10A0000000000C6 /* RheosCareNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000C5 /* RheosCareNotifier.swift */; };
 /* End PBXBuildFile section */
@@ -2126,6 +2130,11 @@
 		A11C0DE2E10A0000000000C3 /* RheosCare.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosCare.swift; sourceTree = "<group>"; };
 		A11C0DE2E10A0000000000A5 /* AlarmSilencePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlarmSilencePolicy.swift; sourceTree = "<group>"; };
 		A11C0DE2E10A0000000000A7 /* RheosWatchMessages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosWatchMessages.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000B5 /* WatchFaceReading.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchFaceReading.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000BA /* WatchFacePublisher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchFacePublisher.swift; sourceTree = "<group>"; };
+		C0E05A7C0000000000000F21 /* Watch.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Watch.entitlements; sourceTree = "<group>"; };
+		C0E05A7C0000000000000F22 /* Complication.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Complication.entitlements; sourceTree = "<group>"; };
+		C0E05A7C0000000000000F23 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B1E05A7C0000000000000E11 /* RheosWatchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosWatchView.swift; sourceTree = "<group>"; };
 		A11C0DE2E10A0000000000C5 /* RheosCareNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosCareNotifier.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -2214,6 +2223,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C0E05A7C0000000000000F24 /* WidgetKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -4030,6 +4040,9 @@
 			isa = PBXGroup;
 			children = (
 				DDFF204D2DB2C00B00AB8A96 /* WatchStateSnapshot.swift */,
+				A11C0DE2E10A0000000000BA /* WatchFacePublisher.swift */,
+				C0E05A7C0000000000000F21 /* Watch.entitlements */,
+				C0E05A7C0000000000000F23 /* Info.plist */,
 				DDFF20492DB29EF500AB8A96 /* WatchLogger.swift */,
 				BDA25EE52D260D5800035F34 /* WatchState.swift */,
 				BDAE3FFF2D372BA8009C12B1 /* WatchState+Requests.swift */,
@@ -4250,6 +4263,7 @@
 				DD09D6412D2B553A000D82C9 /* Assets.xcassets */,
 				DD09D6422D2B553A000D82C9 /* Info.plist */,
 				DD09D6432D2B553A000D82C9 /* TrioWatchComplication.swift */,
+				C0E05A7C0000000000000F22 /* Complication.entitlements */,
 			);
 			path = "Trio Watch Complication";
 			sourceTree = "<group>";
@@ -4888,6 +4902,7 @@
 				A11C0DE2E10A0000000000C3 /* RheosCare.swift */,
 				A11C0DE2E10A0000000000A5 /* AlarmSilencePolicy.swift */,
 				A11C0DE2E10A0000000000A7 /* RheosWatchMessages.swift */,
+				A11C0DE2E10A0000000000B5 /* WatchFaceReading.swift */,
 			);
 			path = Core;
 			sourceTree = "<group>";
@@ -6207,6 +6222,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				DD09D6462D2B553A000D82C9 /* TrioWatchComplication.swift in Sources */,
+				A11C0DE2E10A0000000000B8 /* WatchFaceReading.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -6217,6 +6233,8 @@
 				BDA25F222D26D62800035F34 /* BolusInputView.swift in Sources */,
 				BDFF7A882D25F97D0016C40C /* TrioMainWatchView.swift in Sources */,
 				B1E05A7C0000000000000E12 /* RheosWatchView.swift in Sources */,
+				A11C0DE2E10A0000000000B7 /* WatchFaceReading.swift in Sources */,
+				A11C0DE2E10A0000000000B9 /* WatchFacePublisher.swift in Sources */,
 				BDA25F202D26D5FE00035F34 /* CarbsInputView.swift in Sources */,
 				BDA25F1C2D26BD0700035F34 /* TrendShape.swift in Sources */,
 				BDFF7A892D25F97D0016C40C /* TrioWatchApp.swift in Sources */,
@@ -6615,10 +6633,12 @@
 		BD8207D02D2B42E80023339D /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APP_GROUP_ID = "$(TRIO_APP_GROUP_ID)";
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_ENTITLEMENTS = "Trio Watch Complication/Complication.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -6652,10 +6672,12 @@
 		BD8207D12D2B42E80023339D /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APP_GROUP_ID = "$(TRIO_APP_GROUP_ID)";
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_ENTITLEMENTS = "Trio Watch Complication/Complication.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -6688,10 +6710,12 @@
 		BDFF79A12D25AA890016C40C /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APP_GROUP_ID = "$(TRIO_APP_GROUP_ID)";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_ENTITLEMENTS = "Trio Watch App Extension/Watch.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -6701,6 +6725,7 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Trio Watch App Extension/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "$(APP_DISPLAY_NAME)";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = "$(BUNDLE_IDENTIFIER)";
@@ -6725,10 +6750,12 @@
 		BDFF79A22D25AA890016C40C /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APP_GROUP_ID = "$(TRIO_APP_GROUP_ID)";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_ENTITLEMENTS = "Trio Watch App Extension/Watch.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -6738,6 +6765,7 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Trio Watch App Extension/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "$(APP_DISPLAY_NAME)";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = "$(BUNDLE_IDENTIFIER)";
