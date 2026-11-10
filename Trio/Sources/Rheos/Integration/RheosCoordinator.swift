@@ -101,6 +101,7 @@ final class RheosCoordinator {
             previous: store.loadApplied(),
             autosensMin: autosensMin(),
             autosensMax: autosensMax(),
+            targets: RheosTargetLoader.schedule(resolver: resolver),
             now: now
         )
         store.saveDecision(decision)

@@ -2,6 +2,10 @@
 
 Rheos is a learning layer in this fork. Trio remains the insulin app. Medtrum and Libre stay on Trio's existing device managers. Rheos never opens a pump or CGM session.
 
+The hourly fit reads Trio's saved BG target schedule (the middle of each low/high slot) and does not write it. There is no fixed 110 mg/dL anchor in that path. The per-day factor step defaults to 0.05 and cannot be saved above 0.10. The same-day context nudge defaults to 0.10 and cannot be saved above 0.20.
+
+The chat prefers Apple's on-device Foundation Models framework on iOS 26 when Apple Intelligence is available. Otherwise it can call an OpenAI-compatible endpoint with a key the user types into Rheos settings. That key is stored in the Keychain and is not in the repository. If neither is available, the reply is the local report summary. Parsed `[[suggestion]]` blocks become notes only after a tap. The chat cannot dose or change limits.
+
 ## What can change insulin
 
 Only while the in-app mode is **Scharf**, and only after the hourly model has enough data and passes walk-forward.

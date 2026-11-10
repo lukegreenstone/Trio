@@ -1009,6 +1009,10 @@
 		A11C0DE2E10A0000000000A2 /* RheosMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000A1 /* RheosMigration.swift */; };
 		A11C0DE2E10A0000000000B2 /* RheosICloudBackup.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000B1 /* RheosICloudBackup.swift */; };
 		A11C0DE2E10A0000000000C2 /* RheosContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000C1 /* RheosContext.swift */; };
+		A11C0DE2E10A0000000000D2 /* RheosFit.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000D1 /* RheosFit.swift */; };
+		A11C0DE2E10A0000000000E2 /* RheosChatParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000E1 /* RheosChatParser.swift */; };
+		A11C0DE2E10A0000000000F2 /* RheosTargetLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000F1 /* RheosTargetLoader.swift */; };
+		A11C0DE2E10A0000000000F4 /* RheosChatEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000F3 /* RheosChatEngine.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -2110,6 +2114,10 @@
 		A11C0DE2E10A0000000000A1 /* RheosMigration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosMigration.swift; sourceTree = "<group>"; };
 		A11C0DE2E10A0000000000B1 /* RheosICloudBackup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosICloudBackup.swift; sourceTree = "<group>"; };
 		A11C0DE2E10A0000000000C1 /* RheosContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosContext.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000D1 /* RheosFit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosFit.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000E1 /* RheosChatParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosChatParser.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000F1 /* RheosTargetLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosTargetLoader.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000F3 /* RheosChatEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosChatEngine.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -4864,6 +4872,8 @@
 				8D086641C5554270A7A474B3 /* RheosStore.swift */,
 				A11C0DE2E10A0000000000A1 /* RheosMigration.swift */,
 				A11C0DE2E10A0000000000C1 /* RheosContext.swift */,
+				A11C0DE2E10A0000000000E1 /* RheosChatParser.swift */,
+				A11C0DE2E10A0000000000D1 /* RheosFit.swift */,
 			);
 			path = Core;
 			sourceTree = "<group>";
@@ -4873,6 +4883,8 @@
 			children = (
 				108E03FBDA154ED298D61419 /* RheosModeStore.swift */,
 				A11C0DE2E10A0000000000B1 /* RheosICloudBackup.swift */,
+				A11C0DE2E10A0000000000F3 /* RheosChatEngine.swift */,
+				A11C0DE2E10A0000000000F1 /* RheosTargetLoader.swift */,
 				E39D2483EDC54702A42C54E1 /* RheosProfileHook.swift */,
 				458A1B7BD825442297E8E484 /* RheosSnapshotReader.swift */,
 				5D8EC68B72E24BAEBBCDA13C /* RheosHealthReader.swift */,
@@ -5298,6 +5310,10 @@
 				3BF53AD00262417FBF11B7CF /* RheosStore.swift in Sources */,
 				A11C0DE2E10A0000000000A2 /* RheosMigration.swift in Sources */,
 				A11C0DE2E10A0000000000C2 /* RheosContext.swift in Sources */,
+				A11C0DE2E10A0000000000F4 /* RheosChatEngine.swift in Sources */,
+				A11C0DE2E10A0000000000F2 /* RheosTargetLoader.swift in Sources */,
+				A11C0DE2E10A0000000000E2 /* RheosChatParser.swift in Sources */,
+				A11C0DE2E10A0000000000D2 /* RheosFit.swift in Sources */,
 				A11C0DE2E10A0000000000B2 /* RheosICloudBackup.swift in Sources */,
 				EE984A517A864F68ACC3ED03 /* RheosModeStore.swift in Sources */,
 				4CC7746554C34B05A963C4C5 /* RheosProfileHook.swift in Sources */,

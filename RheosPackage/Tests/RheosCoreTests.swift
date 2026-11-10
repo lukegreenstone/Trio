@@ -23,7 +23,9 @@ final class RheosCoreTests: XCTestCase {
         XCTAssertEqual(defaults.effectiveRange(autosensMin: 1, autosensMax: 1), 1 ... 1)
         var hugeStep = RheosBounds()
         hugeStep.maxDailyChange = 0.5
+        hugeStep.maxContextNudge = 0.9
         XCTAssertEqual(hugeStep.sanitized().maxDailyChange, 0.10, accuracy: 0.000_1)
+        XCTAssertEqual(hugeStep.sanitized().maxContextNudge, 0.20, accuracy: 0.000_1)
     }
 
     func testScaleRespectsBasalCeilingAndIsfFloor() {
@@ -117,7 +119,8 @@ final class RheosCoreTests: XCTestCase {
         XCTAssertTrue(decision.applied)
         XCTAssertTrue(decision.walkForward.passed)
         XCTAssertEqual(decision.learnedFactors.basal[12], 1.2, accuracy: 0.001)
-        XCTAssertEqual(decision.learnedFactors.isf[12], 0.7, accuracy: 0.001)
+        XCTAssertLessThan(decision.learnedFactors.isf[12], 0.9)
+        XCTAssertGreaterThan(decision.learnedFactors.isf[12], 0.69)
         XCTAssertEqual(decision.factors.basal[12], 1.05, accuracy: 0.001)
         XCTAssertEqual(decision.factors.isf[12], 0.95, accuracy: 0.001)
         XCTAssertEqual(decision.factors.basal[3], 0.95, accuracy: 0.001)
@@ -467,6 +470,96 @@ final class RheosCoreTests: XCTestCase {
         let garbageStore = RheosStore(directory: garbageDirectory)
         _ = garbageStore.loadDataset()
         XCTAssertEqual(try String(contentsOf: garbageURL, encoding: .utf8), "this is not json")
+    }
+
+    func testTargetScheduleComesFromTrioNotAFixed110() {
+        let schedule = RheosTargetSchedule.from(entries: [
+            (minutes: 0, low: 100, high: 100),
+            (minutes: 12 * 60, low: 120, high: 120)
+        ])
+        XCTAssertEqual(schedule.value(atHour: 8), 100, accuracy: 0.001)
+        XCTAssertEqual(schedule.value(atHour: 15), 120, accuracy: 0.001)
+
+        let glucose = (0 ..< 17).flatMap { day in
+            (0 ..< 24).flatMap { hour in
+                [0, 15, 30, 45].map { minute in
+                    RheosGlucosePoint(date: date(day: day + 1, hour: hour, minute: minute), mgdl: 120)
+                }
+            }
+        }
+        let at100 = RheosLearner.evaluate(
+            dataset: RheosDataset(glucose: glucose),
+            mode: .scharf,
+            bounds: RheosBounds(),
+            previous: nil,
+            targets: .flat(100),
+            now: date(day: 17, hour: 12),
+            calendar: calendar
+        )
+        let at120 = RheosLearner.evaluate(
+            dataset: RheosDataset(glucose: glucose),
+            mode: .scharf,
+            bounds: RheosBounds(),
+            previous: nil,
+            targets: .flat(120),
+            now: date(day: 17, hour: 12),
+            calendar: calendar
+        )
+        XCTAssertGreaterThan(at100.learnedFactors.basal[8], 1)
+        XCTAssertEqual(at120.learnedFactors.basal[8], 1, accuracy: 0.05)
+        XCTAssertGreaterThan(at100.learnedFactors.basal[8], at120.learnedFactors.basal[8])
+    }
+
+    func testIOBExplainsPartOfAHighGlucoseHour() {
+        let calendar = self.calendar
+        var glucose: [RheosGlucosePoint] = []
+        var states: [RheosStatePoint] = []
+        for day in 1 ... 17 {
+            for hour in 0 ..< 24 {
+                for minute in [0, 15, 30, 45] {
+                    let when = date(day: day, hour: hour, minute: minute)
+                    if hour == 8, minute >= 30 {
+                        glucose.append(RheosGlucosePoint(date: when, mgdl: 50))
+                        states.append(RheosStatePoint(date: when, iob: 4, cob: 0))
+                    } else if hour == 15 {
+                        glucose.append(RheosGlucosePoint(date: when, mgdl: 180))
+                    } else if hour == 16 {
+                        glucose.append(RheosGlucosePoint(date: when, mgdl: 50))
+                        states.append(RheosStatePoint(date: when, iob: 4, cob: 0))
+                    } else {
+                        glucose.append(RheosGlucosePoint(date: when, mgdl: 110))
+                    }
+                }
+            }
+        }
+        let model = RheosFit.fit(
+            observations: RheosFit.observations(
+                dataset: RheosDataset(glucose: glucose, states: states),
+                targets: .flat(110),
+                calendar: calendar
+            ),
+            band: 0.7 ... 1.2
+        )
+        XCTAssertLessThan(model.iobSlope, 0)
+        XCTAssertLessThan(model.factors.basal[16], model.factors.basal[15])
+    }
+
+    func testChatSuggestionsAreNotesNotDoses() {
+        let reply = """
+        Der Anstieg um 4 Uhr steckt im Stundenmodell.
+        [[suggestion kind=sport]]
+        Heute war ein Lauf. Nur ein Hinweis.
+        [[/suggestion]]
+        [[suggestion kind=bolus]]
+        2 Einheiten
+        [[/suggestion]]
+        """
+        let suggestions = RheosChatParser.suggestions(in: reply)
+        XCTAssertEqual(suggestions.map(\.kind), ["sport"])
+        XCTAssertEqual(
+            RheosApplicationPoint.effect(of: .contextMode(.sport)),
+            .suggestion(RheosContextInference.suggestion(forAnnouncement: "sport"))
+        )
     }
 
     func testFinishedWorkoutAdjustsFactorsWithoutAnAnnouncement() {

@@ -29,7 +29,9 @@ enum RheosDecisionCode: String, Codable, Equatable {
 enum RheosReference {
     /// Center used only to describe hourly glucose deviation, in mg/dL.
     /// This is not written into Trio's glucose targets.
-    static let glucoseAnchorMgdl = 110.0
+    /// Used only when a caller has not supplied Trio's target schedule.
+    /// The app passes the live BG target for every fit.
+    static let missingTargetFallbackMgdl = 110.0
     /// Trio's profile generator rejects an ISF below this (mg/dL per unit).
     static let isfFloorMgdlPerUnit = 5.0
     static let retentionDays = 45
@@ -43,4 +45,7 @@ enum RheosReference {
     static let defaultMinimumMultiplier = 0.7
     static let defaultMaximumMultiplier = 1.2
     static let defaultMaxDailyChange = 0.05
+    static let maxDailyChangeCap = 0.10
+    static let defaultMaxContextNudge = 0.10
+    static let maxContextNudgeCap = 0.20
 }

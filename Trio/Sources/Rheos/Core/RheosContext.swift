@@ -15,15 +15,13 @@ struct RheosInferredContext: Equatable, Identifiable {
 }
 
 enum RheosContextInference {
-    static let maximumNudge = 0.10
-
-    static func infer(dataset: RheosDataset, now: Date, calendar: Calendar) -> [RheosInferredContext] {
+    static func infer(dataset: RheosDataset, targets: RheosTargetSchedule = .flat(RheosReference.missingTargetFallbackMgdl), now: Date, calendar: Calendar) -> [RheosInferredContext] {
         var found: [RheosInferredContext] = []
         found.append(contentsOf: workouts(dataset.workouts, now: now))
         if let steps = steps(dataset.wearableDays, now: now, calendar: calendar) { found.append(steps) }
         if let pulse = restingHeart(dataset.wearableDays, now: now, calendar: calendar) { found.append(pulse) }
         if let sleep = shortSleep(dataset.sleep, now: now, calendar: calendar) { found.append(sleep) }
-        if let rise = unannouncedRise(dataset: dataset, now: now, calendar: calendar) { found.append(rise) }
+        if let rise = unannouncedRise(dataset: dataset, targets: targets, now: now, calendar: calendar) { found.append(rise) }
         if routineIsUnsettled(dataset: dataset, now: now, calendar: calendar) {
             found = found.map { context in
                 var copy = context
@@ -44,7 +42,13 @@ enum RheosContextInference {
         return found
     }
 
-    static func insulinNeedByHour(_ contexts: [RheosInferredContext], now: Date, calendar: Calendar) -> [Double] {
+    static func insulinNeedByHour(
+        _ contexts: [RheosInferredContext],
+        maxNudge: Double = RheosReference.defaultMaxContextNudge,
+        now: Date,
+        calendar: Calendar
+    ) -> [Double] {
+        let cap = min(max(maxNudge, 0.01), RheosReference.maxContextNudgeCap)
         let start = calendar.startOfDay(for: now)
         return (0 ..< 24).map { hour in
             guard let slot = calendar.date(byAdding: .hour, value: hour, to: start) else { return 1 }
@@ -55,7 +59,7 @@ enum RheosContextInference {
                     need *= context.insulinNeed
                 }
             }
-            return min(max(need, 1 - maximumNudge), 1 + maximumNudge)
+            return min(max(need, 1 - cap), 1 + cap)
         }
     }
 
@@ -161,7 +165,7 @@ enum RheosContextInference {
         )
     }
 
-    private static func unannouncedRise(dataset: RheosDataset, now: Date, calendar: Calendar) -> RheosInferredContext? {
+    private static func unannouncedRise(dataset: RheosDataset, targets: RheosTargetSchedule, now: Date, calendar: Calendar) -> RheosInferredContext? {
         let windowStart = now.addingTimeInterval(-2 * 3600)
         let recent = dataset.glucose.filter { $0.date >= windowStart && $0.date <= now && $0.mgdl > 0 }
         guard let latest = recent.max(by: { $0.date < $1.date }) else { return nil }
@@ -169,8 +173,8 @@ enum RheosContextInference {
         guard let earlier = recent.min(by: { abs($0.date.timeIntervalSince(targetTime)) < abs($1.date.timeIntervalSince(targetTime)) }),
               abs(earlier.date.timeIntervalSince(targetTime)) <= 30 * 60 else { return nil }
         let rise = latest.mgdl - earlier.mgdl
-        let usual = hourlyMedian(dataset.glucose, hour: calendar.component(.hour, from: latest.date), calendar: calendar)
-            - hourlyMedian(dataset.glucose, hour: calendar.component(.hour, from: earlier.date), calendar: calendar)
+        let usual = hourlyMedian(dataset.glucose, hour: calendar.component(.hour, from: latest.date), targets: targets, calendar: calendar)
+            - hourlyMedian(dataset.glucose, hour: calendar.component(.hour, from: earlier.date), targets: targets, calendar: calendar)
         let carbs = dataset.meals.contains { $0.carbs > 0 && $0.date >= windowStart && $0.date <= now }
         guard rise > 40, rise > usual + 25, !carbs else { return nil }
         return RheosInferredContext(
@@ -195,11 +199,16 @@ enum RheosContextInference {
         return current > usual * 2 || current < usual * 0.4
     }
 
-    private static func hourlyMedian(_ glucose: [RheosGlucosePoint], hour: Int, calendar: Calendar) -> Double {
+    private static func hourlyMedian(
+        _ glucose: [RheosGlucosePoint],
+        hour: Int,
+        targets: RheosTargetSchedule,
+        calendar: Calendar
+    ) -> Double {
         let values = glucose.compactMap { point -> Double? in
             guard calendar.component(.hour, from: point.date) == hour else { return nil }
             return point.mgdl
         }
-        return RheosStats.median(values) ?? RheosReference.glucoseAnchorMgdl
+        return RheosStats.median(values) ?? targets.value(atHour: hour)
     }
 }

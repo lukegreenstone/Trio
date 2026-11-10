@@ -168,16 +168,18 @@ enum RheosMigrator {
         }
         if dataset["body"] == nil { dataset["body"] = [String: Any]() }
         copy["dataset"] = dataset
-        if copy["bounds"] == nil {
-            copy["bounds"] = [
-                "minimumMultiplier": RheosReference.defaultMinimumMultiplier,
-                "maximumMultiplier": RheosReference.defaultMaximumMultiplier,
-                "maxDailyChange": RheosReference.defaultMaxDailyChange,
-                "minimumDays": 14,
-                "minimumGlucoseSamples": 500,
-                "minimumImprovement": 0.02
-            ]
+        var bounds = copy["bounds"] as? [String: Any] ?? [:]
+        func fill(_ key: String, _ value: Any) {
+            if bounds[key] == nil { bounds[key] = value }
         }
+        fill("minimumMultiplier", RheosReference.defaultMinimumMultiplier)
+        fill("maximumMultiplier", RheosReference.defaultMaximumMultiplier)
+        fill("maxDailyChange", RheosReference.defaultMaxDailyChange)
+        fill("maxContextNudge", RheosReference.defaultMaxContextNudge)
+        fill("minimumDays", 14)
+        fill("minimumGlucoseSamples", 500)
+        fill("minimumImprovement", 0.02)
+        copy["bounds"] = bounds
         if copy["applications"] == nil { copy["applications"] = [Any]() }
         if copy["announcements"] == nil { copy["announcements"] = [Any]() }
         return copy

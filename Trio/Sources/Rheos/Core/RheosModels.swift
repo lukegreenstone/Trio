@@ -8,6 +8,8 @@ struct RheosBounds: Codable, Equatable {
     var minimumMultiplier: Double = RheosReference.defaultMinimumMultiplier
     var maximumMultiplier: Double = RheosReference.defaultMaximumMultiplier
     var maxDailyChange: Double = RheosReference.defaultMaxDailyChange
+    /// Same-day context may move a factor by at most this fraction (0.10 = 10%).
+    var maxContextNudge: Double = RheosReference.defaultMaxContextNudge
     var minimumDays: Int = 14
     var minimumGlucoseSamples: Int = 500
     var minimumImprovement: Double = 0.02
@@ -20,7 +22,9 @@ struct RheosBounds: Codable, Equatable {
             swap(&copy.minimumMultiplier, &copy.maximumMultiplier)
         }
         let daily = copy.maxDailyChange.isFinite ? copy.maxDailyChange : RheosReference.defaultMaxDailyChange
-        copy.maxDailyChange = min(max(daily, 0.01), 0.10)
+        copy.maxDailyChange = min(max(daily, 0.01), RheosReference.maxDailyChangeCap)
+        let nudge = copy.maxContextNudge.isFinite ? copy.maxContextNudge : RheosReference.defaultMaxContextNudge
+        copy.maxContextNudge = min(max(nudge, 0.01), RheosReference.maxContextNudgeCap)
         copy.minimumDays = max(copy.minimumDays, 7)
         copy.minimumGlucoseSamples = max(copy.minimumGlucoseSamples, 200)
         let improvement = copy.minimumImprovement.isFinite ? copy.minimumImprovement : 0.02
@@ -351,6 +355,7 @@ struct RheosReport: Equatable {
     var meals: [RheosMealOutcome]
     var decision: RheosProfileDecision
     var contexts: [RheosInferredContext]
+    var mealPresets: [RheosMealPresetLearning]
     var proposals: [RheosContextProposal]
     var signals: [RheosSignalRelevance]
     var body: RheosBodyDraft

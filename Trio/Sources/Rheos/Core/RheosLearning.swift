@@ -13,13 +13,35 @@ enum RheosLearner {
         previous: RheosAppliedState?,
         autosensMin: Double = RheosReference.defaultMinimumMultiplier,
         autosensMax: Double = RheosReference.defaultMaximumMultiplier,
+        targets: RheosTargetSchedule = .flat(RheosReference.missingTargetFallbackMgdl),
         now: Date,
         calendar: Calendar = .current
     ) -> RheosProfileDecision {
         let limits = bounds.sanitized()
         let band = limits.effectiveRange(autosensMin: autosensMin, autosensMax: autosensMax)
-        let learned = estimate(dataset: dataset, band: band, calendar: calendar)
-        let walk = walkForward(glucose: dataset.glucose, bounds: limits, calendar: calendar)
+        guard targets.isComplete else {
+            let walk = RheosWalkForwardResult(
+                passed: false,
+                modelMAE: nil,
+                baselineMAE: nil,
+                dayCount: 0,
+                sampleCount: dataset.glucose.count,
+                reason: "Kein Glukose-Zielplan aus Trio. Rheos setzt keinen eigenen Zielwert."
+            )
+            return decision(
+                mode: mode,
+                code: mode == .scharf ? .fallbackInsufficientData : (mode == .aus ? .off : .shadow),
+                applied: false,
+                reason: walk.reason,
+                factors: .identity,
+                learned: .identity,
+                walk: walk,
+                band: band,
+                now: now
+            )
+        }
+        let learned = estimate(dataset: dataset, targets: targets, band: band, calendar: calendar)
+        let walk = walkForward(dataset: dataset, targets: targets, bounds: limits, calendar: calendar)
 
         if mode == .aus {
             return decision(
@@ -75,8 +97,8 @@ enum RheosLearner {
             )
         }
 
-        let contexts = RheosContextInference.infer(dataset: dataset, now: now, calendar: calendar)
-        let need = RheosContextInference.insulinNeedByHour(contexts, now: now, calendar: calendar)
+        let contexts = RheosContextInference.infer(dataset: dataset, targets: targets, now: now, calendar: calendar)
+        let need = RheosContextInference.insulinNeedByHour(contexts, maxNudge: limits.maxContextNudge, now: now, calendar: calendar)
         // The stored vector is the slow glucose model only. Context is applied
         // on top for this loop and is not written back into that vector, so a
         // workout cannot be multiplied twice.
@@ -104,45 +126,35 @@ enum RheosLearner {
         )
     }
 
-    static func estimate(dataset: RheosDataset, band: ClosedRange<Double>, calendar: Calendar) -> RheosHourlyFactors {
-        var basal = Array(repeating: 1.0, count: 24)
-        var isf = Array(repeating: 1.0, count: 24)
-        var byHour: [Int: [Double]] = [:]
-        for point in dataset.glucose where point.mgdl.isFinite && point.mgdl > 0 {
-            byHour[calendar.component(.hour, from: point.date), default: []].append(point.mgdl)
-        }
-        for hour in 0 ..< 24 {
-            guard let values = byHour[hour], values.count >= RheosReference.minimumSamplesPerHour,
-                  let median = RheosStats.median(values) else { continue }
-            let delta = (median - RheosReference.glucoseAnchorMgdl) / RheosReference.glucoseAnchorMgdl
-            basal[hour] = clamp(1 + RheosReference.deviationGain * delta, to: band)
-            isf[hour] = clamp(1 - RheosReference.deviationGain * delta, to: band)
-        }
-        return RheosHourlyFactors(
-            basal: basal,
-            isf: isf,
-            carbRatio: carbRatioFactors(dataset: dataset, band: band, calendar: calendar)
-        )
+    static func estimate(
+        dataset: RheosDataset,
+        targets: RheosTargetSchedule,
+        band: ClosedRange<Double>,
+        calendar: Calendar
+    ) -> RheosHourlyFactors {
+        let observations = RheosFit.observations(dataset: dataset, targets: targets, calendar: calendar)
+        var model = RheosFit.fit(observations: observations, band: band)
+        model.factors.carbRatio = RheosFit.carbRatioFactors(dataset: dataset, targets: targets, band: band, calendar: calendar)
+        return model.factors
     }
 
     static func walkForward(
-        glucose: [RheosGlucosePoint],
+        dataset: RheosDataset,
+        targets: RheosTargetSchedule,
         bounds: RheosBounds,
         calendar: Calendar
     ) -> RheosWalkForwardResult {
         let limits = bounds.sanitized()
-        let samples = glucose.filter { $0.mgdl.isFinite && $0.mgdl > 0 }.map { point in
-            Sample(day: calendar.startOfDay(for: point.date), hour: calendar.component(.hour, from: point.date), mgdl: point.mgdl)
-        }
-        let days = Array(Set(samples.map(\.day))).sorted()
-        if days.count < limits.minimumDays || samples.count < limits.minimumGlucoseSamples {
+        let observations = RheosFit.observations(dataset: dataset, targets: targets, calendar: calendar)
+        let days = Array(Set(observations.map(\.day))).sorted()
+        if days.count < limits.minimumDays || observations.count < limits.minimumGlucoseSamples {
             return RheosWalkForwardResult(
                 passed: false,
                 modelMAE: nil,
                 baselineMAE: nil,
                 dayCount: days.count,
-                sampleCount: samples.count,
-                reason: "Zu wenig Daten: \(days.count) Tage und \(samples.count) Werte. Gebraucht werden mindestens \(limits.minimumDays) Tage und \(limits.minimumGlucoseSamples) Werte."
+                sampleCount: observations.count,
+                reason: "Zu wenig Daten: \(days.count) Tage und \(observations.count) Werte. Gebraucht werden mindestens \(limits.minimumDays) Tage und \(limits.minimumGlucoseSamples) Werte."
             )
         }
         let testCount = RheosReference.walkForwardTestDays
@@ -152,78 +164,40 @@ enum RheosLearner {
                 modelMAE: nil,
                 baselineMAE: nil,
                 dayCount: days.count,
-                sampleCount: samples.count,
+                sampleCount: observations.count,
                 reason: "Nicht genug Tage für eine zeitlich getrennte Prüfung."
             )
         }
         let testDays = Set(days.suffix(testCount))
-        let train = samples.filter { !testDays.contains($0.day) }
-        let test = samples.filter { testDays.contains($0.day) }
-        guard let trainGlobal = RheosStats.median(train.map(\.mgdl)), !test.isEmpty else {
+        let train = observations.filter { !testDays.contains($0.day) }
+        let test = observations.filter { testDays.contains($0.day) }
+        guard let trainGlobal = RheosStats.median(train.map(\.glucose)), !test.isEmpty else {
             return RheosWalkForwardResult(
                 passed: false,
                 modelMAE: nil,
                 baselineMAE: nil,
                 dayCount: days.count,
-                sampleCount: samples.count,
+                sampleCount: observations.count,
                 reason: "Die Prüfung konnte nicht gerechnet werden."
             )
         }
-        var hourBuckets: [Int: [Double]] = [:]
-        for sample in train {
-            hourBuckets[sample.hour, default: []].append(sample.mgdl)
-        }
-        var hourMedian: [Int: Double] = [:]
-        for (hour, values) in hourBuckets where values.count >= RheosReference.minimumSamplesPerHour {
-            if let median = RheosStats.median(values) {
-                hourMedian[hour] = median
-            }
-        }
-        var modelErrors: [Double] = []
-        var baselineErrors: [Double] = []
-        for sample in test {
-            let predicted = hourMedian[sample.hour] ?? trainGlobal
-            modelErrors.append(abs(sample.mgdl - predicted))
-            baselineErrors.append(abs(sample.mgdl - trainGlobal))
-        }
+        let trained = RheosFit.fit(observations: train, band: 0.7 ... 1.2)
+        let modelErrors = test.map { abs($0.glucose - RheosFit.predict($0, model: trained)) }
+        let baselineErrors = test.map { abs($0.glucose - trainGlobal) }
         let modelMAE = RheosStats.mean(modelErrors) ?? 0
         let baselineMAE = RheosStats.mean(baselineErrors) ?? 0
         let passed = modelMAE <= baselineMAE * (1 - limits.minimumImprovement)
         let reason = passed
-            ? "Walk-forward bestanden. Stundenmedian-Fehler \(format(modelMAE)) mg/dL, einfacher Mittelwert \(format(baselineMAE)) mg/dL."
-            : "Walk-forward nicht bestanden. Stundenmedian-Fehler \(format(modelMAE)) mg/dL gegen \(format(baselineMAE)) mg/dL beim einfachen Mittelwert. Kein Profilfaktor."
+            ? "Walk-forward bestanden. Modellfehler \(format(modelMAE)) mg/dL, einfacher Mittelwert \(format(baselineMAE)) mg/dL. IOB-Steigung \(format(trained.iobSlope)), KH-Steigung \(format(trained.carbSlope))."
+            : "Walk-forward nicht bestanden. Modellfehler \(format(modelMAE)) mg/dL gegen \(format(baselineMAE)) mg/dL beim einfachen Mittelwert. Kein Profilfaktor."
         return RheosWalkForwardResult(
             passed: passed,
             modelMAE: modelMAE,
             baselineMAE: baselineMAE,
             dayCount: days.count,
-            sampleCount: samples.count,
+            sampleCount: observations.count,
             reason: reason
         )
-    }
-
-    private static func carbRatioFactors(
-        dataset: RheosDataset,
-        band: ClosedRange<Double>,
-        calendar: Calendar
-    ) -> [Double] {
-        var factors = Array(repeating: 1.0, count: 24)
-        guard dataset.meals.count >= RheosReference.minimumMealsForCarbRatio else { return factors }
-        var byHour: [Int: [Double]] = [:]
-        for meal in dataset.meals {
-            guard let before = RheosStats.nearest(dataset.glucose, to: meal.date, within: 45 * 60),
-                  let after = RheosStats.nearest(dataset.glucose, to: meal.date.addingTimeInterval(3 * 3600), within: 45 * 60)
-            else { continue }
-            let rise = after - before
-            let delta = (rise - RheosReference.expectedMealRiseMgdl) / RheosReference.glucoseAnchorMgdl
-            let hour = calendar.component(.hour, from: meal.date)
-            byHour[hour, default: []].append(1 - RheosReference.deviationGain * delta)
-        }
-        for hour in 0 ..< 24 {
-            guard let values = byHour[hour], values.count >= 2, let median = RheosStats.median(values) else { continue }
-            factors[hour] = clamp(median, to: band)
-        }
-        return factors
     }
 
     private static func decision(
@@ -253,19 +227,10 @@ enum RheosLearner {
         )
     }
 
-    private static func clamp(_ value: Double, to band: ClosedRange<Double>) -> Double {
-        min(max(value, band.lowerBound), band.upperBound)
-    }
-
     private static func format(_ value: Double) -> String {
         String(format: "%.2f", value)
     }
 
-    private struct Sample {
-        var day: Date
-        var hour: Int
-        var mgdl: Double
-    }
 }
 
 enum RheosReportBuilder {
@@ -276,6 +241,7 @@ enum RheosReportBuilder {
         previous: RheosAppliedState?,
         autosensMin: Double,
         autosensMax: Double,
+        targets: RheosTargetSchedule = .flat(RheosReference.missingTargetFallbackMgdl),
         now: Date,
         calendar: Calendar = .current
     ) -> RheosReport {
@@ -291,10 +257,12 @@ enum RheosReportBuilder {
                 previous: previous,
                 autosensMin: autosensMin,
                 autosensMax: autosensMax,
+                targets: targets,
                 now: now,
                 calendar: calendar
             ),
-            contexts: RheosContextInference.infer(dataset: dataset, now: now, calendar: calendar),
+            contexts: RheosContextInference.infer(dataset: dataset, targets: targets, now: now, calendar: calendar),
+            mealPresets: RheosFit.mealPresets(dataset: dataset, calendar: calendar),
             proposals: RheosAnalysis.contextProposals(dataset: dataset, now: now, calendar: calendar),
             signals: RheosAnalysis.signalRelevance(dataset: dataset, calendar: calendar),
             body: RheosAnalysis.bodyDraft(dataset.body)

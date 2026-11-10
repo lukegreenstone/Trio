@@ -13,10 +13,15 @@ struct RheosSettingsView: View {
     @State private var minimum = RheosReference.defaultMinimumMultiplier
     @State private var maximum = RheosReference.defaultMaximumMultiplier
     @State private var daily = RheosReference.defaultMaxDailyChange
+    @State private var contextNudge = RheosReference.defaultMaxContextNudge
     @State private var decisionText = ""
     @State private var showShare = false
     @State private var showImport = false
     @State private var exportURLs: [URL] = []
+    @State private var apiKey = ""
+    @State private var cloudURL = RheosCloudChat.defaultBaseURL
+    @State private var cloudModel = RheosCloudChat.defaultModel
+    @State private var keyStored = false
 
     var body: some View {
         Form {
@@ -48,13 +53,16 @@ struct RheosSettingsView: View {
                 Stepper(value: $maximum, in: maximumRange, step: 0.05) {
                     Text("Obere Grenze \(maximum, format: .number.precision(.fractionLength(2)))")
                 }
-                Stepper(value: $daily, in: 0.01 ... 0.10, step: 0.01) {
+                Stepper(value: $daily, in: 0.01 ... RheosReference.maxDailyChangeCap, step: 0.01) {
                     Text("Maximale Änderung pro Tag \(daily, format: .number.precision(.fractionLength(2)))")
+                }
+                Stepper(value: $contextNudge, in: 0.01 ... RheosReference.maxContextNudgeCap, step: 0.01) {
+                    Text("Kontext am selben Tag höchstens \(contextNudge, format: .number.precision(.fractionLength(2)))")
                 }
             } header: {
                 Text("Band")
             } footer: {
-                Text("Voreinstellung 0,70–1,20, wie Trios Autosens-Standard. Beim Anwenden wird das Band auf die aktuellen Autosens-Grenzen geschnitten (\(format(liveAutosensMin))–\(format(liveAutosensMax))). Darüber hinaus geht Rheos nicht.")
+                Text("Voreinstellung 0,70–1,20, wie Trios Autosens-Standard. Beim Anwenden wird das Band auf die aktuellen Autosens-Grenzen geschnitten (\(format(liveAutosensMin))–\(format(liveAutosensMax))). Die Tagesänderung ist höchstens 0,10, der Kontext-Schub höchstens 0,20. Darüber hinaus geht Rheos nicht. Der Fit benutzt deinen Trio-Zielplan, keinen festen 110er Wert.")
             }
 
             Section {
@@ -64,6 +72,24 @@ struct RheosSettingsView: View {
                 }
             } header: {
                 Text("Letzte Auswertung")
+            }
+
+            Section {
+                SecureField("API-Schlüssel, optional", text: $apiKey)
+                TextField("Basis-URL", text: $cloudURL)
+                TextField("Modellname", text: $cloudModel)
+                Button(keyStored ? "Schlüssel ersetzen" : "Schlüssel im Schlüsselbund sichern") {
+                    saveKey()
+                }
+                if keyStored {
+                    Button("Schlüssel löschen", role: .destructive) {
+                        deleteKey()
+                    }
+                }
+            } header: {
+                Text("Chat")
+            } footer: {
+                Text("Wenn das iPhone Apple Intelligence hat, antwortet das Modell auf dem Gerät. Sonst kann ein Cloud-Modell den Schlüssel aus dem Schlüsselbund nutzen. Der Schlüssel steht in keiner Datei im Projekt. Der Chat erklärt und darf Hinweise vorschlagen. Er dosiert nicht und ändert keine Grenzen.")
             }
 
             Section {
@@ -94,6 +120,9 @@ struct RheosSettingsView: View {
             saveBand()
         }
         .onChange(of: daily) { _, _ in
+            saveBand()
+        }
+        .onChange(of: contextNudge) { _, _ in
             saveBand()
         }
         .onReceive(NotificationCenter.default.publisher(for: .rheosModeDidChange)) { _ in
@@ -181,6 +210,14 @@ struct RheosSettingsView: View {
         maximum = min(max(bounds.maximumMultiplier, stepperMin), stepperMax)
         if minimum > maximum { maximum = minimum }
         daily = bounds.maxDailyChange
+        contextNudge = bounds.maxContextNudge
+        cloudURL = UserDefaults.standard.string(forKey: RheosCloudChat.baseURLKey) ?? RheosCloudChat.defaultBaseURL
+        cloudModel = UserDefaults.standard.string(forKey: RheosCloudChat.modelKey) ?? RheosCloudChat.defaultModel
+        if case let .success(stored) = resolver.resolve(Keychain.self)?.getValue(String.self, forKey: RheosCloudChat.keychainKey) {
+            keyStored = !(stored ?? "").isEmpty
+        } else {
+            keyStored = false
+        }
         decisionText = RheosStore.shared.loadDecision()?.reason ?? ""
     }
 
@@ -189,6 +226,7 @@ struct RheosSettingsView: View {
         bounds.minimumMultiplier = minimum
         bounds.maximumMultiplier = maximum
         bounds.maxDailyChange = daily
+        bounds.maxContextNudge = contextNudge
         coordinator?.saveBounds(bounds)
     }
 
@@ -199,6 +237,25 @@ struct RheosSettingsView: View {
         } catch {
             decisionText = "Export fehlgeschlagen."
         }
+    }
+
+    private func saveKey() {
+        UserDefaults.standard.set(cloudURL, forKey: RheosCloudChat.baseURLKey)
+        UserDefaults.standard.set(cloudModel, forKey: RheosCloudChat.modelKey)
+        guard let keychain = resolver.resolve(Keychain.self) else { return }
+        if apiKey.isEmpty {
+            keyStored = (try? keychain.hasValue(forKey: RheosCloudChat.keychainKey).get()) ?? false
+            return
+        }
+        _ = keychain.setValue(apiKey, forKey: RheosCloudChat.keychainKey)
+        apiKey = ""
+        keyStored = true
+    }
+
+    private func deleteKey() {
+        _ = resolver.resolve(Keychain.self)?.removeObject(forKey: RheosCloudChat.keychainKey)
+        apiKey = ""
+        keyStored = false
     }
 
     private func format(_ value: Double) -> String {

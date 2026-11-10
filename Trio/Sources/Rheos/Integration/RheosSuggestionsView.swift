@@ -11,6 +11,7 @@ struct RheosSuggestionsView: View {
     @State private var status = ""
     @State private var question = ""
     @State private var answer = ""
+    @State private var suggestions: [RheosChatSuggestion] = []
     @State private var age = ""
     @State private var weight = ""
     @State private var height = ""
@@ -131,13 +132,38 @@ struct RheosSuggestionsView: View {
                     Text(report.body.summary).font(.footnote)
                 }
 
+                Section("Mahlzeiten-Muster") {
+                    if report.mealPresets.isEmpty {
+                        Text("Noch kein Muster. Rheos lernt das aus den eingetragenen Mahlzeiten, auch ohne extra Ankündigung.")
+                    }
+                    ForEach(report.mealPresets) { preset in
+                        Text(preset.suggestion).font(.footnote)
+                    }
+                }
+
                 Section("Assistent") {
                     TextField("Frage an das Protokoll", text: $question)
-                    Button("Lokal antworten") {
-                        answer = RheosChatStub.reply(question: question, report: report)
+                    Button("Antwort") {
+                        Task {
+                            let result = await RheosChatEngine.reply(
+                                question: question,
+                                report: report,
+                                resolver: resolver
+                            )
+                            answer = "\(result.text)\n\nQuelle: \(result.source)"
+                            suggestions = result.suggestions
+                        }
                     }
                     if !answer.isEmpty {
                         Text(answer).font(.footnote)
+                    }
+                    ForEach(suggestions) { suggestion in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(suggestion.text).font(.footnote)
+                            Button("Hinweis „\(suggestion.kind)“ notieren") {
+                                status = coordinator?.announce(kind: suggestion.kind, note: suggestion.text) ?? ""
+                            }
+                        }
                     }
                 }
             } else {
@@ -174,6 +200,7 @@ struct RheosSuggestionsView: View {
             previous: RheosStore.shared.loadApplied(),
             autosensMin: autosensMin,
             autosensMax: autosensMax,
+            targets: RheosTargetLoader.schedule(resolver: resolver),
             now: Date()
         )
     }
