@@ -56,7 +56,16 @@ final class TrioModalAlertScheduler: ObservableObject {
             DispatchQueue.main.async { [weak self] in self?.clearNonCriticalBanners() }
             return
         }
-        active.removeAll { $0.interruptionLevel != .critical }
+        active.removeAll { alert in
+            if alert.interruptionLevel == .critical { return false }
+            switch GlucoseAlertType(slug: alert.identifier.alertIdentifier) {
+            case .urgentLow,
+                 .low:
+                return false
+            default:
+                return true
+            }
+        }
     }
 
     func snooze(identifier: LoopKit.Alert.Identifier, duration: TimeInterval) {

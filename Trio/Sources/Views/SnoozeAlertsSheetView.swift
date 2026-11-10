@@ -9,6 +9,8 @@ struct SnoozeAlertsSheetView: View {
     @Binding var isPresented: Bool
 
     @State private var snoozeUntilDate: Date = .distantPast
+    @State private var style: AlarmSilenceStyle = .vibrateOnly
+    @State private var customMinutes: Int = 90
 
     @Environment(\.colorScheme) var colorScheme
     @Environment(AppState.self) var appState
@@ -37,8 +39,40 @@ struct SnoozeAlertsSheetView: View {
                         }
                     }
                 }
+                Section {
+                    Picker("Silence", selection: $style) {
+                        Text("Vibrate only").tag(AlarmSilenceStyle.vibrateOnly)
+                        Text("Fully silent").tag(AlarmSilenceStyle.fullySilent)
+                    }
+                    .pickerStyle(.segmented)
+                    ForEach(AlarmSilencePolicy.presetHours, id: \.self) { hours in
+                        Button {
+                            applySnooze(TimeInterval(hours * 3600))
+                        } label: {
+                            HStack {
+                                Text("\(hours) h").foregroundStyle(.primary)
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .foregroundColor(.gray)
+                                    .font(.footnote)
+                            }
+                        }
+                    }
+                    Stepper(value: $customMinutes, in: 15 ... AlarmSilencePolicy.maximumMinutes, step: 15) {
+                        Text("Custom \(customMinutes) min")
+                    }
+                    Button("Snooze custom duration") {
+                        applySnooze(TimeInterval(customMinutes * 60))
+                    }
+                } footer: {
+                    Text(
+                        "Vibrate only keeps the alarm on screen without a tone, and the phone vibrates when it can. Fully silent hides it. An urgent low under 55 mg/dL still sounds and vibrates. That cannot be turned off. Critical pump alerts such as an occlusion still sound too."
+                    )
+                }
+                .listRowBackground(Color.chart)
+
                 Section(footer: Text(
-                    "Pick a duration to mute every Trio alarm. Critical alerts (e.g. occlusion, urgent low) still pierce the snooze."
+                    "These shorter choices use the silence selected above. The same choices are on the notification itself."
                 )) {
                     ForEach(NotificationResponseAction.allCases, id: \.self) { action in
                         Button {
@@ -67,6 +101,9 @@ struct SnoozeAlertsSheetView: View {
             .onAppear {
                 snoozeUntilDate = UserDefaults.standard
                     .object(forKey: "UserNotificationsManager.snoozeUntilDate") as? Date ?? .distantPast
+                if let stored = AlarmSilenceStore.current() {
+                    style = stored
+                }
             }
         }
     }
@@ -82,7 +119,9 @@ struct SnoozeAlertsSheetView: View {
 
     private func applySnooze(_ duration: TimeInterval) {
         let trioAlertManager = resolver.resolve(TrioAlertManager.self)
+        let selected = style
         Task { @MainActor in
+            AlarmSilenceStore.set(selected)
             await trioAlertManager?.applySnooze(for: duration)
             snoozeUntilDate = Date().addingTimeInterval(duration)
             isPresented = false
@@ -92,6 +131,7 @@ struct SnoozeAlertsSheetView: View {
     private func endSnooze() {
         let trioAlertManager = resolver.resolve(TrioAlertManager.self)
         Task { @MainActor in
+            AlarmSilenceStore.set(nil)
             await trioAlertManager?.applySnooze(for: 0)
             snoozeUntilDate = Date().addingTimeInterval(0)
         }

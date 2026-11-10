@@ -1014,6 +1014,9 @@
 		A11C0DE2E10A0000000000F2 /* RheosTargetLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000F1 /* RheosTargetLoader.swift */; };
 		A11C0DE2E10A0000000000F4 /* RheosChatEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000F3 /* RheosChatEngine.swift */; };
 		A11C0DE2E10A0000000000C4 /* RheosCare.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000C3 /* RheosCare.swift */; };
+		A11C0DE2E10A0000000000A6 /* AlarmSilencePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000A5 /* AlarmSilencePolicy.swift */; };
+		A11C0DE2E10A0000000000A8 /* RheosWatchMessages.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000A7 /* RheosWatchMessages.swift */; };
+		B1E05A7C0000000000000E12 /* RheosWatchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1E05A7C0000000000000E11 /* RheosWatchView.swift */; };
 		A11C0DE2E10A0000000000C6 /* RheosCareNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000C5 /* RheosCareNotifier.swift */; };
 /* End PBXBuildFile section */
 
@@ -2121,6 +2124,9 @@
 		A11C0DE2E10A0000000000F1 /* RheosTargetLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosTargetLoader.swift; sourceTree = "<group>"; };
 		A11C0DE2E10A0000000000F3 /* RheosChatEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosChatEngine.swift; sourceTree = "<group>"; };
 		A11C0DE2E10A0000000000C3 /* RheosCare.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosCare.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000A5 /* AlarmSilencePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlarmSilencePolicy.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000A7 /* RheosWatchMessages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosWatchMessages.swift; sourceTree = "<group>"; };
+		B1E05A7C0000000000000E11 /* RheosWatchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosWatchView.swift; sourceTree = "<group>"; };
 		A11C0DE2E10A0000000000C5 /* RheosCareNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosCareNotifier.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -3986,6 +3992,7 @@
 				DD6F63CB2D27F606007D94CF /* TreatmentMenuView.swift */,
 				BDA25F1B2D26BD0300035F34 /* TrendShape.swift */,
 				BDFF7A842D25F97D0016C40C /* TrioMainWatchView.swift */,
+				B1E05A7C0000000000000E11 /* RheosWatchView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -4879,6 +4886,8 @@
 				A11C0DE2E10A0000000000E1 /* RheosChatParser.swift */,
 				A11C0DE2E10A0000000000D1 /* RheosFit.swift */,
 				A11C0DE2E10A0000000000C3 /* RheosCare.swift */,
+				A11C0DE2E10A0000000000A5 /* AlarmSilencePolicy.swift */,
+				A11C0DE2E10A0000000000A7 /* RheosWatchMessages.swift */,
 			);
 			path = Core;
 			sourceTree = "<group>";
@@ -5322,6 +5331,8 @@
 				A11C0DE2E10A0000000000D2 /* RheosFit.swift in Sources */,
 				A11C0DE2E10A0000000000C6 /* RheosCareNotifier.swift in Sources */,
 				A11C0DE2E10A0000000000C4 /* RheosCare.swift in Sources */,
+				A11C0DE2E10A0000000000A6 /* AlarmSilencePolicy.swift in Sources */,
+				A11C0DE2E10A0000000000A8 /* RheosWatchMessages.swift in Sources */,
 				A11C0DE2E10A0000000000B2 /* RheosICloudBackup.swift in Sources */,
 				EE984A517A864F68ACC3ED03 /* RheosModeStore.swift in Sources */,
 				4CC7746554C34B05A963C4C5 /* RheosProfileHook.swift in Sources */,
@@ -6205,6 +6216,7 @@
 			files = (
 				BDA25F222D26D62800035F34 /* BolusInputView.swift in Sources */,
 				BDFF7A882D25F97D0016C40C /* TrioMainWatchView.swift in Sources */,
+				B1E05A7C0000000000000E12 /* RheosWatchView.swift in Sources */,
 				BDA25F202D26D5FE00035F34 /* CarbsInputView.swift in Sources */,
 				BDA25F1C2D26BD0700035F34 /* TrendShape.swift in Sources */,
 				BDFF7A892D25F97D0016C40C /* TrioWatchApp.swift in Sources */,

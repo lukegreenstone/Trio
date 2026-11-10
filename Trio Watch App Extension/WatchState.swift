@@ -54,6 +54,12 @@ import WatchConnectivity
     var forecastConeMax: [Double] = []
     var forecastLines: [String: [Double]] = [:] // "iob" / "cob" / "uam" / "zt" -> values
 
+    /// Rheos notes pushed by the phone. They never include a bolus amount.
+    var rheosMode: String = "aus"
+    var rheosSuggestions: [WatchRheosSuggestion] = []
+    var rheosChatReply: String = ""
+    var silenceUntil: Date?
+
     // Acknowlegement handling
     var showCommsAnimation: Bool = false
     var showAcknowledgmentBanner: Bool = false
@@ -221,11 +227,32 @@ import WatchConnectivity
             return
         }
 
+        if absorbRheosUpdate(message) { return }
+
         handleIncomingWatchStatePayload(message)
     }
 
     func session(_: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
+        if absorbRheosUpdate(userInfo) { return }
         handleIncomingWatchStatePayload(userInfo)
+    }
+
+    /// A Rheos snapshot sent on its own, without the glucose `watchState` wrapper.
+    /// Bolus and carb payloads are never treated as Rheos updates.
+    private func absorbRheosUpdate(_ message: [String: Any]) -> Bool {
+        let hasRheos = message[WatchMessageKeys.rheosMode] != nil
+            || message[WatchMessageKeys.rheosChatReply] != nil
+            || message[WatchMessageKeys.rheosSuggestions] != nil
+        guard hasRheos,
+              message[WatchMessageKeys.watchState] == nil,
+              message[WatchMessageKeys.bolus] == nil,
+              message[WatchMessageKeys.carbs] == nil
+        else { return false }
+        DispatchQueue.main.async {
+            self.applyRheosFields(message)
+            self.showSyncingAnimation = false
+        }
+        return true
     }
 
     /// Shared path for watch-state payloads from either delegate method.
@@ -584,5 +611,34 @@ import WatchConnectivity
             forecastConeMax = forecastPayload[WatchMessageKeys.forecastConeMax] as? [Double] ?? []
             forecastLines = forecastPayload[WatchMessageKeys.forecastLines] as? [String: [Double]] ?? [:]
         }
+
+        applyRheosFields(message)
     }
+
+    func applyRheosFields(_ message: [String: Any]) {
+        if let mode = message[WatchMessageKeys.rheosMode] as? String, !mode.isEmpty {
+            rheosMode = mode
+        }
+        if let reply = message[WatchMessageKeys.rheosChatReply] as? String {
+            rheosChatReply = reply
+        }
+        if let rows = message[WatchMessageKeys.rheosSuggestions] as? [[String: Any]] {
+            rheosSuggestions = rows.compactMap { row in
+                guard let id = row["id"] as? String, let kind = row["kind"] as? String else { return nil }
+                return WatchRheosSuggestion(
+                    id: id,
+                    kind: kind,
+                    title: row["title"] as? String ?? kind,
+                    note: row["note"] as? String ?? ""
+                )
+            }
+        }
+    }
+}
+
+struct WatchRheosSuggestion: Identifiable, Equatable {
+    var id: String
+    var kind: String
+    var title: String
+    var note: String
 }

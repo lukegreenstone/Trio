@@ -15,6 +15,9 @@ final class RheosCoordinator {
     private let lock = NSLock()
     private var timer: DispatchSourceTimer?
     private var observers: [NSObjectProtocol] = []
+    private var careReport: RheosCareReport?
+    private var chatSuggestions: [RheosChatSuggestion] = []
+    private var watchChatReply = ""
 
     init(resolver: Resolver) {
         self.resolver = resolver
@@ -114,6 +117,7 @@ final class RheosCoordinator {
             calendar: .current
         )
         RheosCareNotifier.post(care)
+        replaceCare(care)
         if decision.applied {
             // Persist the slow model. The context nudge stays in the decision
             // the profile hook reads, and is recomputed next time.
@@ -125,21 +129,104 @@ final class RheosCoordinator {
 
     /// Optional note. It does not change a preset and does not deliver insulin.
     /// Scharf already adjusts ISF, carb ratio and basal from data without this.
-    func announce(kind: String, note: String) -> String {
-        let effect = RheosApplicationPoint.effect(of: .contextMode(kind == "meal" ? .showtime : .sport))
-        let text: String
-        if kind == "meal" {
-            text = RheosContextInference.suggestion(forAnnouncement: "meal")
-        } else if case let .suggestion(suggestion) = effect {
-            text = suggestion
-        } else {
-            text = RheosContextInference.suggestion(forAnnouncement: kind)
+    /// The watch uses this same method. A suggestion id only removes that row from the watch list.
+    func announce(kind: String, note: String, suggestionID: String? = nil) -> String {
+        guard RheosWatchMessages.allowedKinds.contains(kind) else {
+            return "Unbekannter Hinweis. Nichts gespeichert und kein Bolus."
         }
+        let text = announcementText(kind: kind)
         RheosStore.shared.addAnnouncement(
             RheosAnnouncement(id: UUID().uuidString, date: Date(), kind: kind, note: note)
         )
         noteConfirmation(text)
+        dismissWatchSuggestion(id: suggestionID)
         return text
+    }
+
+    /// The user declined a suggestion. The note is stored and nothing is dosed.
+    func reject(kind: String, note: String, suggestionID: String? = nil) -> String {
+        guard RheosWatchMessages.allowedKinds.contains(kind) else {
+            return "Unbekannter Hinweis. Nichts gespeichert und kein Bolus."
+        }
+        let text = "Abgelehnt: \(kind). Kein Bolus und keine Änderung der Grenzen."
+        RheosStore.shared.addAnnouncement(
+            RheosAnnouncement(id: UUID().uuidString, date: Date(), kind: "reject", note: "\(kind): \(note)")
+        )
+        noteConfirmation(text)
+        dismissWatchSuggestion(id: suggestionID)
+        return text
+    }
+
+    /// Short reply for the watch. The model can only add confirmable notes, never a bolus.
+    func replyFromWatch(question: String) async -> String {
+        let trimmed = String(question.trimmingCharacters(in: .whitespacesAndNewlines).prefix(240))
+        guard !trimmed.isEmpty else { return "" }
+        let store = RheosStore.shared
+        let report = RheosReportBuilder.build(
+            dataset: store.loadDataset(),
+            mode: RheosModeStore.current,
+            bounds: store.loadBounds(),
+            previous: store.loadApplied(),
+            autosensMin: autosensMin(),
+            autosensMax: autosensMax(),
+            targets: RheosTargetLoader.schedule(resolver: resolver),
+            now: Date()
+        )
+        let result = await RheosChatEngine.reply(question: trimmed, report: report, resolver: resolver)
+        let reply = String(result.text.prefix(280))
+        lock.lock()
+        watchChatReply = reply
+        chatSuggestions = result.suggestions
+        lock.unlock()
+        return reply
+    }
+
+    func watchSnapshot() -> RheosWatchSnapshot {
+        lock.lock()
+        defer { lock.unlock() }
+        return RheosWatchSnapshot(
+            mode: RheosModeStore.current.rawValue,
+            suggestions: RheosWatchCatalog.lines(care: careReport, chat: chatSuggestions),
+            chatReply: watchChatReply
+        )
+    }
+
+    func replaceCare(_ care: RheosCareReport) {
+        lock.lock()
+        careReport = care
+        lock.unlock()
+    }
+
+    func dismissWatchSuggestion(id: String?) {
+        guard let id, !id.isEmpty else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        switch id {
+        case "care-patch": careReport?.patchCheck = nil
+        case "care-hypo": careReport?.hypoSuggestion = nil
+        case "care-alcohol": careReport?.alcohol = nil
+        default: chatSuggestions.removeAll { $0.id == id }
+        }
+    }
+
+    private func announcementText(kind: String) -> String {
+        switch kind {
+        case "alcohol":
+            return "Alkohol notiert. Rheos kann ein späteres Hypo-Risiko erwähnen. Kein Temp Target und kein Bolus."
+        case "snack":
+            return "Snack notiert: kleine Kohlenhydrate, beobachten. Kein Bolus."
+        case "note":
+            return "Hinweis gesehen. Kein Bolus."
+        case "meal":
+            return RheosContextInference.suggestion(forAnnouncement: "meal")
+        default:
+            let mode = RheosContextMode(rawValue: kind) ?? .sport
+            let effect = RheosApplicationPoint.effect(of: .contextMode(mode))
+            if case let .suggestion(suggestion) = effect {
+                return suggestion
+            }
+            return RheosContextInference.suggestion(forAnnouncement: kind)
+        }
     }
 
     /// Records where the new Medtrum patch sits. Does not change insulin.

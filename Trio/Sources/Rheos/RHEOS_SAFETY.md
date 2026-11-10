@@ -28,7 +28,7 @@ Aus (the default) and Schatten return the original schedules, so the generated p
 
 ## What still needs a tap
 
-Context modes (Showtime, Urlaub, Krank, Fasten, Sport) only name a preset the user already saved. Confirmation calls Trio's existing `AdjustmentManager`. Rheos does not choose a percentage or a target. If no preset with that name exists, nothing is activated.
+Context modes (Showtime, Urlaub, Krank, Fasten, Sport), a snack note, a meal name such as Standardfrühstück, and Alkohol are optional announcements. Confirming one on the phone or the watch calls `RheosCoordinator.announce`, which stores a note. It does not activate a Trio preset, does not call `AdjustmentManager`, and does not deliver insulin. Scharf still changes only ISF, carb ratio and basal from the learned profile, without that announcement.
 
 Meal outcomes can be marked as seen. That writes a flag in the Rheos log only.
 
@@ -41,13 +41,21 @@ Trio already has high and low glucose alarms, a forecasted-low alarm, and an ore
 Rheos adds only notes and local notifications whose identifiers start with `rheos.suggestion.`:
 
 - high glucose that is not falling despite insulin → check ketones and the Medtrum patch
-- a night-time drop that bounces back is left out of learning; low alarms are not muted
+- a night-time drop that bounces back is left out of learning; that detection does not mute Trio's low alarms
 - a body-site log compares glucose after each patch change the user records
 - a 7-day text report for the diabetes team
 - a 30-minute hypo extrapolation whose carb grams come only from past treatments that were followed by a recovery
 - an optional alcohol note that can mention a temp target the user would set in Trio
 
 None of these write insulin, carbs, targets, or limits.
+
+## Watch and alarm silence
+
+Trio already had a watch app (glucose, carbs, bolus confirmation, overrides, temp targets) and a snooze (`TrioAlertManager.applySnooze`, 15 min / 1 h / 3 h / 6 h) that the watch notification actions already forwarded with `WatchMessageKeys.snoozeDuration`. Those screens and the bolus request are unchanged. Rheos is a new page on the same watch app. It uses the same `WCSession`: `sendMessage` when the phone is reachable, `transferUserInfo` when the phone is nearby but the watch session is not currently reachable. That is the path that works with the phone on a tripod.
+
+The phone sheet and the watch page can silence alarms for 1, 2, 4 or 6 hours, or a custom duration up to 12 hours. Vibrate only keeps the banner and triggers a vibration without a tone. Fully silent hides ordinary alarms. An urgent-low alarm, and any glucose reading under 55 mg/dL, still sounds and vibrates. Critical pump alerts such as an occlusion still sound. The sheet and the watch page say this. Ending the snooze clears the style. A notification action that only sends minutes keeps the older full mute of non-urgent alarms, and the urgent-low floor still applies.
+
+Watch buttons for Showtime, Sport, Snack ("small carbs, observe"), Standardfrühstück and Alkohol send a confirm message. Suggestion rows send confirm or reject. A short text field uses the watch keyboard, including its dictation button, and the phone answers with the same chat engine as the phone screen. None of those messages include a bolus amount. If a payload also contains a bolus or carb key, Rheos ignores it and the existing treatment handler keeps it. A bolus is still only the existing watch bolus flow and its confirmation.
 
 ## Storage
 

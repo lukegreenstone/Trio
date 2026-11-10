@@ -729,6 +729,107 @@ final class RheosCoreTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent("rheos-state.json").path))
     }
 
+    func testSilenceKeepsUrgentLowAudible() {
+        XCTAssertEqual(
+            AlarmSilencePolicy.delivery(snoozed: true, style: .fullySilent, isUrgentLow: true),
+            .deliver(tone: true)
+        )
+        XCTAssertEqual(
+            AlarmSilencePolicy.delivery(snoozed: true, style: .vibrateOnly, isUrgentLow: false, glucoseMgdl: 54),
+            .deliver(tone: true)
+        )
+        XCTAssertEqual(
+            AlarmSilencePolicy.delivery(snoozed: true, style: .fullySilent, isUrgentLow: false, glucoseMgdl: 55),
+            .suppress
+        )
+        XCTAssertEqual(
+            AlarmSilencePolicy.delivery(snoozed: true, style: .vibrateOnly, isUrgentLow: false, glucoseMgdl: 180),
+            .deliver(tone: false)
+        )
+        XCTAssertEqual(
+            AlarmSilencePolicy.delivery(snoozed: true, style: nil, isUrgentLow: false, glucoseMgdl: 200),
+            .suppress
+        )
+        XCTAssertEqual(
+            AlarmSilencePolicy.delivery(snoozed: true, style: .fullySilent, isUrgentLow: false, isCritical: true),
+            .deliver(tone: true)
+        )
+        XCTAssertEqual(
+            AlarmSilencePolicy.delivery(snoozed: false, style: .fullySilent, isUrgentLow: false, glucoseMgdl: 40),
+            .deliver(tone: true)
+        )
+        XCTAssertEqual(AlarmSilencePolicy.clampedMinutes(0), 0)
+        XCTAssertEqual(AlarmSilencePolicy.clampedMinutes(10_000), 12 * 60)
+        XCTAssertEqual(AlarmSilencePolicy.presetHours, [1, 2, 4, 6])
+    }
+
+    func testWatchConfirmDoesNotDoseAndIgnoresBolusPayloads() {
+        let breakfast = RheosWatchMessages.action(RheosWatchFields(
+            decision: "confirm",
+            kind: "meal",
+            note: "Standardfrühstück"
+        ))
+        XCTAssertEqual(breakfast, .confirm(kind: "meal", note: "Standardfrühstück", suggestionID: nil))
+        if let breakfast {
+            XCTAssertFalse(RheosWatchMessages.changesInsulin(breakfast))
+        }
+
+        let snack = RheosWatchMessages.action(RheosWatchFields(
+            decision: "confirm",
+            kind: "snack",
+            note: "small carbs, observe"
+        ))
+        XCTAssertEqual(snack, .confirm(kind: "snack", note: "small carbs, observe", suggestionID: nil))
+
+        let hiddenBolus = RheosWatchMessages.action(RheosWatchFields(
+            decision: "confirm",
+            kind: "meal",
+            note: "Standardfrühstück",
+            containsBolusOrCarbs: true
+        ))
+        XCTAssertNil(hiddenBolus)
+        XCTAssertNil(RheosWatchMessages.action(RheosWatchFields(decision: "confirm", kind: "bolus", note: "2")))
+        XCTAssertNil(RheosWatchMessages.action(RheosWatchFields(chat: "   ")))
+
+        let silence = RheosWatchMessages.action(RheosWatchFields(snoozeMinutes: 120, snoozeStyle: "fullySilent"))
+        XCTAssertEqual(silence, .silence(minutes: 120, style: .fullySilent))
+        let chat = RheosWatchMessages.action(RheosWatchFields(chat: "Warum hoch?"))
+        XCTAssertEqual(chat, .chat("Warum hoch?"))
+        if let chat {
+            XCTAssertFalse(RheosWatchMessages.changesInsulin(chat))
+        }
+    }
+
+    func testWatchCatalogIsNotesOnly() {
+        let care = RheosCareReport(
+            patchCheck: "Pflaster prüfen",
+            compressionExcluded: [],
+            siteNotes: [],
+            weekly: "",
+            hypoSuggestion: nil,
+            alcohol: "Alkohol-Hinweis"
+        )
+        let lines = RheosWatchCatalog.lines(
+            care: care,
+            chat: [RheosChatSuggestion(kind: "sport", text: "Training notieren")]
+        )
+        XCTAssertEqual(lines.map(\.kind), ["note", "note", "sport"])
+        XCTAssertFalse(lines.contains { $0.kind == "bolus" || $0.note.contains("U") && $0.kind == "bolus" })
+        for line in lines {
+            let action = RheosWatchMessages.action(RheosWatchFields(
+                decision: "confirm",
+                kind: line.kind,
+                note: line.note,
+                suggestionID: line.id
+            ))
+            guard let action else {
+                XCTFail("missing action")
+                continue
+            }
+            XCTAssertFalse(RheosWatchMessages.changesInsulin(action))
+        }
+    }
+
     private func stableGlucose(days: ClosedRange<Int>, invertFrom: Int? = nil) -> [RheosGlucosePoint] {
         var points: [RheosGlucosePoint] = []
         for day in days {
