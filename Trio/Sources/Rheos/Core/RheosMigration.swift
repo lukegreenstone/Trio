@@ -4,7 +4,7 @@ enum RheosSchema {
     /// Bump this when the on-disk document gains a field. Add a step in
     /// `RheosMigrator.migrate` that fills the new field from the old document.
     /// Never delete a file because its version changed.
-    static let current = 2
+    static let current = 3
     static let stateFile = "rheos-state.json"
 }
 
@@ -67,6 +67,9 @@ enum RheosMigrator {
         }
         if (json["schemaVersion"] as? Int ?? 1) < 2 {
             json = migrate1to2(json)
+        }
+        if (json["schemaVersion"] as? Int ?? 2) < 3 {
+            json = migrate2to3(json)
         }
         json["schemaVersion"] = RheosSchema.current
         return try decode(complete(json))
@@ -162,6 +165,21 @@ enum RheosMigrator {
         return copy
     }
 
+    /// Version 2 had age, weight and height on `dataset.body` and no history.
+    /// Those values stay. The history starts empty.
+    private static func migrate2to3(_ json: [String: Any]) -> [String: Any] {
+        var copy = json
+        var dataset = copy["dataset"] as? [String: Any] ?? [:]
+        if dataset["bodyHistory"] == nil { dataset["bodyHistory"] = [Any]() }
+        if var body = dataset["body"] as? [String: Any] {
+            if body["manualFields"] == nil { body["manualFields"] = [Any]() }
+            if body["muscleComesFromLeanMass"] == nil { body["muscleComesFromLeanMass"] = false }
+            dataset["body"] = body
+        }
+        copy["dataset"] = dataset
+        return copy
+    }
+
     private static func complete(_ json: [String: Any]) -> [String: Any] {
         var copy = json
         copy["schemaVersion"] = copy["schemaVersion"] ?? RheosSchema.current
@@ -170,6 +188,12 @@ enum RheosMigrator {
             if dataset[key] == nil { dataset[key] = [Any]() }
         }
         if dataset["body"] == nil { dataset["body"] = [String: Any]() }
+        if var body = dataset["body"] as? [String: Any] {
+            if body["manualFields"] == nil { body["manualFields"] = [Any]() }
+            if body["muscleComesFromLeanMass"] == nil { body["muscleComesFromLeanMass"] = false }
+            dataset["body"] = body
+        }
+        if dataset["bodyHistory"] == nil { dataset["bodyHistory"] = [Any]() }
         copy["dataset"] = dataset
         var bounds = copy["bounds"] as? [String: Any] ?? [:]
         func fill(_ key: String, _ value: Any) {

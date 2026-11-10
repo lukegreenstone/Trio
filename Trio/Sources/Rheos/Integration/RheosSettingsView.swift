@@ -70,6 +70,9 @@ struct RheosSettingsView: View {
                 NavigationLink("Vorschläge ansehen") {
                     RheosSuggestionsView(resolver: resolver)
                 }
+                NavigationLink("Körperdaten") {
+                    RheosBodyView(resolver: resolver)
+                }
             } header: {
                 Text("Letzte Auswertung")
             }

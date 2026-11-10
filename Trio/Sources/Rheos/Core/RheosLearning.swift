@@ -41,8 +41,15 @@ enum RheosLearner {
             )
         }
         let learningSet = RheosCare.excludingCompression(dataset, calendar: calendar)
+        let prior = RheosBodyPrior.strength(for: learningSet.body)
         let learned = estimate(dataset: learningSet, targets: targets, band: band, calendar: calendar)
-        let walk = walkForward(dataset: learningSet, targets: targets, bounds: limits, calendar: calendar)
+        let walk = walkForward(
+            dataset: learningSet,
+            targets: targets,
+            bounds: limits,
+            priorStrength: prior,
+            calendar: calendar
+        )
 
         if mode == .aus {
             return decision(
@@ -117,7 +124,7 @@ enum RheosLearner {
             mode: mode,
             code: .applied,
             applied: true,
-            reason: "Scharf. Stundenfaktoren für ISF, KH-Faktor und Basal, Band \(format(band.lowerBound))–\(format(band.upperBound)), höchstens \(format(limits.maxDailyChange)) pro Tag für das Stundenmodell. SMB und UAM bleiben an.\(contextNote)",
+            reason: "Scharf. Stundenfaktoren für ISF, KH-Faktor und Basal, Band \(format(band.lowerBound))–\(format(band.upperBound)), höchstens \(format(limits.maxDailyChange)) pro Tag für das Stundenmodell. SMB und UAM bleiben an.\(contextNote)\(bodyNote(dataset))",
             factors: combined,
             slowFactors: slow,
             learned: learned,
@@ -134,7 +141,11 @@ enum RheosLearner {
         calendar: Calendar
     ) -> RheosHourlyFactors {
         let observations = RheosFit.observations(dataset: dataset, targets: targets, calendar: calendar)
-        var model = RheosFit.fit(observations: observations, band: band)
+        var model = RheosFit.fit(
+            observations: observations,
+            band: band,
+            priorStrength: RheosBodyPrior.strength(for: dataset.body)
+        )
         model.factors.carbRatio = RheosFit.carbRatioFactors(dataset: dataset, targets: targets, band: band, calendar: calendar)
         return model.factors
     }
@@ -143,6 +154,7 @@ enum RheosLearner {
         dataset: RheosDataset,
         targets: RheosTargetSchedule,
         bounds: RheosBounds,
+        priorStrength: Double = RheosBodyPrior.plain,
         calendar: Calendar
     ) -> RheosWalkForwardResult {
         let limits = bounds.sanitized()
@@ -182,7 +194,7 @@ enum RheosLearner {
                 reason: "Die Prüfung konnte nicht gerechnet werden."
             )
         }
-        let trained = RheosFit.fit(observations: train, band: 0.7 ... 1.2)
+        let trained = RheosFit.fit(observations: train, band: 0.7 ... 1.2, priorStrength: priorStrength)
         let modelErrors = test.map { abs($0.glucose - RheosFit.predict($0, model: trained)) }
         let baselineErrors = test.map { abs($0.glucose - trainGlobal) }
         let modelMAE = RheosStats.mean(modelErrors) ?? 0
@@ -226,6 +238,11 @@ enum RheosLearner {
             bandMinimum: band.lowerBound,
             bandMaximum: band.upperBound
         )
+    }
+
+    private static func bodyNote(_ dataset: RheosDataset) -> String {
+        guard dataset.body.weightKg != nil else { return "" }
+        return " Körperdaten sind ein vorsichtigerer Prior und ein Entwurf für das Team, keine angewendete Insulinzahl."
     }
 
     private static func format(_ value: Double) -> String {

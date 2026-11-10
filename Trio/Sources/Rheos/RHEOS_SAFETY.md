@@ -49,6 +49,12 @@ Rheos adds only notes and local notifications whose identifiers start with `rheo
 
 None of these write insulin, carbs, targets, or limits.
 
+## Körperdaten
+
+Settings → Rheos → Körperdaten stores age, sex, weight, height, body fat and muscle mass in `rheos-state.json`, with a history of each change. Apple Health can fill empty fields from weight, height, body fat, lean mass, sex and date of birth. A field you type is kept when Health is read again. Health’s lean mass is labelled as lean mass, not skeletal muscle.
+
+Those measurements are a learning prior only in this sense: when a weight is stored, sparse hours shrink a little harder toward 1. They do not move the prior away from 1 and they are not a dose. The screen also shows a draft start (0.4 units per kg in adulthood, 0.3 under 18, 0.2 from age 65; half of that as basal; ISF 1800/TDD; carb ratio 500/TDD). That draft is labelled for review with the diabetes team. `RheosProfileHook` does not read it.
+
 ## Watch and alarm silence
 
 Trio already had a watch app (glucose, carbs, bolus confirmation, overrides, temp targets) and a snooze (`TrioAlertManager.applySnooze`, 15 min / 1 h / 3 h / 6 h) that the watch notification actions already forwarded with `WatchMessageKeys.snoozeDuration`. Those screens and the bolus request are unchanged. Rheos is a new page on the same watch app. It uses the same `WCSession`: `sendMessage` when the phone is reachable, `transferUserInfo` when the phone is nearby but the watch session is not currently reachable. That is the path that works with the phone on a tripod.

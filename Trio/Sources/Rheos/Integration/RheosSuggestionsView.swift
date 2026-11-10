@@ -23,9 +23,6 @@ struct RheosSuggestionsView: View {
     )
     @State private var showWeeklyShare = false
     @State private var weeklyURL: URL?
-    @State private var age = ""
-    @State private var weight = ""
-    @State private var height = ""
 
     var body: some View {
         Form {
@@ -159,17 +156,8 @@ struct RheosSuggestionsView: View {
                 }
 
                 Section("Körperdaten") {
-                    TextField("Alter in Jahren", text: $age)
-                    TextField("Gewicht in kg", text: $weight)
-                    TextField("Größe in cm", text: $height)
-                    Button("Entwurf anzeigen") {
-                        let inputs = RheosBodyInputs(
-                            ageYears: Double(age.replacingOccurrences(of: ",", with: ".")),
-                            weightKg: Double(weight.replacingOccurrences(of: ",", with: ".")),
-                            heightCm: Double(height.replacingOccurrences(of: ",", with: "."))
-                        )
-                        coordinator?.saveBody(inputs)
-                        reload()
+                    NavigationLink("Körperdaten eingeben") {
+                        RheosBodyView(resolver: resolver)
                     }
                     Text(report.body.summary).font(.footnote)
                 }
@@ -237,9 +225,6 @@ struct RheosSuggestionsView: View {
             ?? RheosReference.defaultMinimumMultiplier
         let autosensMax = preferences.map { NSDecimalNumber(decimal: $0.autosensMax).doubleValue }
             ?? RheosReference.defaultMaximumMultiplier
-        if let age = dataset.body.ageYears { self.age = format(age) }
-        if let weight = dataset.body.weightKg { self.weight = format(weight) }
-        if let height = dataset.body.heightCm { self.height = format(height) }
         report = RheosReportBuilder.build(
             dataset: dataset,
             mode: RheosModeStore.current,

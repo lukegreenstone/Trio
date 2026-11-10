@@ -84,7 +84,7 @@ enum RheosFit {
 
     /// Ridge regression of (glucose − target) on IOB and still-active carbs,
     /// then a per-hour factor with shrinkage toward 1 and toward the neighbouring hours.
-    static func fit(observations: [Observation], band: ClosedRange<Double>) -> Model {
+    static func fit(observations: [Observation], band: ClosedRange<Double>, priorStrength: Double = RheosBodyPrior.plain) -> Model {
         let slopes = slopes(observations)
         var residualByHour: [Int: [Double]] = [:]
         for observation in observations {
@@ -104,8 +104,8 @@ enum RheosFit {
             isf[hour] = 1 - RheosReference.deviationGain * delta
             counts[hour] = values.count
         }
-        basal = smooth(shrink(basal, counts: counts), band: band)
-        isf = smooth(shrink(isf, counts: counts), band: band)
+        basal = smooth(shrink(basal, counts: counts, priorStrength: priorStrength), band: band)
+        isf = smooth(shrink(isf, counts: counts, priorStrength: priorStrength), band: band)
         return Model(factors: RheosHourlyFactors(basal: basal, isf: isf, carbRatio: Array(repeating: 1, count: 24)), iobSlope: slopes.iob, carbSlope: slopes.carb)
     }
 
@@ -224,11 +224,11 @@ enum RheosFit {
         return (iob, carb)
     }
 
-    private static func shrink(_ values: [Double], counts: [Int]) -> [Double] {
-        zip(values, counts).map { value, count in
+    private static func shrink(_ values: [Double], counts: [Int], priorStrength: Double) -> [Double] {
+        let prior = priorStrength > 0 ? priorStrength : RheosBodyPrior.plain
+        return zip(values, counts).map { value, count in
             let n = Double(count)
             guard n > 0 else { return 1 }
-            let prior = 4.0
             return (n * value + prior * 1) / (n + prior)
         }
     }

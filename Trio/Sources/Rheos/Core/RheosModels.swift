@@ -235,6 +235,15 @@ struct RheosBodyInputs: Codable, Equatable {
     var ageYears: Double? = nil
     var weightKg: Double? = nil
     var heightCm: Double? = nil
+    var sex: RheosBiologicalSex? = nil
+    var bodyFatPercent: Double? = nil
+    /// Skeletal muscle when the user typed it. Health can put lean mass here
+    /// until the user overrides it. See `muscleComesFromLeanMass`.
+    var muscleMassKg: Double? = nil
+    var leanMassKg: Double? = nil
+    var muscleComesFromLeanMass: Bool = false
+    /// Names of fields the user edited. A Health refresh leaves those alone.
+    var manualFields: [String] = []
 }
 
 struct RheosApplicationLog: Codable, Equatable, Identifiable {
@@ -262,6 +271,7 @@ struct RheosDataset: Codable, Equatable {
     var workouts: [RheosWorkout] = []
     var sleep: [RheosSleepInterval] = []
     var body: RheosBodyInputs = RheosBodyInputs()
+    var bodyHistory: [RheosBodySnapshot] = []
 }
 
 struct RheosStability: Equatable {
@@ -343,9 +353,13 @@ struct RheosSignalRelevance: Equatable, Identifiable {
 }
 
 struct RheosBodyDraft: Equatable {
-    /// Always nil in this version. Body data never becomes an insulin number.
-    var suggestedDailyInsulin: Double?
+    /// Sketch for the diabetes team. The profile hook never reads these numbers.
+    var totalDailyDose: Double?
+    var basalPerHour: Double?
+    var isfMgdlPerUnit: Double?
+    var carbGramsPerUnit: Double?
     var summary: String
+    var appliedToProfile: Bool = false
 }
 
 struct RheosReport: Equatable {

@@ -186,16 +186,7 @@ enum RheosAnalysis {
     }
 
     static func bodyDraft(_ inputs: RheosBodyInputs) -> RheosBodyDraft {
-        let noted = [
-            inputs.ageYears.map { "Alter \(formatted($0)) Jahre" },
-            inputs.weightKg.map { "Gewicht \(formatted($0)) kg" },
-            inputs.heightCm.map { "Größe \(formatted($0)) cm" }
-        ].compactMap { $0 }
-        let prefix = noted.isEmpty ? "Keine Körperdaten eingetragen. " : "Notiert: \(noted.joined(separator: ", ")). "
-        return RheosBodyDraft(
-            suggestedDailyInsulin: nil,
-            summary: prefix + "Kein Startprofil. Die Formel für Basal, ISF und KH-Faktor legt das Team fest. Rheos rechnet daraus keine Insulinzahl und schreibt kein Profil."
-        )
+        RheosBodyDraftMath.draft(inputs)
     }
 
     private static func relevance(

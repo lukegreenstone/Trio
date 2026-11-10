@@ -305,8 +305,12 @@ final class RheosCoreTests: XCTestCase {
         XCTAssertEqual(dawn.nightsWithRiseOver20, 1)
 
         let draft = RheosAnalysis.bodyDraft(RheosBodyInputs(ageYears: 40, weightKg: 80, heightCm: 180))
-        XCTAssertNil(draft.suggestedDailyInsulin)
-        XCTAssertTrue(draft.summary.contains("keine Insulinzahl"))
+        XCTAssertEqual(draft.totalDailyDose ?? 0, 32, accuracy: 0.001)
+        XCTAssertEqual(draft.basalPerHour ?? 0, 16.0 / 24.0, accuracy: 0.001)
+        XCTAssertEqual(draft.isfMgdlPerUnit ?? 0, 1800.0 / 32.0, accuracy: 0.001)
+        XCTAssertEqual(draft.carbGramsPerUnit ?? 0, 500.0 / 32.0, accuracy: 0.001)
+        XCTAssertFalse(draft.appliedToProfile)
+        XCTAssertTrue(draft.summary.contains("nicht angewendet"))
     }
 
     func testWearableSignalIsProposedOnlyWhenItImprovesPrediction() {
@@ -404,7 +408,7 @@ final class RheosCoreTests: XCTestCase {
         XCTAssertEqual(store.loadDataset().glucose.first?.mgdl ?? 0, 144, accuracy: 0.001)
         XCTAssertEqual(store.loadApplied()?.factors.basal[4] ?? 0, 1.05, accuracy: 0.001)
         let rewritten = try String(contentsOf: stateURL, encoding: .utf8)
-        XCTAssertTrue(rewritten.contains("\"schemaVersion\" : 2") || rewritten.contains("\"schemaVersion\": 2"))
+        XCTAssertTrue(rewritten.contains("\"schemaVersion\" : 3") || rewritten.contains("\"schemaVersion\": 3"))
         let backup = try String(contentsOf: directory.appendingPathComponent("rheos-state.v1.bak"), encoding: .utf8)
         XCTAssertTrue(backup.contains("glucoseReadings"))
         XCTAssertTrue(backup.contains("144"))
@@ -828,6 +832,83 @@ final class RheosCoreTests: XCTestCase {
             }
             XCTAssertFalse(RheosWatchMessages.changesInsulin(action))
         }
+    }
+
+    func testBodyDataIsADraftAndDoesNotBecomeTheProfile() throws {
+        let adult = RheosBodyDraftMath.draft(RheosBodyInputs(ageYears: 70, weightKg: 60))
+        XCTAssertEqual(RheosBodyDraftMath.unitsPerKilogram(ageYears: 70), 0.2, accuracy: 0.001)
+        XCTAssertEqual(adult.totalDailyDose ?? 0, 12, accuracy: 0.001)
+        XCTAssertFalse(adult.appliedToProfile)
+        XCTAssertNil(RheosBodyDraftMath.draft(RheosBodyInputs(heightCm: 170)).totalDailyDose)
+
+        var manual = RheosBodyRecord.markingManual(RheosBodyInputs(weightKg: 81, heightCm: 180))
+        let health = RheosBodyInputs(ageYears: 41, weightKg: 70, heightCm: 175, bodyFatPercent: 22, leanMassKg: 55)
+        let merged = RheosBodyRecord.merging(current: manual, health: health)
+        XCTAssertEqual(merged.weightKg ?? 0, 81, accuracy: 0.001)
+        XCTAssertEqual(merged.ageYears ?? 0, 41, accuracy: 0.001)
+        XCTAssertEqual(merged.muscleMassKg ?? 0, 55, accuracy: 0.001)
+        XCTAssertTrue(merged.muscleComesFromLeanMass)
+        XCTAssertFalse(merged.manualFields.contains("ageYears"))
+
+        let now = date(day: 4, hour: 9)
+        var history = RheosBodyRecord.appending([], inputs: merged, source: "health", now: now)
+        history = RheosBodyRecord.appending(history, inputs: merged, source: "health", now: now.addingTimeInterval(60))
+        XCTAssertEqual(history.count, 1)
+        manual.weightKg = 82
+        manual = RheosBodyRecord.markingManual(manual)
+        history = RheosBodyRecord.appending(history, inputs: manual, source: "manual", now: now.addingTimeInterval(120))
+        XCTAssertEqual(history.count, 2)
+
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let version2: [String: Any] = [
+            "schemaVersion": 2,
+            "dataset": [
+                "glucose": [["date": "2026-11-01T03:00:00Z", "mgdl": 110]],
+                "body": ["ageYears": 40, "weightKg": 80]
+            ]
+        ]
+        let url = directory.appendingPathComponent("rheos-state.json")
+        try JSONSerialization.data(withJSONObject: version2).write(to: url)
+        let store = RheosStore(directory: directory)
+        let loaded = store.loadDataset()
+        XCTAssertEqual(loaded.body.weightKg ?? 0, 80, accuracy: 0.001)
+        XCTAssertTrue(loaded.bodyHistory.isEmpty)
+        XCTAssertFalse(RheosAnalysis.bodyDraft(loaded.body).appliedToProfile)
+
+        var thin = RheosDataset(glucose: [RheosGlucosePoint(date: date(day: 1, hour: 1), mgdl: 140)])
+        thin.body = RheosBodyInputs(ageYears: 40, weightKg: 80)
+        let decision = RheosLearner.evaluate(
+            dataset: thin,
+            mode: .scharf,
+            bounds: RheosBounds(),
+            previous: nil,
+            now: date(day: 2, hour: 1),
+            calendar: calendar
+        )
+        XCTAssertFalse(decision.applied)
+        XCTAssertEqual(decision.factors.basal, RheosHourlyFactors.identity.basal)
+    }
+
+    func testBodyPriorShrinksSparseHoursCloserToOne() {
+        let band = 0.7 ... 1.2
+        let observations = (0 ..< 24).flatMap { hour in
+            (0 ..< 4).map { _ in
+                RheosFit.Observation(
+                    day: date(day: 1, hour: 0),
+                    hour: hour,
+                    glucose: 180,
+                    target: 100,
+                    iob: 0,
+                    activeCarbs: 0
+                )
+            }
+        }
+        let plain = RheosFit.fit(observations: observations, band: band, priorStrength: RheosBodyPrior.plain)
+        let cautious = RheosFit.fit(observations: observations, band: band, priorStrength: RheosBodyPrior.withBody)
+        XCTAssertGreaterThan(plain.factors.basal[12], 1)
+        XCTAssertLessThan(cautious.factors.basal[12], plain.factors.basal[12])
+        XCTAssertGreaterThan(cautious.factors.basal[12], 1)
     }
 
     func testWatchFaceShowsAgeAndRespectsReloadBudget() {

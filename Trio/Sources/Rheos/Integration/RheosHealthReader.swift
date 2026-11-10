@@ -48,7 +48,11 @@ enum RheosHealthReader {
             .oxygenSaturation,
             .appleSleepingWristTemperature,
             .stepCount,
-            .activeEnergyBurned
+            .activeEnergyBurned,
+            .bodyMass,
+            .height,
+            .bodyFatPercentage,
+            .leanBodyMass
         ]
         for identifier in identifiers {
             if let type = HKObjectType.quantityType(forIdentifier: identifier) {
@@ -59,7 +63,66 @@ enum RheosHealthReader {
         if let sleep = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) {
             types.insert(sleep)
         }
+        if let sex = HKCharacteristicType.characteristicType(forIdentifier: .biologicalSex) {
+            types.insert(sex)
+        }
+        if let birth = HKCharacteristicType.characteristicType(forIdentifier: .dateOfBirth) {
+            types.insert(birth)
+        }
         return types
+    }
+
+    /// Latest body measurements already stored in Apple Health.
+    /// Lean mass is not skeletal muscle. The caller labels that.
+    static func readBody(store: HKHealthStore, now: Date = Date()) async -> RheosBodyInputs {
+        guard HKHealthStore.isHealthDataAvailable() else { return RheosBodyInputs() }
+        var inputs = RheosBodyInputs()
+        if let birthday = try? store.dateOfBirthComponents(),
+           let date = Calendar.current.date(from: birthday) {
+            let years = Calendar.current.dateComponents([.year], from: date, to: now).year
+            if let years, years > 0, years < 130 { inputs.ageYears = Double(years) }
+        }
+        if let sex = try? store.biologicalSex().biologicalSex {
+            switch sex {
+            case .female: inputs.sex = .female
+            case .male: inputs.sex = .male
+            case .other: inputs.sex = .other
+            default: break
+            }
+        }
+        inputs.weightKg = await latestKilograms(store: store, identifier: .bodyMass)
+        if let meters = await latest(store: store, identifier: .height, unit: .meter()) {
+            inputs.heightCm = meters * 100
+        }
+        if let fraction = await latest(store: store, identifier: .bodyFatPercentage, unit: .percent()) {
+            inputs.bodyFatPercent = fraction <= 1.5 ? fraction * 100 : fraction
+        }
+        inputs.leanMassKg = await latestKilograms(store: store, identifier: .leanBodyMass)
+        return inputs
+    }
+
+    private static func latestKilograms(store: HKHealthStore, identifier: HKQuantityTypeIdentifier) async -> Double? {
+        await latest(store: store, identifier: identifier, unit: .gramUnit(with: .kilo))
+    }
+
+    private static func latest(
+        store: HKHealthStore,
+        identifier: HKQuantityTypeIdentifier,
+        unit: HKUnit
+    ) async -> Double? {
+        guard let type = HKQuantityType.quantityType(forIdentifier: identifier) else { return nil }
+        return await withCheckedContinuation { continuation in
+            let query = HKSampleQuery(
+                sampleType: type,
+                predicate: nil,
+                limit: 1,
+                sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)]
+            ) { _, samples, _ in
+                let quantity = (samples?.first as? HKQuantitySample)?.quantity.doubleValue(for: unit)
+                continuation.resume(returning: quantity)
+            }
+            store.execute(query)
+        }
     }
 
     private static func quantities(

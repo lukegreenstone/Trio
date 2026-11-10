@@ -82,6 +82,8 @@ final class RheosCoordinator {
             return copy
         }
         dataset.body = previous.body
+        dataset.bodyHistory = previous.bodyHistory
+        let now = Date()
 
         if let healthStore = resolver.resolve(HKHealthStore.self) {
             await RheosHealthReader.requestReadAccess(store: healthStore)
@@ -89,13 +91,23 @@ final class RheosCoordinator {
             dataset.wearableDays = health.days
             dataset.workouts = health.workouts
             dataset.sleep = health.sleep
+            let measured = await RheosHealthReader.readBody(store: healthStore, now: now)
+            let merged = RheosBodyRecord.merging(current: previous.body, health: measured)
+            if !RheosBodyRecord.sameMeasurements(merged, previous.body) {
+                dataset.body = merged
+                dataset.bodyHistory = RheosBodyRecord.appending(
+                    previous.bodyHistory,
+                    inputs: merged,
+                    source: "health",
+                    now: now
+                )
+            }
         } else {
             dataset.wearableDays = previous.wearableDays
             dataset.workouts = previous.workouts
             dataset.sleep = previous.sleep
         }
 
-        let now = Date()
         store.saveDataset(dataset, now: now)
         let decision = RheosLearner.evaluate(
             dataset: dataset,
@@ -251,8 +263,31 @@ final class RheosCoordinator {
     func saveBody(_ inputs: RheosBodyInputs) {
         let store = RheosStore.shared
         var dataset = store.loadDataset()
-        dataset.body = inputs
-        store.saveDataset(dataset)
+        let marked = RheosBodyRecord.markingManual(inputs)
+        let now = Date()
+        dataset.body = marked
+        dataset.bodyHistory = RheosBodyRecord.appending(dataset.bodyHistory, inputs: marked, source: "manual", now: now)
+        store.saveDataset(dataset, now: now)
+    }
+
+    /// Reads Health body measurements and keeps fields the user already typed.
+    func importBodyFromHealth() async -> String {
+        guard let healthStore = resolver.resolve(HKHealthStore.self) else {
+            return "Apple Health ist hier nicht verfügbar."
+        }
+        await RheosHealthReader.requestReadAccess(store: healthStore)
+        let measured = await RheosHealthReader.readBody(store: healthStore)
+        let store = RheosStore.shared
+        var dataset = store.loadDataset()
+        let merged = RheosBodyRecord.merging(current: dataset.body, health: measured)
+        if RheosBodyRecord.sameMeasurements(merged, dataset.body) {
+            return "Health hat keine neuen Werte, oder die Felder sind manuell gesetzt."
+        }
+        let now = Date()
+        dataset.body = merged
+        dataset.bodyHistory = RheosBodyRecord.appending(dataset.bodyHistory, inputs: merged, source: "health", now: now)
+        store.saveDataset(dataset, now: now)
+        return "Health-Werte übernommen. Manuell gesetzte Felder bleiben. Nichts wird als Insulin übernommen."
     }
 
     func saveBounds(_ bounds: RheosBounds) {
