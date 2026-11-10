@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 /// Status on the home screen and the loop-status sheet.
@@ -35,7 +36,9 @@ struct RheosModeBanner: View {
             }
         }
         .onAppear { mode = RheosModeStore.current }
-        .onReceive(NotificationCenter.default.publisher(for: .rheosModeDidChange)) { _ in
+        .onReceive(
+            Foundation.NotificationCenter.default.publisher(for: Foundation.Notification.Name.rheosModeDidChange)
+        ) { (_: Foundation.Notification) in
             mode = RheosModeStore.current
         }
     }

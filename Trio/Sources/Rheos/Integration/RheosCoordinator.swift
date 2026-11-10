@@ -35,15 +35,18 @@ final class RheosCoordinator {
         timer.resume()
         self.timer = timer
 
-        let center = NotificationCenter.default
-        observers.append(center.addObserver(forName: .rheosModeDidChange, object: nil, queue: .main) { [weak self] _ in
+        let center: Foundation.NotificationCenter = Foundation.NotificationCenter.default
+        let modeName: Foundation.Notification.Name = Foundation.Notification.Name.rheosModeDidChange
+        let foregroundName: Foundation.Notification.Name = UIApplication.willEnterForegroundNotification
+        let mainQueue: OperationQueue = OperationQueue.main
+        observers.append(center.addObserver(forName: modeName, object: nil, queue: mainQueue) { [weak self] (_: Foundation.Notification) in
             Task { await self?.refresh() }
         })
         observers.append(center.addObserver(
-            forName: UIApplication.willEnterForegroundNotification,
+            forName: foregroundName,
             object: nil,
-            queue: .main
-        ) { [weak self] _ in
+            queue: mainQueue
+        ) { [weak self] (_: Foundation.Notification) in
             Task { await self?.refresh() }
         })
         Task { await refresh() }
@@ -55,19 +58,8 @@ final class RheosCoordinator {
 
     func refresh() async {
         guard RheosModeStore.current != .aus else { return }
-        let shouldStart: Bool = {
-            lock.lock()
-            defer { lock.unlock() }
-            if isRefreshing { return false }
-            isRefreshing = true
-            return true
-        }()
-        guard shouldStart else { return }
-        defer {
-            lock.lock()
-            isRefreshing = false
-            lock.unlock()
-        }
+        guard beginRefresh() else { return }
+        defer { endRefresh() }
 
         let store = RheosStore.shared
         let previous = store.loadDataset()
@@ -186,11 +178,30 @@ final class RheosCoordinator {
         )
         let result = await RheosChatEngine.reply(question: trimmed, report: report, resolver: resolver)
         let reply = String(result.text.prefix(280))
-        lock.lock()
-        watchChatReply = reply
-        chatSuggestions = result.suggestions
-        lock.unlock()
+        storeWatchChat(reply: reply, suggestions: result.suggestions)
         return reply
+    }
+
+    /// Synchronous so NSLock is not taken inside an async function.
+    private func beginRefresh() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if isRefreshing { return false }
+        isRefreshing = true
+        return true
+    }
+
+    private func endRefresh() {
+        lock.lock()
+        defer { lock.unlock() }
+        isRefreshing = false
+    }
+
+    private func storeWatchChat(reply: String, suggestions: [RheosChatSuggestion]) {
+        lock.lock()
+        defer { lock.unlock() }
+        watchChatReply = reply
+        chatSuggestions = suggestions
     }
 
     func watchSnapshot() -> RheosWatchSnapshot {

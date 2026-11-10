@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 import Swinject
 import UniformTypeIdentifiers
@@ -128,7 +129,9 @@ struct RheosSettingsView: View {
         .onChange(of: contextNudge) { _, _ in
             saveBand()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .rheosModeDidChange)) { _ in
+        .onReceive(
+            Foundation.NotificationCenter.default.publisher(for: Foundation.Notification.Name.rheosModeDidChange)
+        ) { (_: Foundation.Notification) in
             reload()
         }
         .alert("Rheos auf Scharf stellen?", isPresented: $confirmScharf) {

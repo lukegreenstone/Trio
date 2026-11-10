@@ -15,7 +15,7 @@ enum RheosHealthReader {
         let types = readTypes()
         guard !types.isEmpty else { return }
         do {
-            try await store.requestAuthorization(toShare: nil, read: types)
+            try await store.requestAuthorization(toShare: Set<HKSampleType>(), read: types)
         } catch {
             debug(.service, "Rheos HealthKit read authorization failed: \(error)")
         }

@@ -1,7 +1,7 @@
 import Foundation
 
-extension Notification.Name {
-    static let rheosModeDidChange = Notification.Name("rheosModeDidChange")
+extension Foundation.Notification.Name {
+    static let rheosModeDidChange = Foundation.Notification.Name("rheosModeDidChange")
 }
 
 /// Rheos mode lives in UserDefaults, not in TrioSettings or preferences.
@@ -36,6 +36,9 @@ enum RheosModeStore {
                 )
             )
         }
-        NotificationCenter.default.post(name: .rheosModeDidChange, object: mode)
+        Foundation.NotificationCenter.default.post(
+            name: Foundation.Notification.Name.rheosModeDidChange,
+            object: mode
+        )
     }
 }
