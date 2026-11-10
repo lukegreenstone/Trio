@@ -105,6 +105,15 @@ final class RheosCoordinator {
             now: now
         )
         store.saveDecision(decision)
+        let care = RheosCare.report(
+            dataset: dataset,
+            sites: store.patchSites(),
+            alcoholDates: store.announcements().filter { $0.kind == "alcohol" }.map(\.date),
+            learned: decision.reason,
+            now: now,
+            calendar: .current
+        )
+        RheosCareNotifier.post(care)
         if decision.applied {
             // Persist the slow model. The context nudge stays in the decision
             // the profile hook reads, and is recomputed next time.
@@ -131,6 +140,13 @@ final class RheosCoordinator {
         )
         noteConfirmation(text)
         return text
+    }
+
+    /// Records where the new Medtrum patch sits. Does not change insulin.
+    func recordPatchSite(_ place: String) {
+        let trimmed = place.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        RheosStore.shared.addPatchSite(RheosPatchSite(id: UUID().uuidString, place: trimmed, started: Date()))
     }
 
     /// Records that the user saw a meal outcome. Does not deliver insulin.

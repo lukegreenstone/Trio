@@ -24,6 +24,7 @@ struct RheosStateDocument: Codable, Equatable {
     var applied: RheosAppliedState?
     var applications: [RheosApplicationLog]
     var announcements: [RheosAnnouncement]
+    var patchSites: [RheosPatchSite]
 
     static let empty = RheosStateDocument(
         schemaVersion: RheosSchema.current,
@@ -32,7 +33,8 @@ struct RheosStateDocument: Codable, Equatable {
         decision: nil,
         applied: nil,
         applications: [],
-        announcements: []
+        announcements: [],
+        patchSites: []
     )
 
     var containsUserData: Bool {
@@ -113,7 +115,8 @@ enum RheosMigrator {
             decision: decision,
             applied: applied,
             applications: applications,
-            announcements: []
+            announcements: [],
+            patchSites: []
         )
     }
 
@@ -182,6 +185,7 @@ enum RheosMigrator {
         copy["bounds"] = bounds
         if copy["applications"] == nil { copy["applications"] = [Any]() }
         if copy["announcements"] == nil { copy["announcements"] = [Any]() }
+        if copy["patchSites"] == nil { copy["patchSites"] = [Any]() }
         return copy
     }
 

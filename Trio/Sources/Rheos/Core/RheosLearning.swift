@@ -40,8 +40,9 @@ enum RheosLearner {
                 now: now
             )
         }
-        let learned = estimate(dataset: dataset, targets: targets, band: band, calendar: calendar)
-        let walk = walkForward(dataset: dataset, targets: targets, bounds: limits, calendar: calendar)
+        let learningSet = RheosCare.excludingCompression(dataset, calendar: calendar)
+        let learned = estimate(dataset: learningSet, targets: targets, band: band, calendar: calendar)
+        let walk = walkForward(dataset: learningSet, targets: targets, bounds: limits, calendar: calendar)
 
         if mode == .aus {
             return decision(

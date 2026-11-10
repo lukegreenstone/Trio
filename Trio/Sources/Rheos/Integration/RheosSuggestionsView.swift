@@ -12,6 +12,17 @@ struct RheosSuggestionsView: View {
     @State private var question = ""
     @State private var answer = ""
     @State private var suggestions: [RheosChatSuggestion] = []
+    @State private var siteName = ""
+    @State private var care = RheosCareReport(
+        patchCheck: nil,
+        compressionExcluded: [],
+        siteNotes: [],
+        weekly: "",
+        hypoSuggestion: nil,
+        alcohol: nil
+    )
+    @State private var showWeeklyShare = false
+    @State private var weeklyURL: URL?
     @State private var age = ""
     @State private var weight = ""
     @State private var height = ""
@@ -83,6 +94,37 @@ struct RheosSuggestionsView: View {
                                 }
                             }
                         }
+                    }
+                }
+
+                Section("Hinweise") {
+                    Text("Trios Statistik zeigt TITR, TIR und CV bereits. Trios Tief- und Hoch-Alarme und der Alarm „Kohlenhydrate nötig“ bleiben unverändert. Die Texte hier dosieren nicht.")
+                        .font(.footnote)
+                    if let patch = care.patchCheck { Text(patch).font(.footnote) }
+                    if care.compressionExcluded.isEmpty {
+                        Text("Keine nächtlichen Sturzwerte vom Lernen ausgenommen.")
+                            .font(.footnote)
+                    } else {
+                        Text("\(care.compressionExcluded.count) nächtliche Sturzwerte sind vom Lernen ausgenommen. Trios Tief-Alarm bleibt aktiv.")
+                            .font(.footnote)
+                    }
+                    if let hypo = care.hypoSuggestion { Text(hypo).font(.footnote) }
+                    if let alcohol = care.alcohol { Text(alcohol).font(.footnote) }
+                    ForEach(care.siteNotes, id: \.self) { note in
+                        Text(note).font(.footnote)
+                    }
+                    TextField("Neue Pflasterstelle", text: $siteName)
+                    Button("Stelle speichern") {
+                        coordinator?.recordPatchSite(siteName)
+                        siteName = ""
+                        reload()
+                    }
+                    Button("Alkohol ankündigen") {
+                        status = coordinator?.announce(kind: "alcohol", note: "") ?? ""
+                        reload()
+                    }
+                    Button("Wochenbericht teilen") {
+                        shareWeekly()
                     }
                 }
 
@@ -177,6 +219,11 @@ struct RheosSuggestionsView: View {
         .navigationTitle("Rheos Vorschläge")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear(perform: reload)
+        .sheet(isPresented: $showWeeklyShare) {
+            if let weeklyURL {
+                ShareSheet(activityItems: [weeklyURL])
+            }
+        }
     }
 
     private var coordinator: RheosCoordinator? {
@@ -203,6 +250,21 @@ struct RheosSuggestionsView: View {
             targets: RheosTargetLoader.schedule(resolver: resolver),
             now: Date()
         )
+        care = RheosCare.report(
+            dataset: dataset,
+            sites: RheosStore.shared.patchSites(),
+            alcoholDates: RheosStore.shared.announcements().filter { $0.kind == "alcohol" }.map(\.date),
+            learned: report?.decision.reason ?? "",
+            now: Date(),
+            calendar: .current
+        )
+    }
+
+    private func shareWeekly() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("rheos-wochenbericht.txt")
+        try? care.weekly.write(to: url, atomically: true, encoding: .utf8)
+        weeklyURL = url
+        showWeeklyShare = true
     }
 
     private func labeled(_ title: String, _ value: String) -> some View {

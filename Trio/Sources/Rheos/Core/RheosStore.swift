@@ -149,6 +149,20 @@ final class RheosStore {
         return document().announcements
     }
 
+    func patchSites() -> [RheosPatchSite] {
+        lock.lock()
+        defer { lock.unlock() }
+        return document().patchSites
+    }
+
+    func addPatchSite(_ site: RheosPatchSite) {
+        lock.lock()
+        defer { lock.unlock() }
+        var state = document()
+        state.patchSites.append(site)
+        persist(state)
+    }
+
     func addAnnouncement(_ announcement: RheosAnnouncement) {
         lock.lock()
         defer { lock.unlock() }

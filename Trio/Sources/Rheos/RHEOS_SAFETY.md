@@ -34,6 +34,21 @@ Meal outcomes can be marked as seen. That writes a flag in the Rheos log only.
 
 The chat stub answers from the on-device report. It has no network client. Body data never becomes an insulin number.
 
+## Suggestions that do not dose
+
+Trio already has high and low glucose alarms, a forecasted-low alarm, and an oref “carbs required” alarm. The Statistics screen already shows TITR (70–140), TIR against the user’s limits, and CV. Pump history already has a site-change event, and a rewind can reset autosens. Rheos does not replace any of those.
+
+Rheos adds only notes and local notifications whose identifiers start with `rheos.suggestion.`:
+
+- high glucose that is not falling despite insulin → check ketones and the Medtrum patch
+- a night-time drop that bounces back is left out of learning; low alarms are not muted
+- a body-site log compares glucose after each patch change the user records
+- a 7-day text report for the diabetes team
+- a 30-minute hypo extrapolation whose carb grams come only from past treatments that were followed by a recovery
+- an optional alcohol note that can mention a temp target the user would set in Trio
+
+None of these write insulin, carbs, targets, or limits.
+
 ## Storage
 
 Rheos files live under Application Support `/Rheos` in this app's container. The bundle ID does not change, so an update or a later build of this fork keeps the same directory. The canonical file is `rheos-state.json`. It has a schema version. Older files are copied to `rheos-state.vN.bak` and then rewritten forward. A file from a newer build is not rewritten back down, and a file that cannot be parsed is left in place. Nothing in that directory is marked excluded from the device backup. On iPhone the file is written with complete-until-first-unlock protection.

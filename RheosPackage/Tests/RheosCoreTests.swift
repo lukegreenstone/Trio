@@ -562,6 +562,105 @@ final class RheosCoreTests: XCTestCase {
         )
     }
 
+    func testCareSuggestionsDoNotImplyADose() {
+        let calendar = self.calendar
+        let now = date(day: 2, hour: 12)
+        var glucose: [RheosGlucosePoint] = []
+        for minute in stride(from: 0, through: 90, by: 15) {
+            glucose.append(RheosGlucosePoint(date: now.addingTimeInterval(-Double(90 - minute) * 60), mgdl: 280))
+        }
+        let high = RheosDataset(glucose: glucose, insulin: [RheosInsulinEvent(date: now.addingTimeInterval(-30 * 60), units: 3, kind: "bolus")], states: [RheosStatePoint(date: now, iob: 2, cob: 0)])
+        let check = RheosCare.patchCheck(dataset: high, now: now)
+        XCTAssertNotNil(check)
+        XCTAssertTrue(check?.contains("Ketone") == true)
+        XCTAssertTrue(check?.contains("kein Insulin") == true)
+
+        var falling = glucose
+        falling[falling.count - 1].mgdl = 260
+        XCTAssertNil(RheosCare.patchCheck(dataset: RheosDataset(glucose: falling, states: [RheosStatePoint(date: now, iob: 2)]), now: now))
+
+        let night = date(day: 2, hour: 23)
+        let compression = [
+            RheosGlucosePoint(date: night, mgdl: 140),
+            RheosGlucosePoint(date: night.addingTimeInterval(5 * 60), mgdl: 55),
+            RheosGlucosePoint(date: night.addingTimeInterval(12 * 60), mgdl: 135)
+        ]
+        let flagged = RheosCare.compressionLows(glucose: compression, calendar: calendar)
+        XCTAssertEqual(flagged.count, 1)
+        let slow = [
+            RheosGlucosePoint(date: night, mgdl: 140),
+            RheosGlucosePoint(date: night.addingTimeInterval(5 * 60), mgdl: 125),
+            RheosGlucosePoint(date: night.addingTimeInterval(10 * 60), mgdl: 110)
+        ]
+        XCTAssertTrue(RheosCare.compressionLows(glucose: slow, calendar: calendar).isEmpty)
+        let day = date(day: 2, hour: 14)
+        let daytime = [
+            RheosGlucosePoint(date: day, mgdl: 140),
+            RheosGlucosePoint(date: day.addingTimeInterval(5 * 60), mgdl: 55),
+            RheosGlucosePoint(date: day.addingTimeInterval(12 * 60), mgdl: 135)
+        ]
+        XCTAssertTrue(RheosCare.compressionLows(glucose: daytime, calendar: calendar).isEmpty)
+        XCTAssertEqual(RheosCare.excludingCompression(RheosDataset(glucose: compression), calendar: calendar).glucose.count, 2)
+
+        let first = date(day: 1, hour: 8)
+        let second = date(day: 2, hour: 8)
+        var siteGlucose: [RheosGlucosePoint] = []
+        for index in 0 ..< 12 {
+            siteGlucose.append(RheosGlucosePoint(date: first.addingTimeInterval(Double(index) * 600), mgdl: 210))
+            siteGlucose.append(RheosGlucosePoint(date: second.addingTimeInterval(Double(index) * 600), mgdl: 110))
+        }
+        let notes = RheosCare.siteNotes(
+            sites: [
+                RheosPatchSite(id: "a", place: "Bauch", started: first),
+                RheosPatchSite(id: "b", place: "Arm", started: second)
+            ],
+            glucose: siteGlucose
+        )
+        XCTAssertTrue(notes.contains { $0.contains("Bauch") && $0.contains("210") })
+        XCTAssertTrue(notes.contains { $0.contains("Arm") && $0.contains("110") })
+        XCTAssertTrue(notes.allSatisfy { !$0.contains("Bolus") })
+
+        let weekly = RheosCare.weeklyReport(glucose: siteGlucose, learned: "Stundenfaktoren im Band.", now: second.addingTimeInterval(3600))
+        XCTAssertTrue(weekly.contains("70–140"))
+        XCTAssertTrue(weekly.contains("keine Dosierung"))
+
+        let hypoNow = date(day: 3, hour: 15)
+        var hypoGlucose = [
+            RheosGlucosePoint(date: hypoNow.addingTimeInterval(-20 * 60), mgdl: 120),
+            RheosGlucosePoint(date: hypoNow.addingTimeInterval(-10 * 60), mgdl: 100),
+            RheosGlucosePoint(date: hypoNow, mgdl: 82)
+        ]
+        var meals: [RheosMealEvent] = []
+        for index in 0 ..< 3 {
+            let when = date(day: 4 + index, hour: 10)
+            meals.append(RheosMealEvent(id: "h\(index)", date: when, carbs: 15, fat: 0, protein: 0, note: "", acknowledged: false))
+            hypoGlucose.append(RheosGlucosePoint(date: when.addingTimeInterval(-10 * 60), mgdl: 65))
+            hypoGlucose.append(RheosGlucosePoint(date: when.addingTimeInterval(20 * 60), mgdl: 95))
+        }
+        let suggestion = RheosCare.hypoSuggestion(dataset: RheosDataset(glucose: hypoGlucose, meals: meals), now: hypoNow)
+        XCTAssertTrue(suggestion?.contains("15 g") == true)
+        XCTAssertTrue(suggestion?.contains("trägt nichts ein") == true)
+        let tooFew = RheosCare.hypoSuggestion(
+            dataset: RheosDataset(glucose: Array(hypoGlucose.prefix(3)), meals: Array(meals.prefix(1))),
+            now: hypoNow
+        )
+        XCTAssertTrue(tooFew?.contains("zu wenige") == true)
+
+        let drink = date(day: 5, hour: 18)
+        let drink2 = date(day: 7, hour: 18)
+        let alcoholGlucose = [
+            RheosGlucosePoint(date: drink.addingTimeInterval(6 * 3600), mgdl: 62),
+            RheosGlucosePoint(date: drink2.addingTimeInterval(6 * 3600), mgdl: 64)
+        ]
+        let alcohol = RheosCare.alcoholNote(
+            dataset: RheosDataset(glucose: alcoholGlucose),
+            alcoholDates: [drink, drink2],
+            now: drink2.addingTimeInterval(20 * 3600)
+        )
+        XCTAssertTrue(alcohol?.contains("Temp-Target") == true)
+        XCTAssertTrue(alcohol?.contains("aktiviert es nicht") == true)
+    }
+
     func testFinishedWorkoutAdjustsFactorsWithoutAnAnnouncement() {
         let now = date(day: 17, hour: 16)
         let glucose = stableGlucose(days: 1 ... 17)
