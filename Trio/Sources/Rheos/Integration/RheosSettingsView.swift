@@ -15,6 +15,10 @@ struct RheosSettingsView: View {
     @State private var maximum = RheosReference.defaultMaximumMultiplier
     @State private var daily = RheosReference.defaultMaxDailyChange
     @State private var contextNudge = RheosReference.defaultMaxContextNudge
+    @State private var firstDay = RheosReference.defaultFirstDayChange
+    @State private var laterDay = RheosReference.defaultLaterDayChange
+    @State private var sundayReport = false
+    @State private var previewText = ""
     @State private var decisionText = ""
     @State private var showShare = false
     @State private var showImport = false
@@ -60,10 +64,21 @@ struct RheosSettingsView: View {
                 Stepper(value: $contextNudge, in: 0.01 ... RheosReference.maxContextNudgeCap, step: 0.01) {
                     Text("Kontext am selben Tag höchstens \(contextNudge, format: .number.precision(.fractionLength(2)))")
                 }
+                Stepper(
+                    value: $firstDay,
+                    in: RheosReference.minimumFirstDayChange ... RheosReference.maximumFirstDayChange,
+                    step: 0.01
+                ) {
+                    Text("Erster Scharf-Tag höchstens \(firstDay * 100, format: .number.precision(.fractionLength(0))) %")
+                }
+                Stepper(value: $laterDay, in: 0.10 ... RheosReference.maximumLaterDayChange, step: 0.01) {
+                    Text("Danach höchstens \(laterDay * 100, format: .number.precision(.fractionLength(0))) %")
+                }
+                Toggle("Sonntags Wochenbericht", isOn: $sundayReport)
             } header: {
                 Text("Band")
             } footer: {
-                Text("Voreinstellung 0,70–1,20, wie Trios Autosens-Standard. Beim Anwenden wird das Band auf die aktuellen Autosens-Grenzen geschnitten (\(format(liveAutosensMin))–\(format(liveAutosensMax))). Die Tagesänderung ist höchstens 0,10, der Kontext-Schub höchstens 0,20. Darüber hinaus geht Rheos nicht. Der Fit benutzt deinen Trio-Zielplan, keinen festen 110er Wert.")
+                Text("Voreinstellung 0,70–1,20, geschnitten mit den aktuellen Autosens-Grenzen (\(format(liveAutosensMin))–\(format(liveAutosensMax))). Es gibt keine zusätzliche Grenze aus Rheos mal Autosens. Der erste Scharf-Tag bleibt bei 10–20 %. Danach darf der Schritt größer sein, das Band bleibt. Der Sonntagsbericht ist aus, bis du ihn einschaltest.")
             }
 
             Section {
@@ -129,6 +144,15 @@ struct RheosSettingsView: View {
         .onChange(of: contextNudge) { _, _ in
             saveBand()
         }
+        .onChange(of: firstDay) { _, _ in
+            saveBand()
+        }
+        .onChange(of: laterDay) { _, _ in
+            saveBand()
+        }
+        .onChange(of: sundayReport) { _, newValue in
+            UserDefaults.standard.set(newValue, forKey: RheosCareNotifier.sundayKey)
+        }
         .onReceive(
             Foundation.NotificationCenter.default.publisher(for: Foundation.Notification.Name.rheosModeDidChange)
         ) { (_: Foundation.Notification) in
@@ -141,7 +165,7 @@ struct RheosSettingsView: View {
             }
             Button("Abbrechen", role: .cancel) {}
         } message: {
-            Text("Rheos darf dann den stündlichen ISF, den KH-Faktor und die Basalrate im eingestellten Band anpassen, aber nur wenn genug Daten da sind und die Walk-forward-Prüfung besteht. Erkannten Kontext aus Health und Glukose nimmt es dabei von selbst mit. Sonst bleibt Trio unverändert. SMB und UAM laufen weiter. Rheos gibt selbst keinen Bolus. Ankündigungen sind freiwillig und nur Hinweise.")
+            Text(previewText)
         }
         .sheet(isPresented: $showShare) {
             ShareSheet(activityItems: exportURLs)
@@ -190,6 +214,8 @@ struct RheosSettingsView: View {
     @ViewBuilder private func modeButton(_ value: RheosMode, title: String, detail: String) -> some View {
         Button {
             if value == .scharf, mode != .scharf {
+                previewText = coordinator?.scharfPreview()
+                    ?? "Vorschau nicht verfügbar. Scharf schreibt nichts, bevor du bestätigst."
                 confirmScharf = true
             } else if value != .scharf {
                 coordinator?.setMode(value)
@@ -217,6 +243,9 @@ struct RheosSettingsView: View {
         if minimum > maximum { maximum = minimum }
         daily = bounds.maxDailyChange
         contextNudge = bounds.maxContextNudge
+        firstDay = bounds.firstDayMaxChange
+        laterDay = bounds.laterDayMaxChange
+        sundayReport = UserDefaults.standard.bool(forKey: RheosCareNotifier.sundayKey)
         cloudURL = UserDefaults.standard.string(forKey: RheosCloudChat.baseURLKey) ?? RheosCloudChat.defaultBaseURL
         cloudModel = UserDefaults.standard.string(forKey: RheosCloudChat.modelKey) ?? RheosCloudChat.defaultModel
         if case let .success(stored) = resolver.resolve(Keychain.self)?.getValue(String.self, forKey: RheosCloudChat.keychainKey) {
@@ -233,6 +262,8 @@ struct RheosSettingsView: View {
         bounds.maximumMultiplier = maximum
         bounds.maxDailyChange = daily
         bounds.maxContextNudge = contextNudge
+        bounds.firstDayMaxChange = firstDay
+        bounds.laterDayMaxChange = laterDay
         coordinator?.saveBounds(bounds)
     }
 

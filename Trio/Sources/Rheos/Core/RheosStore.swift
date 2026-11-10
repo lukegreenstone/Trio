@@ -56,6 +56,18 @@ final class RheosStore {
         return document().bounds.sanitized()
     }
 
+    func loadDocument() -> RheosStateDocument {
+        lock.lock()
+        defer { lock.unlock() }
+        return document()
+    }
+
+    func saveDocument(_ state: RheosStateDocument) {
+        lock.lock()
+        defer { lock.unlock() }
+        persist(state)
+    }
+
     func saveBounds(_ bounds: RheosBounds) {
         lock.lock()
         defer { lock.unlock() }

@@ -18,6 +18,29 @@ enum RheosCareNotifier {
         }
     }
 
+    static let sundayKey = "rheos.weeklySunday"
+    private static let sundayStamp = "rheos.notify.weeklySunday"
+
+    /// Off unless `rheos.weeklySunday` is true. One notice per calendar week.
+    static func sundayReport(enabled: Bool, text: String, now: Date, calendar: Calendar = .current) {
+        guard enabled, calendar.component(.weekday, from: now) == 1, !text.isEmpty else { return }
+        let week = calendar.component(.weekOfYear, from: now)
+        let year = calendar.component(.yearForWeekOfYear, from: now)
+        let stamp = "\(year)-\(week)"
+        if UserDefaults.standard.string(forKey: sundayStamp) == stamp { return }
+        UserDefaults.standard.set(stamp, forKey: sundayStamp)
+        let content = UNMutableNotificationContent()
+        content.title = "Rheos Wochenbericht"
+        content.body = String(text.prefix(180))
+        content.sound = nil
+        let request = UNNotificationRequest(identifier: "rheos.suggestion.weekly", content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+    }
+
+    static func extendPreset(name: String) {
+        post(id: "rheos.suggestion.preset.\(name)", body: "„\(name)“ ist abgelaufen. In Rheos kannst du es verlängern. Rheos ändert das Preset nicht von selbst.")
+    }
+
     private static func post(id: String, body: String) {
         let defaults = UserDefaults.standard
         let key = "rheos.notify." + id

@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 import Swinject
 
@@ -11,6 +12,11 @@ struct RheosSuggestionsView: View {
     @State private var status = ""
     @State private var question = ""
     @State private var answer = ""
+    @State private var comparison = ""
+    @State private var mealCarbs = ""
+    @State private var mealFat = ""
+    @State private var mealProtein = ""
+    @State private var photo: PhotosPickerItem?
     @State private var suggestions: [RheosChatSuggestion] = []
     @State private var siteName = ""
     @State private var care = RheosCareReport(
@@ -48,6 +54,48 @@ struct RheosSuggestionsView: View {
                     Text(report.decision.reason)
                     labeled("Prüfung", report.decision.walkForward.passed ? "bestanden" : "nicht bestanden")
                     labeled("Angewendet", report.decision.applied ? "ja, im Band" : "nein")
+                    Text(RheosCoreMLAdapter.statusLine(RheosStore.shared.loadDocument().shadow))
+                        .font(.footnote)
+                    if let loop = RheosStore.shared.loadDataset().loopReading {
+                        Text("Autosens \(format(loop.autosensRatio)), Dynamic-ISF \(loop.dynamicISF.map(format) ?? "—") mg/dL pro E. Das Band bleibt der Schnitt aus Rheos und Autosens min/max.")
+                            .font(.footnote)
+                    }
+                }
+
+                Section("Wochenvergleich, Schatten") {
+                    Text("Rheos gegen die echten Werte und gegen den Abstand zum Ziel 100. Das ist kein zweiter simulierter Loop.")
+                        .font(.footnote)
+                    Button("Diese Woche berechnen") {
+                        comparison = coordinator?.storeWeekComparison().summary ?? ""
+                    }
+                    if !comparison.isEmpty {
+                        Text(comparison).font(.footnote)
+                    }
+                    ForEach(RheosStore.shared.loadDocument().weeklyComparisons) { week in
+                        Text(week.summary).font(.footnote)
+                    }
+                }
+
+                Section("Krank") {
+                    Button("Gespeichertes Preset Krank starten") {
+                        Task { status = await coordinator?.startSavedPreset(named: "Krank") ?? "" }
+                    }
+                    Text("Nur ein Override oder Temp-Target, das du in Trio schon Krank genannt hast. Sonst passiert nichts.")
+                        .font(.footnote)
+                }
+
+                Section("Mahlzeit") {
+                    TextField("Kohlenhydrate g", text: $mealCarbs)
+                    TextField("Fett g", text: $mealFat)
+                    TextField("Protein g", text: $mealProtein)
+                    PhotosPicker(selection: $photo, matching: .images) {
+                        Text("Foto schätzen, nur online")
+                    }
+                    Button("In den Kohlenhydrat-Bildschirm legen") {
+                        stageMeal(nil)
+                    }
+                    Text(RheosFPUSplit.proposal(hour: Calendar.current.component(.hour, from: Date()), fat: number(mealFat), protein: number(mealProtein)))
+                        .font(.footnote)
                 }
 
                 Section("Glukose nach Stunde") {
@@ -147,10 +195,24 @@ struct RheosSuggestionsView: View {
                 }
 
                 Section("Wearables") {
+                    Text("Ein Signal landet erst im Dosismodell, wenn du Ja tippst. Nein lässt es draußen. Rheos schaltet keines selbst frei.")
+                        .font(.footnote)
                     ForEach(report.signals) { signal in
+                        let accepted = RheosStore.shared.loadDocument().acceptedSignals.contains(signal.signal)
+                        let rejected = RheosStore.shared.loadDocument().rejectedSignals.contains(signal.signal)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("\(signal.signal): \(signal.proposed ? "vorschlagen" : "nicht vorschlagen")")
+                            Text("\(signal.signal): \(signal.proposed ? "Effekt sichtbar" : "kein belastbarer Effekt")")
                             Text(signal.reason).font(.footnote).foregroundStyle(.secondary)
+                            if accepted {
+                                Text("Für das Dosismodell freigegeben.").font(.footnote)
+                            } else if rejected {
+                                Text("Nicht im Dosismodell.").font(.footnote)
+                            } else if signal.proposed {
+                                HStack {
+                                    Button("Ja") { coordinator?.decideSignal(signal.signal, accepted: true); reload() }
+                                    Button("Nein") { coordinator?.decideSignal(signal.signal, accepted: false); reload() }
+                                }
+                            }
                         }
                     }
                 }
@@ -190,8 +252,10 @@ struct RheosSuggestionsView: View {
                     ForEach(suggestions) { suggestion in
                         VStack(alignment: .leading, spacing: 4) {
                             Text(suggestion.text).font(.footnote)
-                            Button("Hinweis „\(suggestion.kind)“ notieren") {
-                                status = coordinator?.announce(kind: suggestion.kind, note: suggestion.text) ?? ""
+                            Button("Bestätigen") {
+                                Task {
+                                    status = await coordinator?.confirmKind(kind: suggestion.kind, note: suggestion.text) ?? ""
+                                }
                             }
                         }
                     }
@@ -207,6 +271,20 @@ struct RheosSuggestionsView: View {
         .navigationTitle("Rheos Vorschläge")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear(perform: reload)
+        .onChange(of: photo) { _, item in
+            guard let item else { return }
+            Task {
+                if let data = try? await item.loadTransferable(type: Data.self),
+                   let estimate = await RheosMealAssist.estimate(jpeg: data, resolver: resolver) {
+                    mealCarbs = format(estimate.carbs)
+                    mealFat = format(estimate.fat)
+                    mealProtein = format(estimate.protein)
+                    stageMeal(estimate)
+                } else {
+                    status = "Keine Foto-Schätzung. Offline oder ohne Schlüssel trägst du Kohlenhydrate, Fett und Protein selbst ein."
+                }
+            }
+        }
         .sheet(isPresented: $showWeeklyShare) {
             if let weeklyURL {
                 ShareSheet(activityItems: [weeklyURL])
@@ -268,6 +346,26 @@ struct RheosSuggestionsView: View {
     private func cv(_ value: Double?) -> String {
         guard let value else { return "–" }
         return String(format: "%.0f %%", value)
+    }
+
+    private func stageMeal(_ estimate: RheosMealEstimate?) {
+        let carbs = estimate?.carbs ?? number(mealCarbs)
+        let fat = estimate?.fat ?? number(mealFat)
+        let protein = estimate?.protein ?? number(mealProtein)
+        let hour = Calendar.current.component(.hour, from: Date())
+        let draft = RheosMealEstimate(
+            carbs: carbs,
+            fat: fat,
+            protein: protein,
+            kcal: estimate?.kcal ?? (4 * carbs + 9 * fat + 4 * protein),
+            note: RheosFPUSplit.proposal(hour: hour, fat: fat, protein: protein)
+        )
+        RheosMealDraftStore.save(draft)
+        status = "Werte liegen im Kohlenhydrat-Bildschirm bereit. Speichern dort übernimmt Trios FPU. Rheos gibt keinen Bolus."
+    }
+
+    private func number(_ text: String) -> Double {
+        Double(text.replacingOccurrences(of: ",", with: ".")) ?? 0
     }
 
     private func format(_ value: Double) -> String {

@@ -121,10 +121,10 @@ final class RheosCoreTests: XCTestCase {
         XCTAssertEqual(decision.learnedFactors.basal[12], 1.2, accuracy: 0.001)
         XCTAssertLessThan(decision.learnedFactors.isf[12], 0.9)
         XCTAssertGreaterThan(decision.learnedFactors.isf[12], 0.69)
-        XCTAssertEqual(decision.factors.basal[12], 1.05, accuracy: 0.001)
-        XCTAssertEqual(decision.factors.isf[12], 0.95, accuracy: 0.001)
-        XCTAssertEqual(decision.factors.basal[3], 0.95, accuracy: 0.001)
-        XCTAssertEqual(decision.factors.isf[3], 1.05, accuracy: 0.001)
+        XCTAssertEqual(decision.factors.basal[12], 1.15, accuracy: 0.001)
+        XCTAssertEqual(decision.factors.isf[12], 0.85, accuracy: 0.001)
+        XCTAssertEqual(decision.factors.basal[3], 0.9141414141414139, accuracy: 0.001)
+        XCTAssertEqual(decision.factors.isf[3], 1.0858585858585856, accuracy: 0.001)
         XCTAssertEqual(decision.factors.basal[8], 1, accuracy: 0.001)
         XCTAssertTrue(decision.factors.carbRatio.allSatisfy { abs($0 - 1) < 0.001 })
         XCTAssertTrue(decision.factors.basal.allSatisfy { $0 >= 0.7 && $0 <= 1.2 })
@@ -159,7 +159,7 @@ final class RheosCoreTests: XCTestCase {
             now: now,
             calendar: calendar
         )
-        XCTAssertEqual(nextDay.factors.basal[12], 1.10, accuracy: 0.001)
+        XCTAssertEqual(nextDay.factors.basal[12], 1.2, accuracy: 0.001)
     }
 
     func testFallbackWhenDataOrWalkForwardFails() {
@@ -272,7 +272,7 @@ final class RheosCoreTests: XCTestCase {
         )
         XCTAssertTrue(decision.walkForward.passed)
         XCTAssertEqual(decision.learnedFactors.carbRatio[19], 0.7, accuracy: 0.001)
-        XCTAssertEqual(decision.factors.carbRatio[19], 0.95, accuracy: 0.001)
+        XCTAssertEqual(decision.factors.carbRatio[19], 0.85, accuracy: 0.001)
     }
 
     func testStabilityDawnAndBodyDraft() {
@@ -408,7 +408,7 @@ final class RheosCoreTests: XCTestCase {
         XCTAssertEqual(store.loadDataset().glucose.first?.mgdl ?? 0, 144, accuracy: 0.001)
         XCTAssertEqual(store.loadApplied()?.factors.basal[4] ?? 0, 1.05, accuracy: 0.001)
         let rewritten = try String(contentsOf: stateURL, encoding: .utf8)
-        XCTAssertTrue(rewritten.contains("\"schemaVersion\" : 3") || rewritten.contains("\"schemaVersion\": 3"))
+        XCTAssertTrue(rewritten.contains("\"schemaVersion\" : 4") || rewritten.contains("\"schemaVersion\": 4"))
         let backup = try String(contentsOf: directory.appendingPathComponent("rheos-state.v1.bak"), encoding: .utf8)
         XCTAssertTrue(backup.contains("glucoseReadings"))
         XCTAssertTrue(backup.contains("144"))
@@ -443,7 +443,7 @@ final class RheosCoreTests: XCTestCase {
             calendar: calendar
         )
         XCTAssertEqual(decision.code, .applied)
-        XCTAssertEqual(decision.factors.basal[12], 1.10, accuracy: 0.001)
+        XCTAssertEqual(decision.factors.basal[12], 1.2, accuracy: 0.001)
         let leftovers = try FileManager.default.contentsOfDirectory(at: destinationDirectory, includingPropertiesForKeys: nil)
         XCTAssertTrue(leftovers.contains { $0.lastPathComponent.hasPrefix("rheos-state.pre-import-") })
     }
@@ -909,6 +909,77 @@ final class RheosCoreTests: XCTestCase {
         XCTAssertGreaterThan(plain.factors.basal[12], 1)
         XCTAssertLessThan(cautious.factors.basal[12], plain.factors.basal[12])
         XCTAssertGreaterThan(cautious.factors.basal[12], 1)
+    }
+
+    func testScharfRampPreviewKrankAndShadowWeek() {
+        var bounds = RheosBounds()
+        bounds.firstDayMaxChange = 0.12
+        bounds.laterDayMaxChange = 0.30
+        let limits = bounds.sanitized()
+        let first = RheosRamp.maxStep(now: date(day: 4, hour: 8), scharfSince: date(day: 4, hour: 1), bounds: limits, calendar: calendar)
+        let later = RheosRamp.maxStep(now: date(day: 5, hour: 8), scharfSince: date(day: 4, hour: 1), bounds: limits, calendar: calendar)
+        XCTAssertEqual(first, 0.12, accuracy: 0.001)
+        XCTAssertEqual(later, 0.30, accuracy: 0.001)
+        XCTAssertGreaterThan(later, first)
+        let band = limits.effectiveRange(autosensMin: 0.7, autosensMax: 1.2)
+        XCTAssertEqual(band.lowerBound, 0.7, accuracy: 0.001)
+        XCTAssertEqual(band.upperBound, 1.2, accuracy: 0.001)
+
+        let short = RheosCoreModel.fit(
+            dataset: RheosDataset(glucose: stableGlucose(days: 1 ... 3)),
+            targets: .flat(100),
+            band: band,
+            calendar: calendar
+        )
+        XCTAssertFalse(short.trained)
+        XCTAssertEqual(short.factors, .identity)
+
+        let preview = RheosRamp.preview(learned: .identity, step: first, shadow: RheosShadowStatus())
+        XCTAssertTrue(preview.contains("nicht angewendet"))
+
+        let missing = RheosPresetPlan.missingMessage(name: "Krank")
+        XCTAssertTrue(missing.contains("Krank"))
+        XCTAssertFalse(missing.contains("120"))
+        XCTAssertFalse(missing.contains("Bolus von"))
+
+        let week = RheosShadowCompare.week(
+            dataset: RheosDataset(glucose: [
+                RheosGlucosePoint(date: date(day: 4, hour: 10), mgdl: 130),
+                RheosGlucosePoint(date: date(day: 4, hour: 11), mgdl: 90)
+            ], insulin: [RheosInsulinEvent(date: date(day: 4, hour: 10), units: 2, kind: "bolus")]),
+            fit: short,
+            now: date(day: 4, hour: 12),
+            calendar: calendar
+        )
+        XCTAssertTrue(week.shadowOnly)
+        XCTAssertTrue(week.summary.contains("kein kontrafaktisches"))
+        XCTAssertTrue(week.summary.contains("Ridge"))
+        XCTAssertEqual(
+            RheosCoreModel.features(hour: 8, iob: 1, carbs: 10, fpu: 2).count,
+            RheosCoreModel.baseFeatureCount
+        )
+        XCTAssertEqual(
+            RheosSignalCatalog.values(
+                accepted: [],
+                day: RheosWearableDay(day: date(day: 1, hour: 0), restingHeartRate: 80)
+            ).count,
+            0
+        )
+        XCTAssertEqual(
+            RheosSignalCatalog.values(
+                accepted: ["Ruhepuls"],
+                day: RheosWearableDay(day: date(day: 1, hour: 0), restingHeartRate: 80)
+            ).count,
+            1
+        )
+        XCTAssertEqual(week.actualInsulin, 2, accuracy: 0.001)
+
+        let parsed = RheosMealParser.estimate(in: "Hier {\"carbs\":40,\"fat\":20,\"protein\":15}")
+        XCTAssertEqual(parsed?.carbs ?? 0, 40, accuracy: 0.001)
+        XCTAssertTrue(RheosFPUSplit.proposal(hour: 20, fat: 20, protein: 10).contains("keinen Bolus"))
+        let situation = RheosChatSituation.advice(question: "Sport in 2 h", forecast: RheosChatSituation.forecastLine(mae: nil))
+        XCTAssertEqual(situation?.kind, "sport")
+        XCTAssertFalse(situation?.text.contains("2 U") ?? true)
     }
 
     func testWatchFaceShowsAgeAndRespectsReloadBudget() {

@@ -54,6 +54,30 @@ final class RheosCoordinator {
 
     func setMode(_ mode: RheosMode) {
         RheosModeStore.set(mode)
+        var state = RheosStore.shared.loadDocument()
+        state.scharfSince = mode == .scharf ? Date() : nil
+        RheosStore.shared.saveDocument(state)
+    }
+
+    func scharfPreview() -> String {
+        let store = RheosStore.shared
+        let state = store.loadDocument()
+        let dataset = state.dataset
+        let bounds = state.bounds.sanitized()
+        let targets = RheosTargetLoader.schedule(resolver: resolver)
+        let decision = RheosLearner.evaluate(
+            dataset: dataset,
+            mode: .scharf,
+            bounds: bounds,
+            previous: state.applied,
+            autosensMin: autosensMin(),
+            autosensMax: autosensMax(),
+            targets: targets,
+            scharfSince: Date(),
+            now: Date()
+        )
+        let step = RheosRamp.maxStep(now: Date(), scharfSince: Date(), bounds: bounds, calendar: .current)
+        return RheosRamp.preview(learned: decision.learnedFactors, step: step, shadow: state.shadow)
     }
 
     func refresh() async {
@@ -76,6 +100,8 @@ final class RheosCoordinator {
         dataset.body = previous.body
         dataset.bodyHistory = previous.bodyHistory
         let now = Date()
+        dataset.loopReading = RheosLoopFactorLoader.reading(resolver: resolver, states: dataset.states, now: now)
+        let scharfSince = store.loadDocument().scharfSince
 
         if let healthStore = resolver.resolve(HKHealthStore.self) {
             await RheosHealthReader.requestReadAccess(store: healthStore)
@@ -109,9 +135,31 @@ final class RheosCoordinator {
             autosensMin: autosensMin(),
             autosensMax: autosensMax(),
             targets: RheosTargetLoader.schedule(resolver: resolver),
+            scharfSince: scharfSince,
+            acceptedSignals: store.loadDocument().acceptedSignals,
             now: now
         )
         store.saveDecision(decision)
+        let accepted = store.loadDocument().acceptedSignals
+        let fit = RheosCoreModel.fit(
+            dataset: dataset,
+            targets: RheosTargetLoader.schedule(resolver: resolver),
+            band: store.loadBounds().effectiveRange(autosensMin: autosensMin(), autosensMax: autosensMax()),
+            acceptedSignals: accepted,
+            calendar: .current
+        )
+        var recorded = store.loadDocument()
+        recorded.shadow = RheosShadowStatus(
+            trained: fit.trained,
+            source: fit.chosen,
+            mae: fit.weights.mae,
+            networkMAE: fit.weights.networkMAE,
+            ridgeMAE: fit.weights.ridgeMAE,
+            baselineMAE: fit.weights.baselineMAE,
+            sampleCount: fit.weights.sampleCount
+        )
+        recorded.coreWeights = fit.weights
+        store.saveDocument(recorded)
         let care = RheosCare.report(
             dataset: dataset,
             sites: store.patchSites(),
@@ -121,6 +169,12 @@ final class RheosCoordinator {
             calendar: .current
         )
         RheosCareNotifier.post(care)
+        RheosCareNotifier.sundayReport(
+            enabled: UserDefaults.standard.bool(forKey: RheosCareNotifier.sundayKey),
+            text: care.weekly,
+            now: now
+        )
+        promptExpiredPresets(now: now)
         replaceCare(care)
         if decision.applied {
             // Persist the slow model. The context nudge stays in the decision
@@ -134,6 +188,75 @@ final class RheosCoordinator {
     /// Optional note. It does not change a preset and does not deliver insulin.
     /// Scharf already adjusts ISF, carb ratio and basal from data without this.
     /// The watch uses this same method. A suggestion id only removes that row from the watch list.
+    func confirmKind(kind: String, note: String, suggestionID: String? = nil) async -> String {
+        let noted = announce(kind: kind, note: note, suggestionID: suggestionID)
+        switch kind {
+        case "sport":
+            return noted + "\n" + await startSavedPreset(named: "Sport")
+        case "showtime":
+            return noted + "\n" + await startSavedPreset(named: "Showtime")
+        case "krank":
+            return noted + "\n" + await startSavedPreset(named: "Krank")
+        default:
+            return noted
+        }
+    }
+
+    func startSavedPreset(named name: String) async -> String {
+        guard let manager = resolver.resolve(AdjustmentManager.self) else {
+            return "Die Trio-Anpassungen sind nicht erreichbar. Nichts geändert."
+        }
+        let now = Date()
+        do {
+            let outcome = try await manager.activateOverride(.presetName(name), source: .app)
+            remember(name: name, outcome: outcome, now: now)
+            return RheosPresetPlan.startedMessage(name: name, kind: "Override")
+        } catch AdjustmentError.presetNotFound {
+            do {
+                let outcome = try await manager.activateTempTarget(.presetName(name), source: .app)
+                remember(name: name, outcome: outcome, now: now)
+                return RheosPresetPlan.startedMessage(name: name, kind: "Temp-Target")
+            } catch AdjustmentError.presetNotFound {
+                return RheosPresetPlan.missingMessage(name: name)
+            } catch {
+                return "Temp-Target „\(name)“ konnte nicht starten. \(error.localizedDescription)"
+            }
+        } catch {
+            return "Override „\(name)“ konnte nicht starten. \(error.localizedDescription)"
+        }
+    }
+
+    func decideSignal(_ name: String, accepted: Bool) {
+        guard RheosSignalCatalog.names.contains(name) else { return }
+        var state = RheosStore.shared.loadDocument()
+        state.acceptedSignals.removeAll { $0 == name }
+        state.rejectedSignals.removeAll { $0 == name }
+        if accepted {
+            state.acceptedSignals.append(name)
+        } else {
+            state.rejectedSignals.append(name)
+        }
+        RheosStore.shared.saveDocument(state)
+    }
+
+    func storeWeekComparison(now: Date = Date()) -> RheosWeekComparison {
+        let store = RheosStore.shared
+        var state = store.loadDocument()
+        let bounds = state.bounds.sanitized()
+        let fit = RheosCoreModel.fit(
+            dataset: state.dataset,
+            targets: RheosTargetLoader.schedule(resolver: resolver),
+            band: bounds.effectiveRange(autosensMin: autosensMin(), autosensMax: autosensMax()),
+            acceptedSignals: state.acceptedSignals,
+            calendar: .current
+        )
+        let comparison = RheosShadowCompare.week(dataset: state.dataset, fit: fit, now: now, calendar: .current)
+        state.weeklyComparisons.removeAll { $0.id == comparison.id }
+        state.weeklyComparisons.append(comparison)
+        store.saveDocument(state)
+        return comparison
+    }
+
     func announce(kind: String, note: String, suggestionID: String? = nil) -> String {
         guard RheosWatchMessages.allowedKinds.contains(kind) else {
             return "Unbekannter Hinweis. Nichts gespeichert und kein Bolus."
@@ -183,6 +306,32 @@ final class RheosCoordinator {
     }
 
     /// Synchronous so NSLock is not taken inside an async function.
+    private func remember(name: String, outcome: AdjustmentOutcome, now: Date) {
+        let minutes = outcome.started?.duration.map { NSDecimalNumber(decimal: $0).doubleValue }
+        var state = RheosStore.shared.loadDocument()
+        state.presetRuns.append(
+            RheosPresetRun(
+                id: UUID().uuidString,
+                name: name,
+                started: now,
+                ends: RheosPresetPlan.ends(started: now, minutes: minutes),
+                prompted: false
+            )
+        )
+        RheosStore.shared.saveDocument(state)
+    }
+
+    private func promptExpiredPresets(now: Date) {
+        var state = RheosStore.shared.loadDocument()
+        var changed = false
+        for index in state.presetRuns.indices where !state.presetRuns[index].prompted && state.presetRuns[index].ends <= now {
+            RheosCareNotifier.extendPreset(name: state.presetRuns[index].name)
+            state.presetRuns[index].prompted = true
+            changed = true
+        }
+        if changed { RheosStore.shared.saveDocument(state) }
+    }
+
     private func beginRefresh() -> Bool {
         lock.lock()
         defer { lock.unlock() }

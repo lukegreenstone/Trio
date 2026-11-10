@@ -834,7 +834,7 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
                 ackCode: .genericSuccess
             )
         case let .confirm(kind, note, suggestionID):
-            let text = rheosCoordinator.announce(kind: kind, note: note, suggestionID: suggestionID)
+            let text = await rheosCoordinator.confirmKind(kind: kind, note: note, suggestionID: suggestionID)
             sendAcknowledgment(toWatch: true, message: text, ackCode: .genericSuccess)
         case let .reject(kind, note, suggestionID):
             let text = rheosCoordinator.reject(kind: kind, note: note, suggestionID: suggestionID)

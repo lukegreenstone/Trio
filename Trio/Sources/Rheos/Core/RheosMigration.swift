@@ -4,7 +4,7 @@ enum RheosSchema {
     /// Bump this when the on-disk document gains a field. Add a step in
     /// `RheosMigrator.migrate` that fills the new field from the old document.
     /// Never delete a file because its version changed.
-    static let current = 3
+    static let current = 4
     static let stateFile = "rheos-state.json"
 }
 
@@ -25,6 +25,14 @@ struct RheosStateDocument: Codable, Equatable {
     var applications: [RheosApplicationLog]
     var announcements: [RheosAnnouncement]
     var patchSites: [RheosPatchSite]
+    var scharfSince: Date? = nil
+    var weeklyComparisons: [RheosWeekComparison] = []
+    var presetRuns: [RheosPresetRun] = []
+    var shadow: RheosShadowStatus = RheosShadowStatus()
+    var coreWeights: RheosCoreWeights? = nil
+    /// Wearable names Luke accepted. Empty means none of them enter the dosing model.
+    var acceptedSignals: [String] = []
+    var rejectedSignals: [String] = []
 
     static let empty = RheosStateDocument(
         schemaVersion: RheosSchema.current,
@@ -70,6 +78,9 @@ enum RheosMigrator {
         }
         if (json["schemaVersion"] as? Int ?? 2) < 3 {
             json = migrate2to3(json)
+        }
+        if (json["schemaVersion"] as? Int ?? 3) < 4 {
+            json = migrate3to4(json)
         }
         json["schemaVersion"] = RheosSchema.current
         return try decode(complete(json))
@@ -180,6 +191,19 @@ enum RheosMigrator {
         return copy
     }
 
+    /// Version 3 had no weekly comparisons, preset runs, or Core ML weights.
+    private static func migrate3to4(_ json: [String: Any]) -> [String: Any] {
+        var copy = json
+        if copy["weeklyComparisons"] == nil { copy["weeklyComparisons"] = [Any]() }
+        if copy["presetRuns"] == nil { copy["presetRuns"] = [Any]() }
+        if copy["acceptedSignals"] == nil { copy["acceptedSignals"] = [Any]() }
+        if copy["rejectedSignals"] == nil { copy["rejectedSignals"] = [Any]() }
+        if copy["shadow"] == nil {
+            copy["shadow"] = ["trained": false, "source": "median", "sampleCount": 0]
+        }
+        return copy
+    }
+
     private static func complete(_ json: [String: Any]) -> [String: Any] {
         var copy = json
         copy["schemaVersion"] = copy["schemaVersion"] ?? RheosSchema.current
@@ -206,10 +230,19 @@ enum RheosMigrator {
         fill("minimumDays", 14)
         fill("minimumGlucoseSamples", 500)
         fill("minimumImprovement", 0.02)
+        fill("firstDayMaxChange", RheosReference.defaultFirstDayChange)
+        fill("laterDayMaxChange", RheosReference.defaultLaterDayChange)
         copy["bounds"] = bounds
         if copy["applications"] == nil { copy["applications"] = [Any]() }
         if copy["announcements"] == nil { copy["announcements"] = [Any]() }
         if copy["patchSites"] == nil { copy["patchSites"] = [Any]() }
+        if copy["weeklyComparisons"] == nil { copy["weeklyComparisons"] = [Any]() }
+        if copy["presetRuns"] == nil { copy["presetRuns"] = [Any]() }
+        if copy["acceptedSignals"] == nil { copy["acceptedSignals"] = [Any]() }
+        if copy["rejectedSignals"] == nil { copy["rejectedSignals"] = [Any]() }
+        if copy["shadow"] == nil {
+            copy["shadow"] = ["trained": false, "source": "median", "sampleCount": 0]
+        }
         return copy
     }
 

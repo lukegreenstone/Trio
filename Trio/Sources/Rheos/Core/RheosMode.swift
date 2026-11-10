@@ -48,4 +48,11 @@ enum RheosReference {
     static let maxDailyChangeCap = 0.10
     static let defaultMaxContextNudge = 0.10
     static let maxContextNudgeCap = 0.20
+    /// First calendar day in Scharf. The setting lives between these two.
+    static let defaultFirstDayChange = 0.15
+    static let minimumFirstDayChange = 0.10
+    static let maximumFirstDayChange = 0.20
+    /// After the first Scharf day the step may be larger. The band still clamps it.
+    static let defaultLaterDayChange = 0.25
+    static let maximumLaterDayChange = 0.40
 }

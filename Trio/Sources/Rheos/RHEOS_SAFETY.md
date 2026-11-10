@@ -6,6 +6,26 @@ The hourly fit reads Trio's saved BG target schedule (the middle of each low/hig
 
 The chat prefers Apple's on-device Foundation Models framework on iOS 26 when Apple Intelligence is available. Otherwise it can call an OpenAI-compatible endpoint with a key the user types into Rheos settings. That key is stored in the Keychain and is not in the repository. If neither is available, the reply is the local report summary. Parsed `[[suggestion]]` blocks become notes only after a tap. The chat cannot dose or change limits.
 
+## Shadow, Core ML, and presets
+
+Schatten computes hourly basal, ISF and carb-ratio factors and a glucose forecast. Those numbers are logged and shown. They are not written into the profile until Scharf is on, and switching to Scharf shows a preview that has to be confirmed.
+
+The first Scharf day moves a factor by at most the setting between 10% and 20% (default 15%). Later days may use a larger step (default 25%, at most 40%). The band is still 0.70–1.20 intersected with the live autosens min/max. Autosens ratio and dynamic ISF are read for the report only. They are not multiplied into an extra cap.
+
+The dosing model is a small on-device temporal network. A ridge regression runs beside it in shadow and both forecast errors are shown in the weekly comparison. Rheos uses whichever of those two has the lower error, and only when that error beats the hourly median. Otherwise the median factors stay. Weights are stored in `rheos-state.json` and trained only on this dataset.
+
+Heart rate, resting heart rate, HRV, respiratory rate, oxygen, wrist temperature, steps, active energy, workout minutes and sleep are recorded. A per-signal check can propose one of them in Rheos Vorschläge. It enters the dosing features only after a yes. A no, or no answer, leaves it out. Core ML only packages those already accepted channels. Rheos still does not deliver a bolus. SMB and UAM see only the profile values from `RheosProfileHook`.
+
+Confirming Sport, Showtime or Krank starts a Trio override or temp target that already has that name, through `AdjustmentManager`. If the name is missing, Rheos says so and does not invent a percentage or a target. There is no ketone reminder. When the saved duration ends, Rheos asks once whether to extend it.
+
+A Sunday weekly notification exists and is off until the switch in Rheos settings is on.
+
+The weekly comparison is a shadow score: Rheos forecast error against the glucose that happened, distance from 100 mg/dL, actual insulin, and the mean shadow basal factor. It is not a counterfactual of the other system.
+
+An optional photo estimate needs the same Keychain key as the chat and a network connection. Offline, the carb screen keeps whatever was typed. Saving the meal uses Trio's existing fat/protein entry. Calories sent to Apple Health are 4 kcal/g carbohydrate, 9 kcal/g fat and 4 kcal/g protein, and only when that write is allowed. Carbs, fat and protein were already written.
+
+iCloud Drive still copies `rheos-state.json` only when the installed profile already has the ubiquity container. This branch does not add that entitlement, so the Browser Build keeps signing. The local file in Application Support remains the copy that survives an update of this bundle id.
+
 ## What can change insulin
 
 Only while the in-app mode is **Scharf**, and only after the hourly model has enough data and passes walk-forward.
@@ -28,7 +48,7 @@ Aus (the default) and Schatten return the original schedules, so the generated p
 
 ## What still needs a tap
 
-Context modes (Showtime, Urlaub, Krank, Fasten, Sport), a snack note, a meal name such as Standardfrühstück, and Alkohol are optional announcements. Confirming one on the phone or the watch calls `RheosCoordinator.announce`, which stores a note. It does not activate a Trio preset, does not call `AdjustmentManager`, and does not deliver insulin. Scharf still changes only ISF, carb ratio and basal from the learned profile, without that announcement.
+A snack note, a meal name, Urlaub, Fasten and Alkohol stay notes. Confirming Sport, Showtime or Krank stores the note and then asks Trio to start a saved override or temp target with that exact name. If that preset does not exist, nothing is activated and no percentage is invented. Nothing in that path delivers a bolus or edits max IOB, max basal, max bolus or autosens limits.
 
 Meal outcomes can be marked as seen. That writes a flag in the Rheos log only.
 

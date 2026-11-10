@@ -86,7 +86,8 @@ enum RheosSnapshotReader {
                 return RheosStatePoint(
                     date: date,
                     iob: row.iob?.doubleValue,
-                    cob: Double(row.cob)
+                    cob: Double(row.cob),
+                    dynamicISF: row.insulinSensitivity?.doubleValue
                 )
             }
         }

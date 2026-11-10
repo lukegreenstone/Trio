@@ -1009,6 +1009,10 @@
 		6A77E1804C6D4C8DB1976EC1 /* RheosSuggestionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65D7541F741D42619DFAC7BD /* RheosSuggestionsView.swift */; };
 		A11C0DE2E10A0000000000C8 /* RheosBodyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000C7 /* RheosBodyView.swift */; };
 		A11C0DE2E10A0000000000CA /* RheosBodyRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000C9 /* RheosBodyRecord.swift */; };
+		A11C0DE2E10A0000000000D4 /* RheosCoreModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000D3 /* RheosCoreModel.swift */; };
+		A11C0DE2E10A0000000000D6 /* RheosShadow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000D5 /* RheosShadow.swift */; };
+		A11C0DE2E10A0000000000D8 /* RheosCoreMLAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000D7 /* RheosCoreMLAdapter.swift */; };
+		A11C0DE2E10A0000000000DA /* RheosMealAssist.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000D9 /* RheosMealAssist.swift */; };
 		A11C0DE2E10A0000000000A2 /* RheosMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000A1 /* RheosMigration.swift */; };
 		A11C0DE2E10A0000000000B2 /* RheosICloudBackup.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000B1 /* RheosICloudBackup.swift */; };
 		A11C0DE2E10A0000000000C2 /* RheosContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000C1 /* RheosContext.swift */; };
@@ -2124,6 +2128,10 @@
 		65D7541F741D42619DFAC7BD /* RheosSuggestionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosSuggestionsView.swift; sourceTree = "<group>"; };
 		A11C0DE2E10A0000000000C7 /* RheosBodyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosBodyView.swift; sourceTree = "<group>"; };
 		A11C0DE2E10A0000000000C9 /* RheosBodyRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosBodyRecord.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000D3 /* RheosCoreModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosCoreModel.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000D5 /* RheosShadow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosShadow.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000D7 /* RheosCoreMLAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosCoreMLAdapter.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000D9 /* RheosMealAssist.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosMealAssist.swift; sourceTree = "<group>"; };
 		A11C0DE2E10A0000000000A1 /* RheosMigration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosMigration.swift; sourceTree = "<group>"; };
 		A11C0DE2E10A0000000000B1 /* RheosICloudBackup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosICloudBackup.swift; sourceTree = "<group>"; };
 		A11C0DE2E10A0000000000C1 /* RheosContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosContext.swift; sourceTree = "<group>"; };
@@ -4908,6 +4916,8 @@
 				A11C0DE2E10A0000000000A7 /* RheosWatchMessages.swift */,
 				A11C0DE2E10A0000000000B5 /* WatchFaceReading.swift */,
 				A11C0DE2E10A0000000000C9 /* RheosBodyRecord.swift */,
+				A11C0DE2E10A0000000000D3 /* RheosCoreModel.swift */,
+				A11C0DE2E10A0000000000D5 /* RheosShadow.swift */,
 			);
 			path = Core;
 			sourceTree = "<group>";
@@ -4927,6 +4937,8 @@
 				E79C07F8A0044FFD8420C72A /* RheosModeBanner.swift */,
 				A007A14147F146A09D7DA662 /* RheosSettingsView.swift */,
 				A11C0DE2E10A0000000000C7 /* RheosBodyView.swift */,
+				A11C0DE2E10A0000000000D7 /* RheosCoreMLAdapter.swift */,
+				A11C0DE2E10A0000000000D9 /* RheosMealAssist.swift */,
 				65D7541F741D42619DFAC7BD /* RheosSuggestionsView.swift */,
 			);
 			path = Integration;
@@ -5365,6 +5377,10 @@
 				6A77E1804C6D4C8DB1976EC1 /* RheosSuggestionsView.swift in Sources */,
 				A11C0DE2E10A0000000000C8 /* RheosBodyView.swift in Sources */,
 				A11C0DE2E10A0000000000CA /* RheosBodyRecord.swift in Sources */,
+				A11C0DE2E10A0000000000D4 /* RheosCoreModel.swift in Sources */,
+				A11C0DE2E10A0000000000D6 /* RheosShadow.swift in Sources */,
+				A11C0DE2E10A0000000000D8 /* RheosCoreMLAdapter.swift in Sources */,
+				A11C0DE2E10A0000000000DA /* RheosMealAssist.swift in Sources */,
 				DD5DC9F12CF3D97C00AB8703 /* AdjustmentsStateModel+Overrides.swift in Sources */,
 				3811DE2325C9D48300A708ED /* MainDataFlow.swift in Sources */,
 				C2A0A42F2CE03131003B98E8 /* ConstantValues.swift in Sources */,

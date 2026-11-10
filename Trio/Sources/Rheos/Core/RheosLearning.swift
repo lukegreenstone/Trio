@@ -14,6 +14,8 @@ enum RheosLearner {
         autosensMin: Double = RheosReference.defaultMinimumMultiplier,
         autosensMax: Double = RheosReference.defaultMaximumMultiplier,
         targets: RheosTargetSchedule = .flat(RheosReference.missingTargetFallbackMgdl),
+        scharfSince: Date? = nil,
+        acceptedSignals: [String] = [],
         now: Date,
         calendar: Calendar = .current
     ) -> RheosProfileDecision {
@@ -42,7 +44,13 @@ enum RheosLearner {
         }
         let learningSet = RheosCare.excludingCompression(dataset, calendar: calendar)
         let prior = RheosBodyPrior.strength(for: learningSet.body)
-        let learned = estimate(dataset: learningSet, targets: targets, band: band, calendar: calendar)
+        let learned = estimate(
+            dataset: learningSet,
+            targets: targets,
+            band: band,
+            acceptedSignals: acceptedSignals,
+            calendar: calendar
+        )
         let walk = walkForward(
             dataset: learningSet,
             targets: targets,
@@ -114,7 +122,11 @@ enum RheosLearner {
         if let previous, calendar.isDate(previous.appliedAt, inSameDayAs: now) {
             slow = previous.factors.clamped(to: band)
         } else {
-            slow = learned.stepped(from: previous?.factors ?? .identity, maxStep: limits.maxDailyChange, band: band)
+            slow = learned.stepped(
+                from: previous?.factors ?? .identity,
+                maxStep: RheosRamp.maxStep(now: now, scharfSince: scharfSince, bounds: limits, calendar: calendar),
+                band: band
+            )
         }
         let combined = RheosContextInference.combine(slow: slow, insulinNeed: need, band: band)
         let contextNote = contexts.isEmpty
@@ -138,6 +150,7 @@ enum RheosLearner {
         dataset: RheosDataset,
         targets: RheosTargetSchedule,
         band: ClosedRange<Double>,
+        acceptedSignals: [String] = [],
         calendar: Calendar
     ) -> RheosHourlyFactors {
         let observations = RheosFit.observations(dataset: dataset, targets: targets, calendar: calendar)
@@ -146,6 +159,17 @@ enum RheosLearner {
             band: band,
             priorStrength: RheosBodyPrior.strength(for: dataset.body)
         )
+        let core = RheosCoreModel.fit(
+            dataset: dataset,
+            targets: targets,
+            band: band,
+            acceptedSignals: acceptedSignals,
+            calendar: calendar
+        )
+        if core.trained {
+            model.factors.basal = core.factors.basal
+            model.factors.isf = core.factors.isf
+        }
         model.factors.carbRatio = RheosFit.carbRatioFactors(dataset: dataset, targets: targets, band: band, calendar: calendar)
         return model.factors
     }
@@ -260,6 +284,7 @@ enum RheosReportBuilder {
         autosensMin: Double,
         autosensMax: Double,
         targets: RheosTargetSchedule = .flat(RheosReference.missingTargetFallbackMgdl),
+        scharfSince: Date? = nil,
         now: Date,
         calendar: Calendar = .current
     ) -> RheosReport {
@@ -276,6 +301,7 @@ enum RheosReportBuilder {
                 autosensMin: autosensMin,
                 autosensMax: autosensMax,
                 targets: targets,
+                scharfSince: scharfSince,
                 now: now,
                 calendar: calendar
             ),

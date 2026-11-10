@@ -10,6 +10,10 @@ struct RheosBounds: Codable, Equatable {
     var maxDailyChange: Double = RheosReference.defaultMaxDailyChange
     /// Same-day context may move a factor by at most this fraction (0.10 = 10%).
     var maxContextNudge: Double = RheosReference.defaultMaxContextNudge
+    /// Largest factor step on the first Scharf day. Clamped to 0.10...0.20.
+    var firstDayMaxChange: Double = RheosReference.defaultFirstDayChange
+    /// Largest factor step after that day. Still inside the band.
+    var laterDayMaxChange: Double = RheosReference.defaultLaterDayChange
     var minimumDays: Int = 14
     var minimumGlucoseSamples: Int = 500
     var minimumImprovement: Double = 0.02
@@ -25,6 +29,13 @@ struct RheosBounds: Codable, Equatable {
         copy.maxDailyChange = min(max(daily, 0.01), RheosReference.maxDailyChangeCap)
         let nudge = copy.maxContextNudge.isFinite ? copy.maxContextNudge : RheosReference.defaultMaxContextNudge
         copy.maxContextNudge = min(max(nudge, 0.01), RheosReference.maxContextNudgeCap)
+        let first = copy.firstDayMaxChange.isFinite ? copy.firstDayMaxChange : RheosReference.defaultFirstDayChange
+        copy.firstDayMaxChange = min(
+            max(first, RheosReference.minimumFirstDayChange),
+            RheosReference.maximumFirstDayChange
+        )
+        let later = copy.laterDayMaxChange.isFinite ? copy.laterDayMaxChange : RheosReference.defaultLaterDayChange
+        copy.laterDayMaxChange = min(max(later, copy.firstDayMaxChange), RheosReference.maximumLaterDayChange)
         copy.minimumDays = max(copy.minimumDays, 7)
         copy.minimumGlucoseSamples = max(copy.minimumGlucoseSamples, 200)
         let improvement = copy.minimumImprovement.isFinite ? copy.minimumImprovement : 0.02
@@ -183,6 +194,15 @@ struct RheosStatePoint: Codable, Equatable {
     var date: Date
     var iob: Double? = nil
     var cob: Double? = nil
+    /// Dynamic ISF from that loop cycle, mg/dL per unit. Reporting only.
+    var dynamicISF: Double? = nil
+}
+
+/// Autosens ratio and dynamic ISF read from the current Trio loop. Not a second bound.
+struct RheosLoopReading: Codable, Equatable {
+    var autosensRatio: Double
+    var dynamicISF: Double?
+    var recordedAt: Date
 }
 
 struct RheosAdjustmentInterval: Codable, Equatable, Identifiable {
@@ -272,6 +292,8 @@ struct RheosDataset: Codable, Equatable {
     var sleep: [RheosSleepInterval] = []
     var body: RheosBodyInputs = RheosBodyInputs()
     var bodyHistory: [RheosBodySnapshot] = []
+    /// Latest Autosens ratio and dynamic ISF. Analysis only. It does not widen the band.
+    var loopReading: RheosLoopReading? = nil
 }
 
 struct RheosStability: Equatable {
