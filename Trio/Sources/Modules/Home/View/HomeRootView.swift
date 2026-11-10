@@ -246,6 +246,8 @@ extension Home {
                 // fixed slot: header state changes never reflow the zones below
                 .frame(height: HomeLayout.headerHeight)
 
+                RheosModeBanner()
+
                 mealPanel()
                     .frame(height: HomeLayout.mealSlotHeight)
                     // Fades the readout in and out. Keyed on visibility, not on the date: a

@@ -41,6 +41,12 @@ struct FilteredSettingItem: Identifiable {
 
 enum SettingItems {
     static let trioConfig = [
+        SettingItem(
+            title: String(localized: "Rheos", comment: "Rheos learning layer in the settings list"),
+            view: .rheos,
+            searchContents: ["Schatten", "Scharf", "Rheos", "Aus"],
+            path: ["Rheos"]
+        ),
         SettingItem(title: String(localized: "Devices", comment: "Devices menu item in the Settings main view."), view: .devices),
         SettingItem(
             title: String(localized: "Therapy", comment: "Therapy menu item in the Settings main view."),

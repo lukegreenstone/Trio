@@ -84,7 +84,7 @@
 	<key>NSFaceIDUsageDescription</key>
 	<string>For authorized access to bolus</string>
 	<key>NSHealthShareUsageDescription</key>
-	<string>Health App is used to store blood glucose, carbs and insulin</string>
+	<string>Trio reads and writes blood glucose, carbohydrates and insulin. Rheos also reads heart rate, resting heart rate, heart rate variability, respiratory rate, oxygen saturation, wrist temperature, steps, active energy, workouts and sleep. Wearable readings stay on this iPhone and are not used to send a bolus.</string>
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>Health App is used to store blood glucose, carbs and insulin</string>
 	<key>NSHumanReadableCopyright</key>

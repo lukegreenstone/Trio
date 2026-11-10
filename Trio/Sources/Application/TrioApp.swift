@@ -76,6 +76,7 @@ extension Notification.Name {
         _ = resolver.resolve(WatchManager.self)!
         _ = resolver.resolve(ContactImageManager.self)!
         _ = resolver.resolve(HealthKitManager.self)!
+        resolver.resolve(RheosCoordinator.self)?.start()
         _ = resolver.resolve(GarminManager.self)!
         _ = resolver.resolve(BluetoothStateManager.self)!
         _ = resolver.resolve(PluginManager.self)!
