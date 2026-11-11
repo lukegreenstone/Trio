@@ -16,6 +16,9 @@ enum RheosLearner {
         targets: RheosTargetSchedule = .flat(RheosReference.missingTargetFallbackMgdl),
         scharfSince: Date? = nil,
         acceptedSignals: [String] = [],
+        dynamicISFOn: Bool = false,
+        wake: RheosWakeState? = nil,
+        sites: [RheosPatchSite] = [],
         now: Date,
         calendar: Calendar = .current
     ) -> RheosProfileDecision {
@@ -42,15 +45,16 @@ enum RheosLearner {
                 now: now
             )
         }
-        let learningSet = RheosCare.excludingCompression(dataset, calendar: calendar)
+        let learningSet = RheosDataQuality.excludingUnusable(dataset, sites: sites, calendar: calendar, now: now)
         let prior = RheosBodyPrior.strength(for: learningSet.body)
-        let learned = estimate(
+        let fitted = estimate(
             dataset: learningSet,
             targets: targets,
             band: band,
             acceptedSignals: acceptedSignals,
             calendar: calendar
         )
+        let learned = RheosDynamicISF.neutralize(fitted, dynamicISFOn: dynamicISFOn)
         let walk = walkForward(
             dataset: learningSet,
             targets: targets,
@@ -100,11 +104,20 @@ enum RheosLearner {
             } else {
                 reason = "Rückfall auf Trio. \(walk.reason) SMB und UAM laufen mit dem unveränderten Profil."
             }
+            let wakePreview = RheosWake.window(
+                factors: learned,
+                minutesSinceWake: RheosWake.minutesSinceWake(now: now, wake: wake?.lastWake),
+                kind: RheosWakeKind(rawValue: wake?.kind ?? "") ?? .unclear,
+                enabled: wake?.enabled ?? false,
+                confirmed: wake?.confirmed ?? false,
+                modeIsScharf: false,
+                band: band
+            )
             return decision(
                 mode: mode,
                 code: code,
                 applied: false,
-                reason: reason,
+                reason: reason + wakePreview.line,
                 factors: .identity,
                 learned: learned,
                 walk: walk,
@@ -129,15 +142,31 @@ enum RheosLearner {
             )
         }
         let combined = RheosContextInference.combine(slow: slow, insulinNeed: need, band: band)
+        var delivered = RheosDynamicISF.neutralize(combined, dynamicISFOn: dynamicISFOn)
+        let wakeResult = RheosWake.window(
+            factors: delivered,
+            minutesSinceWake: RheosWake.minutesSinceWake(now: now, wake: wake?.lastWake),
+            kind: RheosWakeKind(rawValue: wake?.kind ?? "") ?? .unclear,
+            enabled: wake?.enabled ?? false,
+            confirmed: wake?.confirmed ?? false,
+            modeIsScharf: true,
+            band: band
+        )
+        if wakeResult.apply { delivered = wakeResult.factors }
         let contextNote = contexts.isEmpty
             ? ""
             : " Kontext aus Daten: \(contexts.map(\.title).joined(separator: ", "))."
+        let dynamicNote = dynamicISFOn ? " Dynamic ISF ist an, der Rheos-ISF-Faktor bleibt 1." : ""
+        let doubleNote = RheosDynamicISF.doubleCountWarning(
+            meanBasalFactor: delivered.basal.reduce(0, +) / Double(max(delivered.basal.count, 1)),
+            autosensRatio: dataset.loopReading?.autosensRatio
+        ).map { " \($0)" } ?? ""
         return decision(
             mode: mode,
             code: .applied,
             applied: true,
-            reason: "Scharf. Stundenfaktoren für ISF, KH-Faktor und Basal, Band \(format(band.lowerBound))–\(format(band.upperBound)), höchstens \(format(limits.maxDailyChange)) pro Tag für das Stundenmodell. SMB und UAM bleiben an.\(contextNote)\(bodyNote(dataset))",
-            factors: combined,
+            reason: "Scharf. Stundenfaktoren für ISF, KH-Faktor und Basal, Band \(format(band.lowerBound))–\(format(band.upperBound)), höchstens \(format(limits.maxDailyChange)) pro Tag für das Stundenmodell. SMB und UAM bleiben an.\(contextNote)\(bodyNote(dataset))\(dynamicNote)\(wakeResult.line)\(doubleNote)",
+            factors: delivered,
             slowFactors: slow,
             learned: learned,
             walk: walk,

@@ -1023,6 +1023,99 @@ final class RheosCoreTests: XCTestCase {
         XCTAssertEqual(WatchFaceStore.lastReload(defaults: defaults), now)
     }
 
+    func testBasalWakeDynamicISFAndDataQuality() {
+        let factors = Array(repeating: 1.2, count: 24)
+        let proposal = RheosBasalRecommendation.propose(
+            rates: [(minutes: 0, rate: 1)],
+            factors: factors,
+            previous: Array(repeating: 1, count: 24),
+            dawnNote: "Dawn. "
+        )
+        XCTAssertTrue(proposal.material)
+        XCTAssertEqual(proposal.slots[6].proposed, 1.2, accuracy: 0.001)
+        XCTAssertTrue(proposal.summary.contains("nicht gespeichert"))
+        XCTAssertFalse(RheosBasalRecommendation.materiallyDifferent(
+            previous: proposal.slots.map(\.proposed),
+            next: proposal.slots.map(\.proposed)
+        ))
+
+        let dawn = RheosWake.classify([
+            RheosWakeSample(wakeHour: 6, clockRise: 40, wakeRise: 5),
+            RheosWakeSample(wakeHour: 6.2, clockRise: 42, wakeRise: 8),
+            RheosWakeSample(wakeHour: 6.4, clockRise: 38, wakeRise: 6),
+            RheosWakeSample(wakeHour: 9, clockRise: 41, wakeRise: 30),
+            RheosWakeSample(wakeHour: 9.2, clockRise: 39, wakeRise: 28),
+            RheosWakeSample(wakeHour: 9.5, clockRise: 40, wakeRise: 35)
+        ])
+        XCTAssertEqual(dawn, .dawn)
+        let feet = RheosWake.classify([
+            RheosWakeSample(wakeHour: 6, clockRise: 10, wakeRise: 30),
+            RheosWakeSample(wakeHour: 6.2, clockRise: 12, wakeRise: 32),
+            RheosWakeSample(wakeHour: 6.5, clockRise: 8, wakeRise: 29),
+            RheosWakeSample(wakeHour: 9, clockRise: 40, wakeRise: 31),
+            RheosWakeSample(wakeHour: 9.3, clockRise: 45, wakeRise: 30),
+            RheosWakeSample(wakeHour: 9.6, clockRise: 42, wakeRise: 28)
+        ])
+        XCTAssertEqual(feet, .feetOnFloor)
+        XCTAssertTrue(RheosWake.shouldAskAgain(previous: "dawn", current: .feetOnFloor))
+
+        let shadow = RheosWake.window(
+            factors: .identity,
+            minutesSinceWake: 40,
+            kind: .feetOnFloor,
+            enabled: true,
+            confirmed: false,
+            modeIsScharf: false,
+            band: 0.7 ... 1.2
+        )
+        XCTAssertFalse(shadow.apply)
+        let live = RheosWake.window(
+            factors: .identity,
+            minutesSinceWake: 40,
+            kind: .feetOnFloor,
+            enabled: true,
+            confirmed: true,
+            modeIsScharf: true,
+            band: 0.7 ... 1.2
+        )
+        XCTAssertTrue(live.apply)
+        XCTAssertGreaterThan(live.factors.basal[0], 1)
+        XCTAssertLessThan(live.factors.isf[0], 1)
+
+        let learned = RheosHourlyFactors(
+            basal: Array(repeating: 1.1, count: 24),
+            isf: Array(repeating: 0.8, count: 24),
+            carbRatio: Array(repeating: 0.9, count: 24)
+        )
+        let neutral = RheosDynamicISF.neutralize(learned, dynamicISFOn: true)
+        XCTAssertEqual(neutral.isf[4], 1, accuracy: 0.001)
+        XCTAssertEqual(neutral.basal[4], 1.1, accuracy: 0.001)
+        XCTAssertNotNil(RheosDynamicISF.doubleCountWarning(meanBasalFactor: 1.1, autosensRatio: 1.2))
+
+        let first = date(day: 2, hour: 1)
+        let afterGap = date(day: 2, hour: 4)
+        let warmup = RheosDataQuality.warmupDates(glucose: [
+            RheosGlucosePoint(date: first, mgdl: 100),
+            RheosGlucosePoint(date: afterGap, mgdl: 110),
+            RheosGlucosePoint(date: afterGap.addingTimeInterval(30 * 60), mgdl: 112)
+        ])
+        XCTAssertTrue(warmup.contains(afterGap.timeIntervalSince1970))
+        let site = date(day: 2, hour: 10)
+        let blockedSite = RheosDataQuality.siteDates(
+            glucose: [RheosGlucosePoint(date: site.addingTimeInterval(3600), mgdl: 100)],
+            sites: [RheosPatchSite(id: "site", place: "Arm", started: site)]
+        )
+        XCTAssertTrue(blockedSite.contains(site.addingTimeInterval(3600).timeIntervalSince1970))
+        let highStart = date(day: 4, hour: 1)
+        let highs = (0 ..< 5).map {
+            RheosGlucosePoint(date: highStart.addingTimeInterval(Double($0) * 20 * 60), mgdl: 280)
+        }
+        XCTAssertFalse(RheosDataQuality.occlusionDates(glucose: highs, now: highStart.addingTimeInterval(2 * 3600)).isEmpty)
+        XCTAssertNotNil(RheosUpkeep.loopWarning(lastLoop: date(day: 3, hour: 1), now: date(day: 3, hour: 3)))
+        XCTAssertNil(RheosUpkeep.exportReminder(lastExport: date(day: 3, hour: 1), hasData: true, now: date(day: 3, hour: 2)))
+        XCTAssertFalse(RheosCloudPolicy.allowsCloud(defaults: UserDefaults(suiteName: UUID().uuidString) ?? .standard))
+    }
+
     private func stableGlucose(days: ClosedRange<Int>, invertFrom: Int? = nil) -> [RheosGlucosePoint] {
         var points: [RheosGlucosePoint] = []
         for day in days {

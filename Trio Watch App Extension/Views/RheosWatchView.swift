@@ -55,6 +55,7 @@ struct RheosWatchView: View {
                 Button("Snack") { state.sendRheosConfirm(kind: "snack", note: "small carbs, observe") }
                 Button("Standardfrühstück") { state.sendRheosConfirm(kind: "meal", note: "Standardfrühstück") }
                 Button("Alkohol") { state.sendRheosConfirm(kind: "alcohol", note: "Alkohol") }
+                Button("Stress") { state.sendRheosConfirm(kind: "stress", note: "Stress") }
 
                 ForEach(state.rheosSuggestions) { suggestion in
                     VStack(alignment: .leading, spacing: 4) {

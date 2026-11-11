@@ -35,6 +35,7 @@ extension Home {
         @State var showSnoozeSheet: Bool = false
         @State var showManualGlucose: Bool = false
         @State var showReleaseNotes: Bool = false
+        @State var showRheosSheet: Bool = false
         @State var alarmsSnoozeUntil: Date = .distantPast
         @ObservedObject var releaseNotesService = ReleaseNotesService.shared
         // Pull-down-to-force-loop (see HomeRootView+Refresh.swift)
@@ -247,6 +248,13 @@ extension Home {
                 .frame(height: HomeLayout.headerHeight)
 
                 RheosModeBanner()
+                Button("Rheos") { showRheosSheet = true }
+                    .font(.footnote.weight(.semibold))
+                    .buttonStyle(.bordered)
+                    .padding(.bottom, 4)
+                    .sheet(isPresented: $showRheosSheet) {
+                        RheosHomeSheet(resolver: resolver)
+                    }
 
                 mealPanel()
                     .frame(height: HomeLayout.mealSlotHeight)

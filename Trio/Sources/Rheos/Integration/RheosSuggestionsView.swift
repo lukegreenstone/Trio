@@ -16,6 +16,7 @@ struct RheosSuggestionsView: View {
     @State private var mealCarbs = ""
     @State private var mealFat = ""
     @State private var mealProtein = ""
+    @State private var mealNote = ""
     @State private var photo: PhotosPickerItem?
     @State private var suggestions: [RheosChatSuggestion] = []
     @State private var siteName = ""
@@ -40,6 +41,8 @@ struct RheosSuggestionsView: View {
                         .font(.footnote)
                 }
             }
+
+            mealSection
 
             if let report {
                 Section("Stabilität") {
@@ -84,20 +87,6 @@ struct RheosSuggestionsView: View {
                         }
                     }
                     Text("Nur ein Override oder Temp-Target, das du in Trio schon Krank genannt hast. Sonst passiert nichts.")
-                        .font(.footnote)
-                }
-
-                Section("Mahlzeit") {
-                    TextField("Kohlenhydrate g", text: $mealCarbs)
-                    TextField("Fett g", text: $mealFat)
-                    TextField("Protein g", text: $mealProtein)
-                    PhotosPicker(selection: $photo, matching: .images) {
-                        Text("Foto schätzen, nur online")
-                    }
-                    Button("In den Kohlenhydrat-Bildschirm legen") {
-                        stageMeal(nil)
-                    }
-                    Text(RheosFPUSplit.proposal(hour: Calendar.current.component(.hour, from: Date()), fat: number(mealFat), protein: number(mealProtein)))
                         .font(.footnote)
                 }
 
@@ -238,7 +227,9 @@ struct RheosSuggestionsView: View {
 
                 Section("Assistent") {
                     TextField("Frage an das Protokoll", text: $question)
-                    Button("Antwort") {
+                    HStack {
+                        RheosMicButton { question = $0 }
+                        Button("Antwort") {
                         Task {
                             let result = await RheosChatEngine.reply(
                                 question: question,
@@ -248,6 +239,7 @@ struct RheosSuggestionsView: View {
                             answer = "\(result.text)\n\nQuelle: \(result.source)"
                             suggestions = result.suggestions
                         }
+                    }
                     }
                     if !answer.isEmpty {
                         Text(answer).font(.footnote)
@@ -363,6 +355,59 @@ struct RheosSuggestionsView: View {
     private func cv(_ value: Double?) -> String {
         guard let value else { return "–" }
         return String(format: "%.0f %%", value)
+    }
+
+    private var mealSection: some View {
+        Section("Mahlzeit") {
+            TextField("Beschreibung oder Gramm", text: $mealNote)
+            TextField("Kohlenhydrate g", text: $mealCarbs)
+            TextField("Fett g", text: $mealFat)
+            TextField("Protein g", text: $mealProtein)
+            HStack {
+                PhotosPicker(selection: $photo, matching: .images) {
+                    Text("Foto")
+                }
+                RheosCameraButton { data in
+                    Task {
+                        let estimate = await RheosMealAssist.estimate(jpeg: data, resolver: resolver)
+                        if let estimate {
+                            mealCarbs = format(estimate.carbs)
+                            mealFat = format(estimate.fat)
+                            mealProtein = format(estimate.protein)
+                            stageMeal(estimate)
+                        }
+                    }
+                }
+                RheosMicButton { mealNote = $0 }
+            }
+            Button("Beschreibung schätzen") {
+                Task {
+                    let result = await RheosMealAssist.estimate(description: mealNote, resolver: resolver)
+                    if let estimate = result.0 {
+                        mealCarbs = format(estimate.carbs)
+                        mealFat = format(estimate.fat)
+                        mealProtein = format(estimate.protein)
+                        status = "Quelle: \(result.1)"
+                        stageMeal(estimate)
+                    } else {
+                        status = result.1
+                    }
+                }
+            }
+            Button("In den Kohlenhydrat-Bildschirm legen") { stageMeal(nil) }
+            Button("Alkohol markieren") {
+                status = coordinator?.announce(kind: "alcohol", note: "Alkohol") ?? ""
+            }
+            Button("Stress markieren") {
+                status = coordinator?.announce(kind: "stress", note: "Stress") ?? ""
+            }
+            Text(RheosFPUSplit.proposal(
+                hour: Calendar.current.component(.hour, from: Date()),
+                fat: number(mealFat),
+                protein: number(mealProtein)
+            ))
+            .font(.footnote)
+        }
     }
 
     private func stageMeal(_ estimate: RheosMealEstimate?) {

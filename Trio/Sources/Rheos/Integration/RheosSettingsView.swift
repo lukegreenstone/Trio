@@ -18,6 +18,9 @@ struct RheosSettingsView: View {
     @State private var firstDay = RheosReference.defaultFirstDayChange
     @State private var laterDay = RheosReference.defaultLaterDayChange
     @State private var sundayReport = false
+    @State private var cloudAnalysis = false
+    @State private var basalText = ""
+    @State private var reportText = ""
     @State private var previewText = ""
     @State private var decisionText = ""
     @State private var showShare = false
@@ -75,6 +78,7 @@ struct RheosSettingsView: View {
                     Text("Danach höchstens \(laterDay * 100, format: .number.precision(.fractionLength(0))) %")
                 }
                 Toggle("Sonntags Wochenbericht", isOn: $sundayReport)
+                Toggle("Cloud-Auswertung", isOn: $cloudAnalysis)
             } header: {
                 Text("Band")
             } footer: {
@@ -89,8 +93,54 @@ struct RheosSettingsView: View {
                 NavigationLink("Körperdaten") {
                     RheosBodyView(resolver: resolver)
                 }
+                Button("Basalprofil-Vorschlag") {
+                    basalText = coordinator?.basalProposal().summary ?? ""
+                }
+                if !basalText.isEmpty {
+                    Text(basalText).font(.footnote)
+                    Button("Basalprofil jetzt übernehmen") {
+                        Task {
+                            let text = await coordinator?.adoptBasalProposal()
+                            basalText = text ?? ""
+                        }
+                    }
+                }
+                Toggle("Aufwachfenster", isOn: Binding(
+                    get: { RheosStore.shared.loadDocument().wake?.enabled ?? false },
+                    set: { coordinator?.setWake(enabled: $0) }
+                ))
+                Button("Aufwachfenster einmal bestätigen") {
+                    coordinator?.setWake(enabled: true, confirmed: true)
+                }
+                Button("Lernbericht") {
+                    Task {
+                        let result = await coordinator?.learningNarrative()
+                        if let result {
+                            reportText = "\(result.0)\n\nQuelle: \(result.1)"
+                        }
+                    }
+                }
+                if !reportText.isEmpty {
+                    Text(reportText).font(.footnote)
+                    Button("Als PDF teilen") {
+                        if let url = RheosTeamPDF.write(reportText) {
+                            exportURLs = [url]
+                            showShare = true
+                        }
+                    }
+                }
+                ForEach(Array(RheosStore.shared.loadDocument().hourLog.suffix(12).reversed())) { row in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(row.hour) Uhr · Basal ×\(row.basal, format: .number.precision(.fractionLength(2))) · ISF ×\(row.isf, format: .number.precision(.fractionLength(2))) · Autosens \(row.autosensRatio ?? 1, format: .number.precision(.fractionLength(2))) · \(row.applied ? "angewendet" : "Schatten")")
+                        Text(row.inputs)
+                        Text(row.reason)
+                    }
+                    .font(.footnote)
+                }
             } header: {
                 Text("Letzte Auswertung")
+            } footer: {
+                Text("Cloud-Auswertung ist aus, bis du sie einschaltest. Dann gehen nur die schon zusammengefassten Sätze an das Modell, keine Rohwerte. Die Dosis bleibt auf dem Gerät.")
             }
 
             Section {
@@ -152,6 +202,9 @@ struct RheosSettingsView: View {
         }
         .onChange(of: sundayReport) { _, newValue in
             UserDefaults.standard.set(newValue, forKey: RheosCareNotifier.sundayKey)
+        }
+        .onChange(of: cloudAnalysis) { _, newValue in
+            UserDefaults.standard.set(newValue, forKey: RheosCloudPolicy.key)
         }
         .onReceive(
             Foundation.NotificationCenter.default.publisher(for: Foundation.Notification.Name.rheosModeDidChange)
@@ -246,6 +299,7 @@ struct RheosSettingsView: View {
         firstDay = bounds.firstDayMaxChange
         laterDay = bounds.laterDayMaxChange
         sundayReport = UserDefaults.standard.bool(forKey: RheosCareNotifier.sundayKey)
+        cloudAnalysis = RheosCloudPolicy.allowsCloud()
         cloudURL = UserDefaults.standard.string(forKey: RheosCloudChat.baseURLKey) ?? RheosCloudChat.defaultBaseURL
         cloudModel = UserDefaults.standard.string(forKey: RheosCloudChat.modelKey) ?? RheosCloudChat.defaultModel
         if case let .success(stored) = resolver.resolve(Keychain.self)?.getValue(String.self, forKey: RheosCloudChat.keychainKey) {
@@ -270,6 +324,7 @@ struct RheosSettingsView: View {
     private func export() {
         do {
             exportURLs = try coordinator?.exportFiles() ?? []
+            UserDefaults.standard.set(Date(), forKey: RheosUpkeep.exportKey)
             showShare = !exportURLs.isEmpty
         } catch {
             decisionText = "Export fehlgeschlagen."

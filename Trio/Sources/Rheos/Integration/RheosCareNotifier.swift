@@ -37,6 +37,10 @@ enum RheosCareNotifier {
         UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
     }
 
+    static func postPlain(id: String, body: String) {
+        post(id: id, body: body)
+    }
+
     static func extendPreset(name: String) {
         post(id: "rheos.suggestion.preset.\(name)", body: "„\(name)“ ist abgelaufen. In Rheos kannst du es verlängern. Rheos ändert das Preset nicht von selbst.")
     }

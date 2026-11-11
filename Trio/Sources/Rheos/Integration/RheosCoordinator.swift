@@ -1,5 +1,6 @@
 import Foundation
 import HealthKit
+import LoopKit
 import Swinject
 import UIKit
 
@@ -137,6 +138,9 @@ final class RheosCoordinator {
             targets: RheosTargetLoader.schedule(resolver: resolver),
             scharfSince: scharfSince,
             acceptedSignals: store.loadDocument().acceptedSignals,
+            dynamicISFOn: resolver.resolve(SettingsManager.self)?.preferences.useNewFormula == true,
+            wake: store.loadDocument().wake,
+            sites: store.patchSites(),
             now: now
         )
         store.saveDecision(decision)
@@ -169,12 +173,21 @@ final class RheosCoordinator {
             calendar: .current
         )
         RheosCareNotifier.post(care)
-        RheosCareNotifier.sundayReport(
-            enabled: UserDefaults.standard.bool(forKey: RheosCareNotifier.sundayKey),
-            text: care.weekly,
-            now: now
-        )
+        let sunday = UserDefaults.standard.bool(forKey: RheosCareNotifier.sundayKey)
+            && Calendar.current.component(.weekday, from: now) == 1
+        let weeklyText: String
+        if sunday {
+            let prose = await weeklyProse(care.weekly)
+            weeklyText = prose.0
+        } else {
+            weeklyText = care.weekly
+        }
+        RheosCareNotifier.sundayReport(enabled: sunday, text: weeklyText, now: now)
         promptExpiredPresets(now: now)
+        recordHour(dataset: dataset, decision: decision, now: now)
+        postUpkeep(dataset: dataset, now: now)
+        let ends = dataset.sleep.map(\.end)
+        updateWake(samples: RheosWake.samples(glucose: dataset.glucose, sleepEnds: ends, calendar: .current), lastWake: ends.max())
         replaceCare(care)
         if decision.applied {
             // Persist the slow model. The context nudge stays in the decision
@@ -334,6 +347,145 @@ final class RheosCoordinator {
         if changed { RheosStore.shared.saveDocument(state) }
     }
 
+    func basalProposal() -> RheosBasalProposal {
+        let state = RheosStore.shared.loadDocument()
+        let storage = resolver.resolve(FileStorage.self)
+        let profile = storage?.retrieve(OpenAPS.Settings.basalProfile, as: [BasalProfileEntry].self) ?? []
+        let rates = profile.map { (minutes: $0.minutes, rate: NSDecimalNumber(decimal: $0.rate).doubleValue) }
+        let factors = state.decision?.learnedFactors.basal ?? Array(repeating: 1, count: 24)
+        let dawn = state.wake?.kind == RheosWakeKind.dawn.rawValue
+            ? "Der morgendliche Anstieg hängt an der Uhrzeit und steckt in diesem Stundenprofil. "
+            : "Ein Anstieg nach dem Aufwachen ist kein neues Basalprofil. "
+        return RheosBasalRecommendation.propose(
+            rates: rates,
+            factors: factors,
+            previous: state.lastProposedBasal,
+            dawnNote: dawn
+        )
+    }
+
+    func adoptBasalProposal() async -> String {
+        let proposal = basalProposal()
+        guard proposal.material || proposal.slots.contains(where: { $0.proposed > 0 }) else {
+            return "Nichts zu übernehmen."
+        }
+        let entries = proposal.slots.filter { $0.proposed > 0 }.map {
+            BasalProfileEntry(start: String(format: "%02d:00:00", $0.hour), minutes: $0.hour * 60, rate: Decimal($0.proposed))
+        }
+        guard !entries.isEmpty, let storage = resolver.resolve(FileStorage.self) else {
+            return "Basalprofil nicht gefunden. Nichts geschrieben."
+        }
+        if let pump = resolver.resolve(APSManager.self)?.pumpManager {
+            let sync = entries.map { RepeatingScheduleValue(startTime: TimeInterval($0.minutes * 60), value: Double($0.rate)) }
+            let saved: Bool = await withCheckedContinuation { continuation in
+                pump.syncBasalRateSchedule(items: sync) { result in
+                    if case .success = result {
+                        storage.save(entries, as: OpenAPS.Settings.basalProfile)
+                        continuation.resume(returning: true)
+                    } else {
+                        continuation.resume(returning: false)
+                    }
+                }
+            }
+            guard saved else { return "Die Pumpe hat das Basalprofil nicht übernommen. Die Datei bleibt unverändert." }
+        } else {
+            storage.save(entries, as: OpenAPS.Settings.basalProfile)
+        }
+        var state = RheosStore.shared.loadDocument()
+        state.lastProposedBasal = proposal.slots.map(\.proposed)
+        RheosStore.shared.saveDocument(state)
+        return "Basalprofil übernommen. Trio kann es als Fallback ohne iPhone nutzen. Rheos gibt keinen Bolus."
+    }
+
+    func learningNarrative() async -> (String, String) {
+        let state = RheosStore.shared.loadDocument()
+        let weekly = RheosCare.weeklyReport(
+            glucose: RheosStore.shared.loadDataset().glucose,
+            learned: state.decision?.reason ?? "",
+            now: Date()
+        )
+        let local = RheosLearningReport.local(
+            decisionReason: state.decision?.reason ?? "Noch keine Auswertung.",
+            shadow: RheosCoreMLAdapter.statusLine(state.shadow),
+            confidence: RheosLearningReport.confidence(samples: state.shadow.sampleCount, trained: state.shadow.trained)
+        )
+        let combined = local + "\n" + weekly
+        let result = await weeklyProse(combined)
+        return result
+    }
+
+    private func weeklyProse(_ local: String) async -> (String, String) {
+        let prompt = "Formuliere knapp und ohne Bolus, ohne einzelne Glukosewerte: \(local)"
+        if RheosCloudPolicy.allowsCloud() {
+            if let text = await RheosCloudChat.reply(prompt: prompt, resolver: resolver) {
+                return (text, "Cloud-Modell")
+            }
+        }
+        #if canImport(FoundationModels)
+        if #available(iOS 26, *) {
+            do {
+                let text = try await RheosFoundationChat.reply(prompt: prompt)
+                return (text, "Apple Foundation Models, auf dem Gerät")
+            } catch {
+                return (local, "Lokale Auswertung")
+            }
+        }
+        #endif
+        return (local, "Lokale Auswertung")
+    }
+
+    func updateWake(samples: [RheosWakeSample], lastWake: Date?) {
+        var state = RheosStore.shared.loadDocument()
+        var wake = state.wake ?? RheosWakeState()
+        let kind = RheosWake.classify(samples)
+        if RheosWake.shouldAskAgain(previous: wake.pattern, current: kind) {
+            wake.confirmed = false
+        }
+        if kind != .unclear { wake.pattern = kind.rawValue; wake.kind = kind.rawValue }
+        wake.lastWake = lastWake ?? wake.lastWake
+        state.wake = wake
+        RheosStore.shared.saveDocument(state)
+    }
+
+    func setWake(enabled: Bool? = nil, confirmed: Bool? = nil) {
+        var state = RheosStore.shared.loadDocument()
+        var wake = state.wake ?? RheosWakeState()
+        if let enabled { wake.enabled = enabled }
+        if let confirmed { wake.confirmed = confirmed }
+        state.wake = wake
+        RheosStore.shared.saveDocument(state)
+    }
+
+    private func recordHour(dataset: RheosDataset, decision: RheosProfileDecision, now: Date) {
+        let entry = RheosDecisionLog.entry(
+            now: now,
+            factors: decision.applied ? decision.factors : decision.learnedFactors,
+            inputs: "IOB/Mahlzeiten/Uhrzeit, Autosens \(dataset.loopReading?.autosensRatio ?? 1)",
+            reason: decision.reason,
+            autosensRatio: dataset.loopReading?.autosensRatio,
+            applied: decision.applied
+        )
+        var state = RheosStore.shared.loadDocument()
+        state.hourLog = RheosDecisionLog.appending(state.hourLog, entry)
+        RheosStore.shared.saveDocument(state)
+    }
+
+    private func postUpkeep(dataset: RheosDataset, now: Date) {
+        let lastExport = UserDefaults.standard.object(forKey: RheosUpkeep.exportKey) as? Date
+        if let text = RheosUpkeep.exportReminder(lastExport: lastExport, hasData: !dataset.glucose.isEmpty, now: now) {
+            let stampKey = "rheos.notify.export.shown"
+            let shown = UserDefaults.standard.object(forKey: stampKey) as? Date
+            if shown == nil || now.timeIntervalSince(shown ?? now) >= 14 * 86400 {
+                UserDefaults.standard.set(now, forKey: stampKey)
+                RheosCareNotifier.postPlain(id: "rheos.suggestion.export", body: text)
+            }
+        }
+        let lastLoop = dataset.states.map(\.date).max()
+        if let text = RheosUpkeep.loopWarning(lastLoop: lastLoop, now: now) {
+            RheosCareNotifier.postPlain(id: "rheos.suggestion.loop", body: text)
+        }
+    }
+
     private func beginRefresh() -> Bool {
         lock.lock()
         defer { lock.unlock() }
@@ -387,6 +539,8 @@ final class RheosCoordinator {
         switch kind {
         case "alcohol":
             return "Alkohol notiert. Rheos kann ein späteres Hypo-Risiko erwähnen. Kein Temp Target und kein Bolus."
+        case "stress":
+            return "Stress notiert. Kein Preset, kein Temp Target und kein Bolus."
         case "snack":
             return "Snack notiert: kleine Kohlenhydrate, beobachten. Kein Bolus."
         case "note":

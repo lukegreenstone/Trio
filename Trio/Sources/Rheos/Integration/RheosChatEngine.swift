@@ -10,19 +10,19 @@ struct RheosChatResult: Equatable {
 enum RheosChatEngine {
     static func reply(question: String, report: RheosReport, resolver: Resolver) async -> RheosChatResult {
         let prompt = prompt(question: question, report: report)
+        if RheosCloudPolicy.allowsCloud(), let text = await RheosCloudChat.reply(prompt: prompt, resolver: resolver) {
+            return packaged(text, source: "Cloud-Modell, Schlüssel aus dem Schlüsselbund")
+        }
         #if canImport(FoundationModels)
         if #available(iOS 26, *) {
             do {
                 let text = try await RheosFoundationChat.reply(prompt: prompt)
                 return packaged(text, source: "Apple Foundation Models, auf dem Gerät")
             } catch {
-                // Fall through to the cloud key or the local report.
+                // The on-device model is unavailable. The local report answers.
             }
         }
         #endif
-        if let text = await RheosCloudChat.reply(prompt: prompt, resolver: resolver) {
-            return packaged(text, source: "Cloud-Modell mit Schlüssel aus dem Schlüsselbund")
-        }
         let local = RheosChatStub.reply(question: question, report: report)
         return packaged(local, source: "Lokale Auswertung, ohne Sprachmodell")
     }

@@ -33,6 +33,9 @@ struct RheosStateDocument: Codable, Equatable {
     /// Wearable names Luke accepted. Empty means none of them enter the dosing model.
     var acceptedSignals: [String] = []
     var rejectedSignals: [String] = []
+    var wake: RheosWakeState? = nil
+    var hourLog: [RheosHourDecision] = []
+    var lastProposedBasal: [Double]? = nil
 
     static let empty = RheosStateDocument(
         schemaVersion: RheosSchema.current,
@@ -240,6 +243,7 @@ enum RheosMigrator {
         if copy["presetRuns"] == nil { copy["presetRuns"] = [Any]() }
         if copy["acceptedSignals"] == nil { copy["acceptedSignals"] = [Any]() }
         if copy["rejectedSignals"] == nil { copy["rejectedSignals"] = [Any]() }
+        if copy["hourLog"] == nil { copy["hourLog"] = [Any]() }
         if copy["shadow"] == nil {
             copy["shadow"] = ["trained": false, "source": "median", "sampleCount": 0]
         }

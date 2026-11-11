@@ -4,7 +4,31 @@ import Swinject
 /// Optional online photo estimate. Uses the same Keychain key as the Rheos chat.
 /// Offline, or without a key, the caller keeps the typed carbs, fat and protein.
 enum RheosMealAssist {
+    static func estimate(description: String, resolver: Resolver) async -> (RheosMealEstimate?, String) {
+        let trimmed = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return (nil, "Bitte Gramm eintragen") }
+        let prompt = RheosMealText.prompt(for: trimmed)
+        if RheosCloudPolicy.allowsCloud(), let text = await RheosCloudChat.reply(prompt: prompt, resolver: resolver),
+           let estimate = RheosMealParser.estimate(in: text) {
+            return (estimate, "Cloud-Modell")
+        }
+        #if canImport(FoundationModels)
+        if #available(iOS 26, *) {
+            do {
+                let text = try await RheosFoundationChat.reply(prompt: prompt)
+                if let estimate = RheosMealParser.estimate(in: text) {
+                    return (estimate, "Apple Foundation Models, auf dem Gerät")
+                }
+            } catch {
+                // On-device model unavailable. The caller asks for grams.
+            }
+        }
+        #endif
+        return (nil, "Bitte Kohlenhydrate, Fett und Protein in Gramm eintragen")
+    }
+
     static func estimate(jpeg: Data, resolver: Resolver) async -> RheosMealEstimate? {
+        guard RheosCloudPolicy.allowsCloud() else { return nil }
         guard let keychain = resolver.resolve(Keychain.self),
               let key = try? keychain.getValue(String.self, forKey: RheosCloudChat.keychainKey).get(),
               !key.isEmpty else { return nil }

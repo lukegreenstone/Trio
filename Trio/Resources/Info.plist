@@ -81,6 +81,12 @@
 	<string>Calendar is used to create new glucose events.</string>
 	<key>NSContactsUsageDescription</key>
 	<string>Contact is used to create a Apple Watch complication</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Rheos can photograph a meal so you can estimate carbohydrates, fat and protein. The photo is not saved by Rheos.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Rheos uses the microphone so you can dictate a chat reply or a meal description on this iPhone. The audio is recognized on the device.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Rheos turns your speech into text for the chat and for meal descriptions. Recognition stays on this iPhone.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>For authorized access to bolus</string>
 	<key>NSHealthShareUsageDescription</key>

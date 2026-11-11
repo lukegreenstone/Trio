@@ -26,6 +26,16 @@ An optional photo estimate needs the same Keychain key as the chat and a network
 
 iCloud Drive still copies `rheos-state.json` only when the installed profile already has the ubiquity container. This branch does not add that entitlement, so the Browser Build keeps signing. The local file in Application Support remains the copy that survives an update of this bundle id.
 
+## Basal file, wake window, and cloud text
+
+A learned hourly basal schedule is only a proposal until you tap to adopt it. That tap writes Trio's basal profile and, when a pump is connected, asks Trio to sync it. Rheos does not write the file by itself. A clock-bound morning rise stays inside that proposal. A wake-bound rise can raise basal and lower ISF inside the band for up to two hours after waking, and only after one confirmation. Trio's SMB delivers any extra insulin. The window can be switched off, and Rheos asks again only if the dawn-versus-wake pattern changes. Schatten logs the window and does not apply it.
+
+When Dynamic ISF is on (`useNewFormula`), the applied Rheos ISF factor stays 1 and only basal and carb ratio can move. A persistent agreement between the Rheos basal factor and Autosens is shown as a warning. Autosens itself is not changed.
+
+Sensor gaps, the two hours after them, six hours after a recorded patch change, compression lows, and a high that is not falling are left out of learning. Glucose alarms are unchanged.
+
+Cloud text is off until the Cloud-Auswertung switch is on. With the switch and a Keychain key, chat, meal text, photos and the learning report use the cloud model first, then Apple's on-device model, then the local text. The prompt is the summary, not the raw glucose list. Dosing and the network stay on the device. Speech recognition for the microphone button stays on the device. The usage strings are in Info.plist. No entitlement was added.
+
 ## What can change insulin
 
 Only while the in-app mode is **Scharf**, and only after the hourly model has enough data and passes walk-forward.
