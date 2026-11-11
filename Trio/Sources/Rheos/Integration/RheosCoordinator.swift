@@ -418,7 +418,6 @@ final class RheosCoordinator {
             let saved: Bool = await withCheckedContinuation { continuation in
                 pump.syncBasalRateSchedule(items: sync) { result in
                     if case .success = result {
-                        storage.save(entries, as: OpenAPS.Settings.basalProfile)
                         continuation.resume(returning: true)
                     } else {
                         continuation.resume(returning: false)
@@ -426,6 +425,7 @@ final class RheosCoordinator {
                 }
             }
             guard saved else { return "Die Pumpe hat das Basalprofil nicht übernommen. Die Datei bleibt unverändert." }
+            storage.save(entries, as: OpenAPS.Settings.basalProfile)
         } else {
             storage.save(entries, as: OpenAPS.Settings.basalProfile)
         }

@@ -2,6 +2,7 @@ import AVFoundation
 import PhotosUI
 import Speech
 import SwiftUI
+import Swinject
 import UIKit
 
 struct RheosHomeSheet: View {
@@ -138,50 +139,121 @@ struct RheosMealForm: View {
 struct RheosMicButton: View {
     var onText: (String) -> Void
     @State private var listening = false
-    @State private var engine = AVAudioEngine()
-    @State private var request: SFSpeechAudioBufferRecognitionRequest?
-    @State private var task: SFSpeechRecognitionTask?
+    @State private var session = RheosSpeechSession()
 
     var body: some View {
         Button(listening ? "Stopp" : "Mikrofon") {
-            if listening { stop() } else { start() }
+            if listening {
+                session.stop()
+                listening = false
+            } else {
+                start()
+            }
         }
     }
 
     private func start() {
         SFSpeechRecognizer.requestAuthorization { status in
             guard status == .authorized else { return }
-            DispatchQueue.main.async { begin() }
-        }
-    }
-
-    private func begin() {
-        let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "de-DE")) ?? SFSpeechRecognizer()
-        guard let recognizer, recognizer.isAvailable else { return }
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        self.request = request
-        let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
-        input.removeTap(onBus: 0)
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
-            request.append(buffer)
-        }
-        engine.prepare()
-        try? engine.start()
-        listening = true
-        task = recognizer.recognitionTask(with: request) { result, _ in
-            if let text = result?.bestTranscription.formattedString {
-                DispatchQueue.main.async { onText(text) }
+            AVAudioSession.sharedInstance().requestRecordPermission { granted in
+                guard granted else { return }
+                Task { @MainActor in
+                    listening = session.begin(onText: onText)
+                }
             }
         }
     }
+}
 
-    private func stop() {
+/// Owns the audio engine so the tap closure does not capture the SwiftUI view.
+/// The tap block is `@Sendable` in current SDKs; this box is the only capture.
+final class RheosSpeechSession: @unchecked Sendable {
+    private let engine = AVAudioEngine()
+    private let lock = NSLock()
+    private var request: SFSpeechAudioBufferRecognitionRequest?
+    private var task: SFSpeechRecognitionTask?
+    private var tapInstalled = false
+    private var onText: ((String) -> Void)?
+
+    func begin(onText: @escaping (String) -> Void) -> Bool {
+        lock.lock()
+        self.onText = onText
+        lock.unlock()
+        let audio = AVAudioSession.sharedInstance()
+        do {
+            try audio.setCategory(.playAndRecord, mode: .measurement, options: [.duckOthers, .defaultToSpeaker])
+            try audio.setActive(true, options: .notifyOthersOnDeactivation)
+        } catch {
+            return false
+        }
+        let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "de-DE")) ?? SFSpeechRecognizer()
+        guard let recognizer, recognizer.isAvailable else { return false }
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        request.shouldReportPartialResults = true
+        lock.lock()
+        self.request = request
+        lock.unlock()
+        let input = engine.inputNode
+        let format = input.outputFormat(forBus: 0)
+        guard format.channelCount > 0, format.sampleRate > 0 else {
+            lock.lock()
+            self.request = nil
+            lock.unlock()
+            return false
+        }
+        if tapInstalled {
+            input.removeTap(onBus: 0)
+            tapInstalled = false
+        }
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
+            self?.append(buffer)
+        }
+        tapInstalled = true
+        engine.prepare()
+        do {
+            try engine.start()
+        } catch {
+            input.removeTap(onBus: 0)
+            tapInstalled = false
+            return false
+        }
+        let recognition = recognizer.recognitionTask(with: request) { [weak self] result, _ in
+            guard let text = result?.bestTranscription.formattedString else { return }
+            self?.deliver(text)
+        }
+        lock.lock()
+        task = recognition
+        lock.unlock()
+        return true
+    }
+
+    func stop() {
         engine.stop()
-        engine.inputNode.removeTap(onBus: 0)
+        if tapInstalled {
+            engine.inputNode.removeTap(onBus: 0)
+            tapInstalled = false
+        }
+        lock.lock()
         request?.endAudio()
         task?.cancel()
-        listening = false
+        request = nil
+        task = nil
+        lock.unlock()
+    }
+
+    private func append(_ buffer: AVAudioPCMBuffer) {
+        lock.lock()
+        request?.append(buffer)
+        lock.unlock()
+    }
+
+    private func deliver(_ text: String) {
+        lock.lock()
+        let callback = onText
+        lock.unlock()
+        DispatchQueue.main.async {
+            callback?(text)
+        }
     }
 }
 
@@ -217,7 +289,7 @@ struct RheosCameraPicker: UIViewControllerRepresentable {
         init(parent: RheosCameraPicker) { self.parent = parent }
 
         func imagePickerController(
-            _ picker: UIImagePickerController,
+            _: UIImagePickerController,
             didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
         ) {
             if let image = info[.originalImage] as? UIImage, let data = image.jpegData(compressionQuality: 0.6) {

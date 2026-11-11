@@ -139,8 +139,9 @@ struct RheosSettingsView: View {
                     }
                 }
                 ForEach(Array(RheosStore.shared.loadDocument().hourLog.suffix(12).reversed())) { row in
+                    let autosens = row.autosensRatio ?? 1
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("\(row.hour) Uhr · Basal ×\(row.basal, format: .number.precision(.fractionLength(2))) · ISF ×\(row.isf, format: .number.precision(.fractionLength(2))) · Autosens \(row.autosensRatio ?? 1, format: .number.precision(.fractionLength(2))) · \(row.applied ? "angewendet" : "Schatten")")
+                        Text("\(row.hour) Uhr · Basal ×\(row.basal, format: .number.precision(.fractionLength(2))) · ISF ×\(row.isf, format: .number.precision(.fractionLength(2))) · Autosens \(autosens, format: .number.precision(.fractionLength(2))) · \(row.applied ? "angewendet" : "Schatten")")
                         Text(row.inputs)
                         Text(row.reason)
                     }
