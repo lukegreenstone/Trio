@@ -190,16 +190,18 @@ final class RheosCoordinator {
     /// The watch uses this same method. A suggestion id only removes that row from the watch list.
     func confirmKind(kind: String, note: String, suggestionID: String? = nil) async -> String {
         let noted = announce(kind: kind, note: note, suggestionID: suggestionID)
+        let preset: String
         switch kind {
         case "sport":
-            return noted + "\n" + await startSavedPreset(named: "Sport")
+            preset = await startSavedPreset(named: "Sport")
         case "showtime":
-            return noted + "\n" + await startSavedPreset(named: "Showtime")
+            preset = await startSavedPreset(named: "Showtime")
         case "krank":
-            return noted + "\n" + await startSavedPreset(named: "Krank")
+            preset = await startSavedPreset(named: "Krank")
         default:
             return noted
         }
+        return noted + "\n" + preset
     }
 
     func startSavedPreset(named name: String) async -> String {

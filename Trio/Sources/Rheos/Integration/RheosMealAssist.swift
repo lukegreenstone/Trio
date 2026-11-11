@@ -32,8 +32,14 @@ enum RheosMealAssist {
             ]
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
-              let http = response as? HTTPURLResponse, (200 ... 299).contains(http.statusCode),
+        let downloaded: (Data, URLResponse)
+        do {
+            downloaded = try await URLSession.shared.data(for: request)
+        } catch {
+            return nil
+        }
+        let (data, response) = downloaded
+        guard let http = response as? HTTPURLResponse, (200 ... 299).contains(http.statusCode),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let choices = json["choices"] as? [[String: Any]],
               let message = choices.first?["message"] as? [String: Any],

@@ -12,8 +12,11 @@ enum RheosChatEngine {
         let prompt = prompt(question: question, report: report)
         #if canImport(FoundationModels)
         if #available(iOS 26, *) {
-            if let text = try? await RheosFoundationChat.reply(prompt: prompt) {
+            do {
+                let text = try await RheosFoundationChat.reply(prompt: prompt)
                 return packaged(text, source: "Apple Foundation Models, auf dem Gerät")
+            } catch {
+                // Fall through to the cloud key or the local report.
             }
         }
         #endif
@@ -94,8 +97,14 @@ enum RheosCloudChat {
             ]
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
-              let http = response as? HTTPURLResponse, (200 ... 299).contains(http.statusCode),
+        let downloaded: (Data, URLResponse)
+        do {
+            downloaded = try await URLSession.shared.data(for: request)
+        } catch {
+            return nil
+        }
+        let (data, response) = downloaded
+        guard let http = response as? HTTPURLResponse, (200 ... 299).contains(http.statusCode),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let choices = json["choices"] as? [[String: Any]],
               let message = choices.first?["message"] as? [String: Any],

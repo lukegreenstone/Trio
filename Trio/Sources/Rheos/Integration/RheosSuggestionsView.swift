@@ -78,7 +78,10 @@ struct RheosSuggestionsView: View {
 
                 Section("Krank") {
                     Button("Gespeichertes Preset Krank starten") {
-                        Task { status = await coordinator?.startSavedPreset(named: "Krank") ?? "" }
+                        Task {
+                            let started = await coordinator?.startSavedPreset(named: "Krank")
+                            status = started ?? ""
+                        }
                     }
                     Text("Nur ein Override oder Temp-Target, das du in Trio schon Krank genannt hast. Sonst passiert nichts.")
                         .font(.footnote)
@@ -254,7 +257,11 @@ struct RheosSuggestionsView: View {
                             Text(suggestion.text).font(.footnote)
                             Button("Bestätigen") {
                                 Task {
-                                    status = await coordinator?.confirmKind(kind: suggestion.kind, note: suggestion.text) ?? ""
+                                    let confirmed = await coordinator?.confirmKind(
+                                        kind: suggestion.kind,
+                                        note: suggestion.text
+                                    )
+                                    status = confirmed ?? ""
                                 }
                             }
                         }
@@ -274,8 +281,18 @@ struct RheosSuggestionsView: View {
         .onChange(of: photo) { _, item in
             guard let item else { return }
             Task {
-                if let data = try? await item.loadTransferable(type: Data.self),
-                   let estimate = await RheosMealAssist.estimate(jpeg: data, resolver: resolver) {
+                let data: Data?
+                do {
+                    data = try await item.loadTransferable(type: Data.self)
+                } catch {
+                    data = nil
+                }
+                guard let data else {
+                    status = "Keine Foto-Schätzung. Offline oder ohne Schlüssel trägst du Kohlenhydrate, Fett und Protein selbst ein."
+                    return
+                }
+                let estimate = await RheosMealAssist.estimate(jpeg: data, resolver: resolver)
+                if let estimate {
                     mealCarbs = format(estimate.carbs)
                     mealFat = format(estimate.fat)
                     mealProtein = format(estimate.protein)

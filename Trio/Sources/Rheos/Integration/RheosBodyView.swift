@@ -130,7 +130,8 @@ struct RheosBodyView: View {
     }
 
     private func loadHealth() async {
-        status = await coordinator?.importBodyFromHealth() ?? "Rheos ist nicht gestartet."
+        let imported = await coordinator?.importBodyFromHealth()
+        status = imported ?? "Rheos ist nicht gestartet."
         reload()
     }
 
