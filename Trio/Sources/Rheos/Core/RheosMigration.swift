@@ -41,6 +41,8 @@ struct RheosStateDocument: Codable, Equatable {
     var absorptionShareConfirmed: Bool = false
     var nightCheckDay: String? = nil
     var uamAnsweredAt: Date? = nil
+    /// Latest step-window reading. Shadow text only. Missing on older files.
+    var activity: RheosActivitySnapshot? = nil
 
     static let empty = RheosStateDocument(
         schemaVersion: RheosSchema.current,

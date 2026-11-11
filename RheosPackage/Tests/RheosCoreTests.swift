@@ -1243,6 +1243,52 @@ final class RheosCoreTests: XCTestCase {
         XCTAssertTrue(story.contains("80"))
     }
 
+    func testStepWindowsLieInPulseAndShortNights() {
+        let quiet = RheosStepActivity.Windows(steps5: 0, steps15: 0, steps30: 0, steps60: 0, feedFresh: false)
+        let unknown = RheosStepActivity.status(windows: quiet, heartRate: nil, restingHeartRate: 60)
+        XCTAssertEqual(unknown.status, .unknown)
+        XCTAssertTrue(unknown.line.contains("nicht an"))
+
+        let walking = RheosStepActivity.Windows(steps5: 500, steps15: 500, steps30: 500, steps60: 500, feedFresh: true)
+        XCTAssertEqual(RheosStepActivity.status(windows: walking, heartRate: nil, restingHeartRate: 60).status, .active)
+
+        let still = RheosStepActivity.Windows(steps5: 0, steps15: 10, steps30: 20, steps60: 100, feedFresh: true)
+        XCTAssertEqual(RheosStepActivity.status(windows: still, heartRate: 70, restingHeartRate: 60).status, .inactive)
+        let guarded = RheosStepActivity.status(windows: still, heartRate: 100, restingHeartRate: 60)
+        XCTAssertEqual(guarded.status, .pulseGuard)
+        XCTAssertEqual(RheosStepActivity.zone(bpm: 100, resting: 60), 2)
+
+        let waiting = RheosStepActivity.lieIn(minutesAfterUsualWake: 30, windows: still)
+        XCTAssertTrue(waiting.waiting)
+        let up = RheosStepActivity.Windows(steps5: 40, steps15: 120, steps30: 200, steps60: 260, feedFresh: true)
+        XCTAssertFalse(RheosStepActivity.lieIn(minutesAfterUsualWake: 30, windows: up).waiting)
+        XCTAssertFalse(RheosStepActivity.lieIn(minutesAfterUsualWake: 30, windows: quiet).waiting)
+        XCTAssertFalse(RheosStepActivity.lieIn(minutesAfterUsualWake: 150, windows: still).waiting)
+        XCTAssertNotNil(RheosStepActivity.movementNote(status: .active, iob: 3))
+        XCTAssertNil(RheosStepActivity.movementNote(status: .inactive, iob: 3))
+
+        let sleep = (1 ... 3).map { day in
+            RheosSleepInterval(
+                id: "n\(day)",
+                start: date(day: day, hour: 1),
+                end: date(day: day, hour: 5),
+                stage: "asleep"
+            )
+        }
+        XCTAssertTrue(RheosStepActivity.shortNights(sleep: sleep, now: date(day: 8, hour: 12), calendar: calendar).contains("kurze Nächte"))
+
+        let defaults = UserDefaults(suiteName: UUID().uuidString) ?? .standard
+        let stored = RheosMealDraftStore.save(
+            RheosMealEstimate(carbs: 30, fat: 10, protein: 12, kcal: nil, note: "Reis"),
+            defaults: defaults
+        )
+        XCTAssertTrue(stored)
+        let taken = RheosMealDraftStore.take(defaults: defaults)
+        XCTAssertEqual(taken?.carbs, 30)
+        XCTAssertEqual(taken?.fat, 10)
+        XCTAssertNil(RheosMealDraftStore.take(defaults: defaults))
+    }
+
     private func stableGlucose(days: ClosedRange<Int>, invertFrom: Int? = nil) -> [RheosGlucosePoint] {
         var points: [RheosGlucosePoint] = []
         for day in days {

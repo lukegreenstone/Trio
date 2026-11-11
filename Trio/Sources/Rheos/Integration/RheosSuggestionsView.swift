@@ -237,7 +237,7 @@ struct RheosSuggestionsView: View {
                                 question: question,
                                 report: report,
                                 resolver: resolver,
-                                settingsNote: RheosTrioSettingsReader.note(resolver: resolver)
+                                settingsNote: RheosTrioSettingsReader.note(resolver: resolver) + "\n" + (RheosStore.shared.loadDocument().activity?.line ?? "")
                             )
                             answer = "\(result.text)\n\nQuelle: \(result.source)"
                             suggestions = result.suggestions
@@ -286,14 +286,14 @@ struct RheosSuggestionsView: View {
                     status = "Keine Foto-Schätzung. Offline oder ohne Schlüssel trägst du Kohlenhydrate, Fett und Protein selbst ein."
                     return
                 }
-                let estimate = await RheosMealAssist.estimate(jpeg: data, resolver: resolver)
-                if let estimate {
+                let result = await RheosMealAssist.estimate(jpeg: data, resolver: resolver)
+                if let estimate = result.0 {
                     mealCarbs = format(estimate.carbs)
                     mealFat = format(estimate.fat)
                     mealProtein = format(estimate.protein)
-                    stageMeal(estimate)
+                    status = "Quelle: \(result.1). Tippe auf den Kohlenhydrat-Bildschirm."
                 } else {
-                    status = "Keine Foto-Schätzung. Offline oder ohne Schlüssel trägst du Kohlenhydrate, Fett und Protein selbst ein."
+                    status = result.1
                 }
             }
         }
@@ -372,12 +372,14 @@ struct RheosSuggestionsView: View {
                 }
                 RheosCameraButton { data in
                     Task {
-                        let estimate = await RheosMealAssist.estimate(jpeg: data, resolver: resolver)
-                        if let estimate {
+                        let result = await RheosMealAssist.estimate(jpeg: data, resolver: resolver)
+                        if let estimate = result.0 {
                             mealCarbs = format(estimate.carbs)
                             mealFat = format(estimate.fat)
                             mealProtein = format(estimate.protein)
-                            stageMeal(estimate)
+                            status = "Quelle: \(result.1). Tippe auf den Kohlenhydrat-Bildschirm."
+                        } else {
+                            status = result.1
                         }
                     }
                 }
@@ -390,14 +392,13 @@ struct RheosSuggestionsView: View {
                         mealCarbs = format(estimate.carbs)
                         mealFat = format(estimate.fat)
                         mealProtein = format(estimate.protein)
-                        status = "Quelle: \(result.1)"
-                        stageMeal(estimate)
+                        status = "Quelle: \(result.1). Tippe auf den Kohlenhydrat-Bildschirm."
                     } else {
                         status = result.1
                     }
                 }
             }
-            Button("In den Kohlenhydrat-Bildschirm legen") { stageMeal(nil) }
+            Button("In den Kohlenhydrat-Bildschirm legen") { stageMeal(nil, open: true) }
             Button("Alkohol markieren") {
                 status = coordinator?.announce(kind: "alcohol", note: "Alkohol") ?? ""
             }
@@ -413,7 +414,7 @@ struct RheosSuggestionsView: View {
         }
     }
 
-    private func stageMeal(_ estimate: RheosMealEstimate?) {
+    private func stageMeal(_ estimate: RheosMealEstimate?, open: Bool) {
         let carbs = estimate?.carbs ?? number(mealCarbs)
         let fat = estimate?.fat ?? number(mealFat)
         let protein = estimate?.protein ?? number(mealProtein)
@@ -425,8 +426,14 @@ struct RheosSuggestionsView: View {
             kcal: estimate?.kcal ?? (4 * carbs + 9 * fat + 4 * protein),
             note: RheosFPUSplit.proposal(hour: hour, fat: fat, protein: protein)
         )
-        RheosMealDraftStore.save(draft)
+        if let problem = RheosMealHandoff.saveForTreatments(draft) {
+            status = problem
+            return
+        }
         status = "Werte liegen im Kohlenhydrat-Bildschirm bereit. Speichern dort übernimmt Trios FPU. Rheos gibt keinen Bolus."
+        guard open else { return }
+        resolver.resolve(Router.self)?.mainModalScreen.send(.treatmentView)
+        debug(.default, "Rheos opened Treatments from suggestions")
     }
 
     private func number(_ text: String) -> Double {

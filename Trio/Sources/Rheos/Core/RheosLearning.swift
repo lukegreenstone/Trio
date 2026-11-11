@@ -378,7 +378,8 @@ enum RheosChatStub {
         }
         if !settingsNote.isEmpty,
            asked.contains("einstell") || asked.contains("smb") || asked.contains("iob") || asked.contains("prozent")
-           || asked.contains("ziel") || asked.contains("autosens") || asked.contains("uam") {
+           || asked.contains("ziel") || asked.contains("autosens") || asked.contains("uam")
+           || asked.contains("schritt") || asked.contains("puls") || asked.contains("schlaf") {
             lines.append(settingsNote)
         }
         if lines.count == 1 {

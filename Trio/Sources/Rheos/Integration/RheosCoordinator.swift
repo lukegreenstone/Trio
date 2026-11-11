@@ -19,6 +19,7 @@ final class RheosCoordinator {
     private var careReport: RheosCareReport?
     private var chatSuggestions: [RheosChatSuggestion] = []
     private var watchChatReply = ""
+    private var latestActivity: RheosActivitySnapshot?
 
     init(resolver: Resolver) {
         self.resolver = resolver
@@ -111,6 +112,19 @@ final class RheosCoordinator {
             dataset.workouts = health.workouts
             dataset.sleep = health.sleep
             let measured = await RheosHealthReader.readBody(store: healthStore, now: now)
+            let windows = await RheosHealthReader.recentSteps(store: healthStore, now: now)
+            let heart = await RheosHealthReader.recentHeartRate(store: healthStore, now: now)
+            let resting = dataset.wearableDays.compactMap(\.restingHeartRate).last
+            let iob = dataset.states.max { $0.date < $1.date }?.iob
+            latestActivity = RheosActivityReport.snapshot(
+                windows: windows,
+                heartRate: heart,
+                restingHeartRate: resting,
+                sleep: dataset.sleep,
+                iob: iob,
+                now: now,
+                calendar: .current
+            )
             let merged = RheosBodyRecord.merging(current: previous.body, health: measured)
             if !RheosBodyRecord.sameMeasurements(merged, previous.body) {
                 dataset.body = merged
@@ -164,7 +178,16 @@ final class RheosCoordinator {
             sampleCount: fit.weights.sampleCount
         )
         recorded.coreWeights = fit.weights
+        if let latestActivity {
+            recorded.activity = latestActivity
+        }
         store.saveDocument(recorded)
+        if let movement = RheosStepActivity.movementNote(
+            status: RheosStepActivity.Status(rawValue: latestActivity?.status ?? "") ?? .unknown,
+            iob: dataset.states.max { $0.date < $1.date }?.iob
+        ) {
+            RheosCareNotifier.postPlain(id: "rheos.suggestion.movement", body: movement)
+        }
         let care = RheosCare.report(
             dataset: dataset,
             sites: store.patchSites(),
@@ -338,7 +361,7 @@ final class RheosCoordinator {
             question: trimmed,
             report: report,
             resolver: resolver,
-            settingsNote: RheosTrioSettingsReader.note(resolver: resolver)
+            settingsNote: RheosTrioSettingsReader.note(resolver: resolver) + "\n" + (RheosStore.shared.loadDocument().activity?.line ?? "")
         )
         let reply = String(result.text.prefix(280))
         storeWatchChat(reply: reply, suggestions: result.suggestions)
@@ -448,7 +471,8 @@ final class RheosCoordinator {
             confidence: RheosLearningReport.confidence(samples: state.shadow.sampleCount, trained: state.shadow.trained)
         )
         let settings = RheosTrioSettingsReader.note(resolver: resolver)
-        let combined = local + "\n" + weekly + "\n" + settings
+        let activityLine = state.activity?.line ?? ""
+        let combined = local + "\n" + weekly + "\n" + settings + "\n" + activityLine
         let result = await weeklyProse(combined)
         return result
     }
@@ -579,6 +603,9 @@ final class RheosCoordinator {
 
     private func recordHour(dataset: RheosDataset, decision: RheosProfileDecision, now: Date) {
         var reason = decision.reason
+        if let activityLine = RheosStore.shared.loadDocument().activity?.line, !activityLine.isEmpty {
+            reason += " " + activityLine
+        }
         if let meal = dataset.meals.filter({ $0.date <= now && now.timeIntervalSince($0.date) <= 6 * 3600 }).max(by: { $0.date < $1.date }) {
             let trio = NSDecimalNumber(decimal: resolver.resolve(SettingsManager.self)?.settings.overrideFactor ?? 0.8).doubleValue
             let points = RheosAbsorption.points(

@@ -339,6 +339,63 @@ enum RheosHealthReader {
         }
     }
 
+    /// Recent watch/phone steps. `feedFresh` is false when nothing arrived in the last 20 minutes.
+    static func recentSteps(store: HKHealthStore, now: Date) async -> RheosStepActivity.Windows {
+        guard let type = HKQuantityType.quantityType(forIdentifier: .stepCount) else {
+            return RheosStepActivity.Windows(steps5: 0, steps15: 0, steps30: 0, steps60: 0, feedFresh: false)
+        }
+        let start = now.addingTimeInterval(-60 * 60)
+        let samples: [HKQuantitySample] = await withCheckedContinuation { continuation in
+            let resumed = ResumeOnce()
+            let query = HKSampleQuery(
+                sampleType: type,
+                predicate: HKQuery.predicateForSamples(withStart: start, end: now, options: .strictStartDate),
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: nil
+            ) { _, results, _ in
+                resumed.resume(continuation, returning: (results as? [HKQuantitySample]) ?? [])
+            }
+            store.execute(query)
+        }
+        func total(minutes: Double) -> Int {
+            let cut = now.addingTimeInterval(-minutes * 60)
+            let sum = samples.filter { $0.endDate >= cut }.reduce(0.0) { partial, sample in
+                partial + sample.quantity.doubleValue(for: .count())
+            }
+            return Int(sum.rounded())
+        }
+        let newest = samples.map(\.endDate).max()
+        let fresh = newest.map { now.timeIntervalSince($0) <= 20 * 60 } ?? false
+        return RheosStepActivity.Windows(
+            steps5: total(minutes: 5),
+            steps15: total(minutes: 15),
+            steps30: total(minutes: 30),
+            steps60: total(minutes: 60),
+            feedFresh: fresh && !samples.isEmpty
+        )
+    }
+
+    static func recentHeartRate(store: HKHealthStore, now: Date) async -> Double? {
+        guard let type = HKQuantityType.quantityType(forIdentifier: .heartRate) else { return nil }
+        let start = now.addingTimeInterval(-15 * 60)
+        let samples: [HKQuantitySample] = await withCheckedContinuation { continuation in
+            let resumed = ResumeOnce()
+            let query = HKSampleQuery(
+                sampleType: type,
+                predicate: HKQuery.predicateForSamples(withStart: start, end: now, options: .strictStartDate),
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: nil
+            ) { _, results, _ in
+                resumed.resume(continuation, returning: (results as? [HKQuantitySample]) ?? [])
+            }
+            store.execute(query)
+        }
+        let unit = HKUnit.count().unitDivided(by: .minute())
+        let values = samples.map { $0.quantity.doubleValue(for: unit) }.filter { $0 > 0 }
+        guard !values.isEmpty else { return nil }
+        return values.reduce(0, +) / Double(values.count)
+    }
+
     private static func sleepStage(_ value: Int) -> String {
         switch HKCategoryValueSleepAnalysis(rawValue: value) {
         case .inBed: return "inBed"

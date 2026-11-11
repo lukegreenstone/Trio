@@ -27,7 +27,7 @@ struct RheosHomeSheet: View {
                         Text(answer).font(.footnote)
                     }
                 }
-                RheosMealForm(resolver: resolver)
+                RheosMealForm(resolver: resolver, nestedInHomeSheet: true, dismissHome: { dismiss() })
             }
             .navigationTitle("Rheos")
             .toolbar {
@@ -53,7 +53,7 @@ struct RheosHomeSheet: View {
             question: question,
             report: report,
             resolver: resolver,
-            settingsNote: RheosTrioSettingsReader.note(resolver: resolver)
+            settingsNote: RheosTrioSettingsReader.note(resolver: resolver) + "\n" + (RheosStore.shared.loadDocument().activity?.line ?? "")
         )
         answer = "\(result.text)\n\nQuelle: \(result.source)"
     }
@@ -61,6 +61,8 @@ struct RheosHomeSheet: View {
 
 struct RheosMealForm: View {
     let resolver: Resolver
+    var nestedInHomeSheet = false
+    var dismissHome: () -> Void = {}
     @State private var note = ""
     @State private var carbs = ""
     @State private var fat = ""
@@ -77,13 +79,19 @@ struct RheosMealForm: View {
             TextField("Protein g", text: $protein)
             HStack {
                 PhotosPicker(selection: $photo, matching: .images) { Text("Mediathek") }
-                Button("Kamera") { showCamera = true }
-                RheosMicButton { note = $0 }
+                Button("Kamera") {
+                    if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                        showCamera = true
+                    } else {
+                        status = "Keine Kamera auf diesem Gerät. Bitte die Mediathek oder Gramm verwenden."
+                    }
+                }
+                RheosMicButton(onText: { note = $0 }, onFailure: { status = $0 })
             }
             Button("Schätzen") {
                 Task { await estimate() }
             }
-            Button("In den Kohlenhydrat-Bildschirm") { stage(nil) }
+            Button("In den Kohlenhydrat-Bildschirm") { stage() }
             if !status.isEmpty { Text(status).font(.footnote) }
         }
         .onChange(of: photo) { _, item in
@@ -92,52 +100,66 @@ struct RheosMealForm: View {
                 let data: Data?
                 do { data = try await item.loadTransferable(type: Data.self) } catch { data = nil }
                 guard let data else { return }
-                let estimate = await RheosMealAssist.estimate(jpeg: data, resolver: resolver)
-                if let estimate { fill(estimate) }
+                let result = await RheosMealAssist.estimate(jpeg: data, resolver: resolver)
+                show(result)
             }
         }
         .sheet(isPresented: $showCamera) {
             RheosCameraPicker { data in
                 Task {
-                    let estimate = await RheosMealAssist.estimate(jpeg: data, resolver: resolver)
-                    if let estimate { fill(estimate) }
+                    let result = await RheosMealAssist.estimate(jpeg: data, resolver: resolver)
+                    show(result)
                 }
             }
         }
     }
 
-    private func estimate() async {
-        let result = await RheosMealAssist.estimate(description: note, resolver: resolver)
+    private func show(_ result: (RheosMealEstimate?, String)) {
         if let meal = result.0 {
             fill(meal)
-            status = "Quelle: \(result.1)"
+            status = "Quelle: \(result.1). Tippe auf den Kohlenhydrat-Bildschirm, du speicherst dort."
         } else {
             status = result.1
         }
+    }
+
+    private func estimate() async {
+        let result = await RheosMealAssist.estimate(description: note, resolver: resolver)
+        show(result)
     }
 
     private func fill(_ meal: RheosMealEstimate) {
         carbs = String(format: "%.0f", meal.carbs)
         fat = String(format: "%.0f", meal.fat)
         protein = String(format: "%.0f", meal.protein)
-        stage(meal)
     }
 
-    private func stage(_ meal: RheosMealEstimate?) {
-        let draft = meal ?? RheosMealEstimate(
+    private func stage() {
+        let draft = RheosMealEstimate(
             carbs: Double(carbs.replacingOccurrences(of: ",", with: ".")) ?? 0,
             fat: Double(fat.replacingOccurrences(of: ",", with: ".")) ?? 0,
             protein: Double(protein.replacingOccurrences(of: ",", with: ".")) ?? 0,
             kcal: nil,
             note: note
         )
-        RheosMealDraftStore.save(draft)
-        status = "Werte liegen im Kohlenhydrat-Bildschirm. Du speicherst sie dort."
+        if let problem = RheosMealHandoff.saveForTreatments(draft) {
+            status = problem
+            return
+        }
+        status = "Werte sind bereit. Der Kohlenhydrat-Bildschirm öffnet sich. Du speicherst dort."
+        if nestedInHomeSheet {
+            RheosMealHandoff.requestOpenAfterDismiss()
+            dismissHome()
+        } else {
+            resolver.resolve(Router.self)?.mainModalScreen.send(.treatmentView)
+            debug(.default, "Rheos opened Treatments from the current sheet")
+        }
     }
 }
 
 struct RheosMicButton: View {
     var onText: (String) -> Void
+    var onFailure: (String) -> Void = { _ in }
     @State private var listening = false
     @State private var session = RheosSpeechSession()
 
@@ -154,11 +176,25 @@ struct RheosMicButton: View {
 
     private func start() {
         SFSpeechRecognizer.requestAuthorization { status in
-            guard status == .authorized else { return }
-            AVAudioSession.sharedInstance().requestRecordPermission { granted in
-                guard granted else { return }
+            guard status == .authorized else {
                 Task { @MainActor in
-                    listening = session.begin(onText: onText)
+                    onFailure("Spracherkennung ist nicht erlaubt. Bitte in den Einstellungen erlauben oder tippen.")
+                }
+                return
+            }
+            AVAudioSession.sharedInstance().requestRecordPermission { granted in
+                guard granted else {
+                    Task { @MainActor in
+                        onFailure("Das Mikrofon ist nicht erlaubt. Bitte in den Einstellungen erlauben oder tippen.")
+                    }
+                    return
+                }
+                Task { @MainActor in
+                    let started = session.begin(onText: onText)
+                    listening = started
+                    if !started {
+                        onFailure("Die Spracherkennung konnte nicht starten. Bitte tippen.")
+                    }
                 }
             }
         }

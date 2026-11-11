@@ -1012,6 +1012,7 @@
 		A11C0DE2E10A0000000000D4 /* RheosCoreModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000D3 /* RheosCoreModel.swift */; };
 		A11C0DE2E10A0000000000DC /* RheosCarePlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000DB /* RheosCarePlan.swift */; };
 		A11C0DE2E10A0000000000E6 /* RheosDayPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000E5 /* RheosDayPlan.swift */; };
+		A11C0DE2E10A0000000000E8 /* RheosActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000E7 /* RheosActivity.swift */; };
 		A11C0DE2E10A0000000000DE /* RheosHomeSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000DD /* RheosHomeSheet.swift */; };
 		A11C0DE2E10A0000000000D6 /* RheosShadow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000D5 /* RheosShadow.swift */; };
 		A11C0DE2E10A0000000000D8 /* RheosCoreMLAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000D7 /* RheosCoreMLAdapter.swift */; };
@@ -2134,6 +2135,7 @@
 		A11C0DE2E10A0000000000D3 /* RheosCoreModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosCoreModel.swift; sourceTree = "<group>"; };
 		A11C0DE2E10A0000000000DB /* RheosCarePlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosCarePlan.swift; sourceTree = "<group>"; };
 		A11C0DE2E10A0000000000E5 /* RheosDayPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosDayPlan.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000E7 /* RheosActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosActivity.swift; sourceTree = "<group>"; };
 		A11C0DE2E10A0000000000DD /* RheosHomeSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosHomeSheet.swift; sourceTree = "<group>"; };
 		A11C0DE2E10A0000000000D5 /* RheosShadow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosShadow.swift; sourceTree = "<group>"; };
 		A11C0DE2E10A0000000000D7 /* RheosCoreMLAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosCoreMLAdapter.swift; sourceTree = "<group>"; };
@@ -4925,6 +4927,7 @@
 				A11C0DE2E10A0000000000D3 /* RheosCoreModel.swift */,
 				A11C0DE2E10A0000000000DB /* RheosCarePlan.swift */,
 				A11C0DE2E10A0000000000E5 /* RheosDayPlan.swift */,
+				A11C0DE2E10A0000000000E7 /* RheosActivity.swift */,
 				A11C0DE2E10A0000000000D5 /* RheosShadow.swift */,
 			);
 			path = Core;
@@ -5389,6 +5392,7 @@
 				A11C0DE2E10A0000000000D4 /* RheosCoreModel.swift in Sources */,
 				A11C0DE2E10A0000000000DC /* RheosCarePlan.swift in Sources */,
 				A11C0DE2E10A0000000000E6 /* RheosDayPlan.swift in Sources */,
+				A11C0DE2E10A0000000000E8 /* RheosActivity.swift in Sources */,
 				A11C0DE2E10A0000000000DE /* RheosHomeSheet.swift in Sources */,
 				A11C0DE2E10A0000000000D6 /* RheosShadow.swift in Sources */,
 				A11C0DE2E10A0000000000D8 /* RheosCoreMLAdapter.swift in Sources */,

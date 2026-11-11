@@ -156,6 +156,14 @@ extension Home {
             return value + String(localized: " U/hr", comment: "Unit per hour with space")
         }
 
+        private func openTreatmentsAfterRheos() {
+            guard RheosMealHandoff.consumeOpen() else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                resolver.resolve(Router.self)?.mainModalScreen.send(.treatmentView)
+                debug(.default, "Rheos opened Treatments after the home sheet closed")
+            }
+        }
+
         private func basalRateAccessibilityLabel(_ rate: Decimal) -> String {
             let value = Formatter.decimalFormatterWithTwoFractionDigits
                 .string(from: NSDecimalNumber(decimal: rate)) ?? "\(rate)"
@@ -252,7 +260,7 @@ extension Home {
                     .font(.footnote.weight(.semibold))
                     .buttonStyle(.bordered)
                     .padding(.bottom, 4)
-                    .sheet(isPresented: $showRheosSheet) {
+                    .sheet(isPresented: $showRheosSheet, onDismiss: openTreatmentsAfterRheos) {
                         RheosHomeSheet(resolver: resolver)
                     }
 

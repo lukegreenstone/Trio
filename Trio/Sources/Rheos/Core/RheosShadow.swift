@@ -44,9 +44,11 @@ struct RheosMealEstimate: Codable, Equatable {
 enum RheosMealDraftStore {
     static let key = "rheos.mealDraft"
 
-    static func save(_ estimate: RheosMealEstimate, defaults: UserDefaults = .standard) {
-        guard let data = try? JSONEncoder().encode(estimate) else { return }
+    @discardableResult
+    static func save(_ estimate: RheosMealEstimate, defaults: UserDefaults = .standard) -> Bool {
+        guard let data = try? JSONEncoder().encode(estimate) else { return false }
         defaults.set(data, forKey: key)
+        return true
     }
 
     static func peek(defaults: UserDefaults = .standard) -> RheosMealEstimate? {

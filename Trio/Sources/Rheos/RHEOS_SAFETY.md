@@ -42,6 +42,10 @@ Rheos can learn how fast a meal rises at each time of day and suggest a smaller 
 
 A rise with no meal asks on the phone and the watch. Late digestion is attached to the earlier meal, creates no meal entry and no extra bolus, and keeps a nighttime Rheos correction from increasing insulin. SMB and UAM are not switched. Sport learned from Apple Health workouts can suggest the saved Sport preset ahead of the usual time, including a note about a later or nighttime drop. It does not invent a target. A morning night-pattern note is shown before a basal-profile change is accepted.
 
+## Steps, lie-in, and heart rate
+
+Live step windows, a lie-in check, and a Karvonen heart-rate guard are logged only. The numbers follow Tim Street's Boost defaults and are named in `RheosActivity.swift`. They do not change basal, ISF, carb ratio, targets, or a bolus. A movement note when IOB is already high is a hint, not a reduction.
+
 ## What can change insulin
 
 Only while the in-app mode is **Scharf**, and only after the hourly model has enough data and passes walk-forward.
