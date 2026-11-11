@@ -19,6 +19,7 @@ enum RheosLearner {
         dynamicISFOn: Bool = false,
         wake: RheosWakeState? = nil,
         sites: [RheosPatchSite] = [],
+        lateDigestion: [RheosLateDigestion] = [],
         now: Date,
         calendar: Calendar = .current
     ) -> RheosProfileDecision {
@@ -113,11 +114,19 @@ enum RheosLearner {
                 modeIsScharf: false,
                 band: band
             )
+            let caution = RheosNightCaution.dampen(
+                .identity,
+                now: now,
+                marks: lateDigestion,
+                modeIsScharf: false,
+                calendar: calendar
+            )
+            let shadowReason = reason + wakePreview.line + caution.line
             return decision(
                 mode: mode,
                 code: code,
                 applied: false,
-                reason: reason + wakePreview.line,
+                reason: shadowReason,
                 factors: .identity,
                 learned: learned,
                 walk: walk,
@@ -153,6 +162,14 @@ enum RheosLearner {
             band: band
         )
         if wakeResult.apply { delivered = wakeResult.factors }
+        let caution = RheosNightCaution.dampen(
+            delivered,
+            now: now,
+            marks: lateDigestion,
+            modeIsScharf: true,
+            calendar: calendar
+        )
+        if caution.apply { delivered = caution.factors }
         let contextNote = contexts.isEmpty
             ? ""
             : " Kontext aus Daten: \(contexts.map(\.title).joined(separator: ", "))."
@@ -165,7 +182,7 @@ enum RheosLearner {
             mode: mode,
             code: .applied,
             applied: true,
-            reason: "Scharf. Stundenfaktoren für ISF, KH-Faktor und Basal, Band \(format(band.lowerBound))–\(format(band.upperBound)), höchstens \(format(limits.maxDailyChange)) pro Tag für das Stundenmodell. SMB und UAM bleiben an.\(contextNote)\(bodyNote(dataset))\(dynamicNote)\(wakeResult.line)\(doubleNote)",
+            reason: "Scharf. Stundenfaktoren für ISF, KH-Faktor und Basal, Band \(format(band.lowerBound))–\(format(band.upperBound)), höchstens \(format(limits.maxDailyChange)) pro Tag für das Stundenmodell. SMB und UAM bleiben an.\(contextNote)\(bodyNote(dataset))\(dynamicNote)\(wakeResult.line)\(caution.line)\(doubleNote)",
             factors: delivered,
             slowFactors: slow,
             learned: learned,
@@ -345,7 +362,7 @@ enum RheosReportBuilder {
 
 enum RheosChatStub {
     /// Local reply from the logged report. This type has no network client.
-    static func reply(question: String, report: RheosReport) -> String {
+    static func reply(question: String, report: RheosReport, settingsNote: String = "") -> String {
         let asked = question.lowercased()
         var lines = [
             "Lokale Antwort aus dem Rheos-Protokoll. Es wird kein Netzwerk-Modell aufgerufen. Das ist keine Therapieanweisung."
@@ -358,6 +375,11 @@ enum RheosChatStub {
         }
         if asked.contains("isf") || asked.contains("basal") || asked.contains("faktor") || asked.contains("scharf") {
             lines.append(report.decision.reason)
+        }
+        if !settingsNote.isEmpty,
+           asked.contains("einstell") || asked.contains("smb") || asked.contains("iob") || asked.contains("prozent")
+           || asked.contains("ziel") || asked.contains("autosens") || asked.contains("uam") {
+            lines.append(settingsNote)
         }
         if lines.count == 1 {
             lines.append("Ich kann die geloggten Muster beschreiben: Zeit im Bereich, Stundenmediane, späte Mahlzeiten und ob die Walk-forward-Prüfung bestanden ist.")

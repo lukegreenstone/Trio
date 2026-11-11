@@ -141,6 +141,7 @@ final class RheosCoordinator {
             dynamicISFOn: resolver.resolve(SettingsManager.self)?.preferences.useNewFormula == true,
             wake: store.loadDocument().wake,
             sites: store.patchSites(),
+            lateDigestion: store.loadDocument().lateDigestion,
             now: now
         )
         store.saveDecision(decision)
@@ -188,6 +189,7 @@ final class RheosCoordinator {
         postUpkeep(dataset: dataset, now: now)
         let ends = dataset.sleep.map(\.end)
         updateWake(samples: RheosWake.samples(glucose: dataset.glucose, sleepEnds: ends, calendar: .current), lastWake: ends.max())
+        refreshOpenUAM(dataset: dataset, now: now)
         replaceCare(care)
         if decision.applied {
             // Persist the slow model. The context nudge stays in the decision
@@ -202,18 +204,32 @@ final class RheosCoordinator {
     /// Scharf already adjusts ISF, carb ratio and basal from data without this.
     /// The watch uses this same method. A suggestion id only removes that row from the watch list.
     func confirmKind(kind: String, note: String, suggestionID: String? = nil) async -> String {
+        switch kind {
+        case "uam-meal", "uam-late", "uam-other", "uam-speech":
+            return answerUAM(kind: kind, speech: note, suggestionID: suggestionID)
+        case "absorption":
+            return confirmAbsorption(suggestionID: suggestionID)
+        case "night":
+            return acknowledgeNight(suggestionID: suggestionID)
+        default:
+            break
+        }
         let noted = announce(kind: kind, note: note, suggestionID: suggestionID)
-        let preset: String
+        let presetName: String?
         switch kind {
         case "sport":
-            preset = await startSavedPreset(named: "Sport")
+            presetName = "Sport"
         case "showtime":
-            preset = await startSavedPreset(named: "Showtime")
+            presetName = "Showtime"
         case "krank":
-            preset = await startSavedPreset(named: "Krank")
+            presetName = "Krank"
         default:
             return noted
         }
+        guard RheosModeStore.current == .scharf, let presetName else {
+            return noted + "\nSchatten. Das Preset wäre gestartet. Nichts geändert."
+        }
+        let preset = await startSavedPreset(named: presetName)
         return noted + "\n" + preset
     }
 
@@ -303,6 +319,10 @@ final class RheosCoordinator {
     func replyFromWatch(question: String) async -> String {
         let trimmed = String(question.trimmingCharacters(in: .whitespacesAndNewlines).prefix(240))
         guard !trimmed.isEmpty else { return "" }
+        if RheosStore.shared.loadDocument().openUAM != nil {
+            let kind = RheosUAM.interpret(trimmed)
+            return answerUAM(kind: kind.rawValue, speech: trimmed, suggestionID: nil)
+        }
         let store = RheosStore.shared
         let report = RheosReportBuilder.build(
             dataset: store.loadDataset(),
@@ -314,7 +334,12 @@ final class RheosCoordinator {
             targets: RheosTargetLoader.schedule(resolver: resolver),
             now: Date()
         )
-        let result = await RheosChatEngine.reply(question: trimmed, report: report, resolver: resolver)
+        let result = await RheosChatEngine.reply(
+            question: trimmed,
+            report: report,
+            resolver: resolver,
+            settingsNote: RheosTrioSettingsReader.note(resolver: resolver)
+        )
         let reply = String(result.text.prefix(280))
         storeWatchChat(reply: reply, suggestions: result.suggestions)
         return reply
@@ -365,6 +390,19 @@ final class RheosCoordinator {
     }
 
     func adoptBasalProposal() async -> String {
+        let night = RheosNightReview.check(
+            glucose: RheosStore.shared.loadDataset().glucose,
+            now: Date(),
+            calendar: .current
+        )
+        let today = RheosNightReview.dayKey(Date(), calendar: .current)
+        if RheosNightReview.blocksBasalChange(
+            show: night.shouldShowBeforeBasal,
+            acknowledgedDay: RheosStore.shared.loadDocument().nightCheckDay,
+            today: today
+        ) {
+            return night.summary
+        }
         let proposal = basalProposal()
         guard proposal.material || proposal.slots.contains(where: { $0.proposed > 0 }) else {
             return "Nichts zu übernehmen."
@@ -409,7 +447,8 @@ final class RheosCoordinator {
             shadow: RheosCoreMLAdapter.statusLine(state.shadow),
             confidence: RheosLearningReport.confidence(samples: state.shadow.sampleCount, trained: state.shadow.trained)
         )
-        let combined = local + "\n" + weekly
+        let settings = RheosTrioSettingsReader.note(resolver: resolver)
+        let combined = local + "\n" + weekly + "\n" + settings
         let result = await weeklyProse(combined)
         return result
     }
@@ -447,6 +486,88 @@ final class RheosCoordinator {
         RheosStore.shared.saveDocument(state)
     }
 
+    func answerUAM(kind: String, speech: String, suggestionID: String?) -> String {
+        var state = RheosStore.shared.loadDocument()
+        let prompt = RheosUAMPrompt(
+            rise: state.openUAM?.rise ?? 0,
+            started: state.openUAM?.started ?? Date(),
+            mealID: state.openUAM?.mealID,
+            mealDate: state.openUAM?.mealDate,
+            text: speech
+        )
+        let interpreted = RheosUAMKind(rawValue: kind) ?? RheosUAM.interpret(speech)
+        state.openUAM = nil
+        state.uamAnsweredAt = Date()
+        let text: String
+        switch interpreted {
+        case .newMeal:
+            text = "Neue Mahlzeit. Bitte in Trio eintragen. Rheos legt keinen Eintrag an und gibt keinen Bolus."
+        case .late:
+            if let marked = RheosUAM.lateMark(prompt: prompt, now: Date(), calendar: .current) {
+                state.lateDigestion.append(marked.mark)
+                text = marked.note
+            } else {
+                text = "Keine passende frühere Mahlzeit. Nichts zugeordnet und kein Bolus."
+            }
+        case .other:
+            text = "Stress, Krank oder Sensor notiert. Kein Preset und kein Bolus. SMB und UAM laufen weiter."
+        case .speech:
+            text = "Gesprochen notiert: \(speech). Kein neuer Eintrag und kein Bolus."
+        }
+        RheosStore.shared.saveDocument(state)
+        RheosStore.shared.addAnnouncement(
+            RheosAnnouncement(id: UUID().uuidString, date: Date(), kind: interpreted.rawValue, note: text)
+        )
+        dismissWatchSuggestion(id: suggestionID)
+        return text
+    }
+
+    func confirmAbsorption(suggestionID: String? = nil) -> String {
+        guard RheosModeStore.current == .scharf else {
+            return "Schatten. Der kleinere Sofort-Anteil wäre nur protokolliert. Nichts ins Bolusfeld und kein Bolus."
+        }
+        var state = RheosStore.shared.loadDocument()
+        state.absorptionShareConfirmed = true
+        RheosStore.shared.saveDocument(state)
+        dismissWatchSuggestion(id: suggestionID)
+        return "Sofort-Anteil gemerkt. Im Bolusrechner kannst du ihn ins Feld legen. Rheos ändert den Trio-Prozentsatz nicht und gibt keinen Bolus."
+    }
+
+    func acknowledgeNight(suggestionID: String? = nil) -> String {
+        var state = RheosStore.shared.loadDocument()
+        state.nightCheckDay = RheosNightReview.dayKey(Date(), calendar: .current)
+        RheosStore.shared.saveDocument(state)
+        dismissWatchSuggestion(id: suggestionID)
+        return "Nachtmuster gesehen. Das Basalprofil ändert sich erst, wenn du es extra übernimmst."
+    }
+
+    private func refreshOpenUAM(dataset: RheosDataset, now: Date) {
+        var state = RheosStore.shared.loadDocument()
+        let had = state.openUAM
+        if let open = state.openUAM, now.timeIntervalSince(open.started) > 6 * 3600 {
+            state.openUAM = nil
+        }
+        if state.openUAM == nil,
+           let found = RheosUAM.detect(
+               glucose: dataset.glucose,
+               meals: dataset.meals,
+               now: now,
+               lastAsked: state.uamAnsweredAt,
+               calendar: .current
+           ) {
+            state.openUAM = RheosOpenUAM(
+                id: "uam-\(Int(now.timeIntervalSince1970))",
+                started: now,
+                rise: found.rise,
+                mealID: found.mealID,
+                mealDate: found.mealDate
+            )
+        }
+        if state.openUAM != had {
+            RheosStore.shared.saveDocument(state)
+        }
+    }
+
     func setWake(enabled: Bool? = nil, confirmed: Bool? = nil) {
         var state = RheosStore.shared.loadDocument()
         var wake = state.wake ?? RheosWakeState()
@@ -457,11 +578,30 @@ final class RheosCoordinator {
     }
 
     private func recordHour(dataset: RheosDataset, decision: RheosProfileDecision, now: Date) {
+        var reason = decision.reason
+        if let meal = dataset.meals.filter({ $0.date <= now && now.timeIntervalSince($0.date) <= 6 * 3600 }).max(by: { $0.date < $1.date }) {
+            let trio = NSDecimalNumber(decimal: resolver.resolve(SettingsManager.self)?.settings.overrideFactor ?? 0.8).doubleValue
+            let points = RheosAbsorption.points(
+                meals: dataset.meals,
+                glucose: dataset.glucose,
+                late: RheosStore.shared.loadDocument().lateDigestion,
+                calendar: .current
+            )
+            let share = RheosAbsorption.band(for: Calendar.current.component(.hour, from: meal.date), in: RheosAbsorption.bands(points))?.immediateShare ?? 1
+            if let split = RheosAbsorptionShadow.split(
+                meal: meal,
+                insulin: dataset.insulin,
+                trioPercent: trio,
+                refinedPercent: trio * share
+            ) {
+                reason += " " + split.line
+            }
+        }
         let entry = RheosDecisionLog.entry(
             now: now,
             factors: decision.applied ? decision.factors : decision.learnedFactors,
             inputs: "IOB/Mahlzeiten/Uhrzeit, Autosens \(dataset.loopReading?.autosensRatio ?? 1)",
-            reason: decision.reason,
+            reason: reason,
             autosensRatio: dataset.loopReading?.autosensRatio,
             applied: decision.applied
         )
@@ -510,9 +650,19 @@ final class RheosCoordinator {
     func watchSnapshot() -> RheosWatchSnapshot {
         lock.lock()
         defer { lock.unlock() }
+        let stored = RheosStore.shared.loadDocument()
+        let sport = RheosSportLearning.learn(
+            workouts: stored.dataset.workouts,
+            glucose: stored.dataset.glucose,
+            now: Date(),
+            calendar: .current
+        )
+        let night = RheosNightReview.check(glucose: stored.dataset.glucose, now: Date(), calendar: .current)
+        let prompts = RheosPromptLines.lines(openUAM: stored.openUAM, sport: sport, night: night)
+        let rest = RheosWatchCatalog.lines(care: careReport, chat: chatSuggestions)
         return RheosWatchSnapshot(
             mode: RheosModeStore.current.rawValue,
-            suggestions: RheosWatchCatalog.lines(care: careReport, chat: chatSuggestions),
+            suggestions: Array((prompts + rest).prefix(8)),
             chatReply: watchChatReply
         )
     }
@@ -541,6 +691,18 @@ final class RheosCoordinator {
             return "Alkohol notiert. Rheos kann ein späteres Hypo-Risiko erwähnen. Kein Temp Target und kein Bolus."
         case "stress":
             return "Stress notiert. Kein Preset, kein Temp Target und kein Bolus."
+        case "uam-meal":
+            return "Neue Mahlzeit. Bitte in Trio eintragen. Rheos legt keinen Eintrag an und gibt keinen Bolus."
+        case "uam-late":
+            return "Späte Verdauung der früheren Mahlzeit. Kein neuer Eintrag und kein Extra-Bolus."
+        case "uam-other":
+            return "Stress, Krank oder Sensor notiert. Kein Preset und kein Bolus."
+        case "uam-speech":
+            return "Gesprochen notiert. Kein neuer Eintrag und kein Bolus."
+        case "absorption":
+            return "Sofort-Anteil gemerkt. Er landet nur im Bolusfeld, wenn du ihn dort tippst."
+        case "night":
+            return "Nachtmuster gesehen. Das Basalprofil ändert sich erst mit dem nächsten Tipp."
         case "snack":
             return "Snack notiert: kleine Kohlenhydrate, beobachten. Kein Bolus."
         case "note":

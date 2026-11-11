@@ -8,8 +8,13 @@ struct RheosChatResult: Equatable {
 }
 
 enum RheosChatEngine {
-    static func reply(question: String, report: RheosReport, resolver: Resolver) async -> RheosChatResult {
-        let prompt = prompt(question: question, report: report)
+    static func reply(
+        question: String,
+        report: RheosReport,
+        resolver: Resolver,
+        settingsNote: String = ""
+    ) async -> RheosChatResult {
+        let prompt = prompt(question: question, report: report, settingsNote: settingsNote)
         if RheosCloudPolicy.allowsCloud(), let text = await RheosCloudChat.reply(prompt: prompt, resolver: resolver) {
             return packaged(text, source: "Cloud-Modell, Schlüssel aus dem Schlüsselbund")
         }
@@ -23,7 +28,7 @@ enum RheosChatEngine {
             }
         }
         #endif
-        let local = RheosChatStub.reply(question: question, report: report)
+        let local = RheosChatStub.reply(question: question, report: report, settingsNote: settingsNote)
         return packaged(local, source: "Lokale Auswertung, ohne Sprachmodell")
     }
 
@@ -31,7 +36,7 @@ enum RheosChatEngine {
         RheosChatResult(text: text, suggestions: RheosChatParser.suggestions(in: text), source: source)
     }
 
-    static func prompt(question: String, report: RheosReport) -> String {
+    static func prompt(question: String, report: RheosReport, settingsNote: String = "") -> String {
         let contexts = report.contexts.map { "\($0.title): \($0.summary)" }.joined(separator: "\n")
         let presets = report.mealPresets.map(\.suggestion).joined(separator: "\n")
         return """
@@ -43,6 +48,9 @@ enum RheosChatEngine {
         \(report.dawn.summary)
         \(contexts)
         \(presets)
+
+        Trio-Einstellungen, nur gelesen:
+        \(settingsNote)
 
         Frage: \(question)
         """

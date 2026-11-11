@@ -44,6 +44,8 @@ struct RheosSuggestionsView: View {
 
             mealSection
 
+            RheosPromptList(resolver: resolver)
+
             if let report {
                 Section("Stabilität") {
                     Text(report.stability.summary)
@@ -234,7 +236,8 @@ struct RheosSuggestionsView: View {
                             let result = await RheosChatEngine.reply(
                                 question: question,
                                 report: report,
-                                resolver: resolver
+                                resolver: resolver,
+                                settingsNote: RheosTrioSettingsReader.note(resolver: resolver)
                             )
                             answer = "\(result.text)\n\nQuelle: \(result.source)"
                             suggestions = result.suggestions

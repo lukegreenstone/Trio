@@ -13,6 +13,7 @@ struct RheosHomeSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                RheosPromptList(resolver: resolver)
                 Section("Chat") {
                     TextField("Frage", text: $question)
                     HStack {
@@ -47,7 +48,12 @@ struct RheosHomeSheet: View {
             targets: RheosTargetLoader.schedule(resolver: resolver),
             now: Date()
         )
-        let result = await RheosChatEngine.reply(question: question, report: report, resolver: resolver)
+        let result = await RheosChatEngine.reply(
+            question: question,
+            report: report,
+            resolver: resolver,
+            settingsNote: RheosTrioSettingsReader.note(resolver: resolver)
+        )
         answer = "\(result.text)\n\nQuelle: \(result.source)"
     }
 }
@@ -218,6 +224,113 @@ struct RheosCameraPicker: UIViewControllerRepresentable {
                 parent.onImage(data)
             }
             parent.dismiss()
+        }
+    }
+}
+
+struct RheosPromptList: View {
+    let resolver: Resolver
+    @State private var speech = ""
+
+    var body: some View {
+        let state = RheosStore.shared.loadDocument()
+        let dataset = state.dataset
+        let sport = RheosSportLearning.learn(
+            workouts: dataset.workouts,
+            glucose: dataset.glucose,
+            now: Date(),
+            calendar: .current
+        )
+        let night = RheosNightReview.check(glucose: dataset.glucose, now: Date(), calendar: .current)
+        let lines = RheosPromptLines.lines(openUAM: state.openUAM, sport: sport, night: night)
+        if !lines.isEmpty || state.openUAM != nil {
+            Section("Rückfrage") {
+                if let sportText = sport.suggestion {
+                    Text(sportText).font(.footnote)
+                } else if !sport.summary.isEmpty {
+                    Text(sport.summary).font(.footnote)
+                }
+                if night.shouldShowBeforeBasal {
+                    Text(night.summary).font(.footnote)
+                }
+                ForEach(lines) { line in
+                    Button(line.title) {
+                        Task {
+                            let confirmed = await resolver.resolve(RheosCoordinator.self)?.confirmKind(
+                                kind: line.kind,
+                                note: line.note,
+                                suggestionID: line.id
+                            )
+                            speech = confirmed ?? ""
+                        }
+                    }
+                }
+                if state.openUAM != nil {
+                    TextField("Frei sprechen oder tippen", text: $speech)
+                    RheosMicButton { speech = $0 }
+                    Button("Antwort zur Rückfrage") {
+                        let kind = RheosUAM.interpret(speech)
+                        Task {
+                            let confirmed = await resolver.resolve(RheosCoordinator.self)?.confirmKind(
+                                kind: kind.rawValue,
+                                note: speech
+                            )
+                            speech = confirmed ?? ""
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+struct RheosBolusHint: View {
+    var trioPercent: Double
+    var smbOn: Bool
+    var uamOn: Bool
+    var maxIOB: Double
+    var calculatorUnits: Double
+    var onFill: (Double) -> Void
+    @State private var confirmed = false
+
+    var body: some View {
+        let dataset = RheosStore.shared.loadDataset()
+        let bands = RheosAbsorption.bands(
+            RheosAbsorption.points(
+                meals: dataset.meals,
+                glucose: dataset.glucose,
+                late: RheosStore.shared.loadDocument().lateDigestion,
+                calendar: .current
+            )
+        )
+        let share = RheosBolusShare.suggest(
+            hour: Calendar.current.component(.hour, from: Date()),
+            trioPercent: trioPercent,
+            bands: bands,
+            calculatorUnits: calculatorUnits,
+            smbOn: smbOn,
+            uamOn: uamOn,
+            maxIOB: maxIOB,
+            modeIsScharf: RheosModeStore.current == .scharf
+        )
+        VStack(alignment: .leading, spacing: 4) {
+            Text(share.line)
+                .font(.footnote)
+            if share.copiesIntoField, confirmed {
+                Button("Rheos-Anteil ins Bolusfeld") { onFill(share.immediateUnits) }
+                    .font(.footnote)
+            } else if share.copiesIntoField {
+                Button("Sofort-Anteil bestätigen") {
+                    var state = RheosStore.shared.loadDocument()
+                    state.absorptionShareConfirmed = true
+                    RheosStore.shared.saveDocument(state)
+                    confirmed = true
+                }
+                .font(.footnote)
+            }
+        }
+        .onAppear {
+            confirmed = RheosStore.shared.loadDocument().absorptionShareConfirmed
         }
     }
 }

@@ -36,6 +36,11 @@ struct RheosStateDocument: Codable, Equatable {
     var wake: RheosWakeState? = nil
     var hourLog: [RheosHourDecision] = []
     var lastProposedBasal: [Double]? = nil
+    var lateDigestion: [RheosLateDigestion] = []
+    var openUAM: RheosOpenUAM? = nil
+    var absorptionShareConfirmed: Bool = false
+    var nightCheckDay: String? = nil
+    var uamAnsweredAt: Date? = nil
 
     static let empty = RheosStateDocument(
         schemaVersion: RheosSchema.current,
@@ -244,6 +249,8 @@ enum RheosMigrator {
         if copy["acceptedSignals"] == nil { copy["acceptedSignals"] = [Any]() }
         if copy["rejectedSignals"] == nil { copy["rejectedSignals"] = [Any]() }
         if copy["hourLog"] == nil { copy["hourLog"] = [Any]() }
+        if copy["lateDigestion"] == nil { copy["lateDigestion"] = [Any]() }
+        if copy["absorptionShareConfirmed"] == nil { copy["absorptionShareConfirmed"] = false }
         if copy["shadow"] == nil {
             copy["shadow"] = ["trained": false, "source": "median", "sampleCount": 0]
         }

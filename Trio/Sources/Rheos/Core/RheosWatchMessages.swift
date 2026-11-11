@@ -64,7 +64,8 @@ struct RheosWatchFields: Equatable {
 enum RheosWatchMessages {
     /// Kinds a watch tap is allowed to store. There is no bolus kind.
     static let allowedKinds: Set<String> = [
-        "sport", "urlaub", "krank", "fasten", "showtime", "meal", "alcohol", "snack", "note", "stress"
+        "sport", "urlaub", "krank", "fasten", "showtime", "meal", "alcohol", "snack", "note", "stress",
+        "uam-meal", "uam-late", "uam-other", "uam-speech", "absorption", "night"
     ]
 
     static func action(_ fields: RheosWatchFields) -> RheosWatchAction? {

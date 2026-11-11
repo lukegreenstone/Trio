@@ -1116,6 +1116,133 @@ final class RheosCoreTests: XCTestCase {
         XCTAssertFalse(RheosCloudPolicy.allowsCloud(defaults: UserDefaults(suiteName: UUID().uuidString) ?? .standard))
     }
 
+    func testAbsorptionSportUAMNightAndSettings() {
+        let eveningShare = RheosAbsorption.immediateShare(lateFraction: 0.75, band: .evening, meals: 4)
+        let morningShare = RheosAbsorption.immediateShare(lateFraction: 0, band: .morning, meals: 4)
+        XCTAssertLessThan(eveningShare, morningShare)
+        XCTAssertEqual(RheosAbsorption.lateFraction(rise2h: 10, rise4h: 40), 0.75, accuracy: 0.001)
+        let evening = RheosBolusShare.suggest(
+            hour: 19,
+            trioPercent: 0.8,
+            bands: [RheosAbsorptionBand(band: .evening, meals: 4, lateFraction: 0.75, immediateShare: eveningShare)],
+            calculatorUnits: 4,
+            smbOn: true,
+            uamOn: true,
+            maxIOB: 2,
+            modeIsScharf: false
+        )
+        XCTAssertLessThan(evening.refinedPercent, 0.8)
+        XCTAssertFalse(evening.copiesIntoField)
+        XCTAssertTrue(evening.line.contains("Schatten"))
+        let guarded = RheosBolusShare.suggest(
+            hour: 19,
+            trioPercent: 0.8,
+            bands: [],
+            calculatorUnits: 4,
+            smbOn: false,
+            uamOn: false,
+            maxIOB: 0,
+            modeIsScharf: true
+        )
+        XCTAssertTrue(guarded.line.contains("nicht automatisch"))
+
+        let meal = RheosMealEvent(id: "m", date: date(day: 3, hour: 19), carbs: 40, fat: 20, protein: 20, note: "", acknowledged: false)
+        let insulin = [
+            RheosInsulinEvent(date: date(day: 3, hour: 19, minute: 5), units: 4, kind: "bolus"),
+            RheosInsulinEvent(date: date(day: 3, hour: 21), units: 1.5, kind: "smb")
+        ]
+        let split = RheosAbsorptionShadow.split(meal: meal, insulin: insulin, trioPercent: 0.8, refinedPercent: 0.4)
+        XCTAssertEqual(split?.wouldGiveNow ?? 0, 2, accuracy: 0.001)
+        XCTAssertEqual(split?.smbUnits ?? 0, 1.5, accuracy: 0.001)
+        XCTAssertTrue(split?.line.contains("nichts abgegeben") ?? false)
+
+        var glucose: [RheosGlucosePoint] = []
+        for day in 1 ... 4 {
+            glucose.append(RheosGlucosePoint(date: date(day: day, hour: 18), mgdl: 140))
+            glucose.append(RheosGlucosePoint(date: date(day: day, hour: 18, minute: 40), mgdl: 100))
+            glucose.append(RheosGlucosePoint(date: date(day: day + 1, hour: 2), mgdl: 70))
+            glucose.append(RheosGlucosePoint(date: date(day: day + 1, hour: 3), mgdl: 70))
+        }
+        for day in 10 ... 12 {
+            glucose.append(RheosGlucosePoint(date: date(day: day, hour: 2), mgdl: 110))
+            glucose.append(RheosGlucosePoint(date: date(day: day, hour: 3), mgdl: 110))
+        }
+        let workouts = (1 ... 4).map {
+            RheosWorkout(id: "w\($0)", activity: "Lauf", start: date(day: $0, hour: 18), durationMinutes: 40, averageHeartRate: 130, activeEnergy: nil)
+        }
+        let sport = RheosSportLearning.learn(workouts: workouts, glucose: glucose, now: date(day: 5, hour: 17), calendar: calendar)
+        XCTAssertNotNil(sport.suggestion)
+        XCTAssertTrue(sport.suggestion?.contains("Preset Sport") ?? false)
+        XCTAssertTrue(sport.suggestion?.contains("erfindet kein Ziel") ?? false)
+        XCTAssertFalse(sport.suggestion?.contains("Ziel 1") ?? true)
+
+        let rise = [
+            RheosGlucosePoint(date: date(day: 6, hour: 15), mgdl: 100),
+            RheosGlucosePoint(date: date(day: 6, hour: 15, minute: 40), mgdl: 120),
+            RheosGlucosePoint(date: date(day: 6, hour: 16, minute: 10), mgdl: 145)
+        ]
+        let prompt = RheosUAM.detect(glucose: rise, meals: [], now: date(day: 6, hour: 16, minute: 10), lastAsked: nil, calendar: calendar)
+        XCTAssertNotNil(prompt)
+        XCTAssertNil(RheosUAM.detect(
+            glucose: rise,
+            meals: [RheosMealEvent(id: "now", date: date(day: 6, hour: 16), carbs: 20, fat: 0, protein: 0, note: "", acknowledged: false)],
+            now: date(day: 6, hour: 16, minute: 10),
+            lastAsked: nil,
+            calendar: calendar
+        ))
+        XCTAssertEqual(RheosUAM.interpret("späte Verdauung"), .late)
+        XCTAssertEqual(RheosUAM.interpret("Stress"), .other)
+        var meals = [meal]
+        let latePrompt = RheosUAMPrompt(rise: 40, started: date(day: 3, hour: 22), mealID: meal.id, mealDate: meal.date, text: "")
+        let marked = RheosUAM.lateMark(prompt: latePrompt, now: date(day: 3, hour: 23), calendar: calendar)
+        XCTAssertEqual(meals.count, 1)
+        XCTAssertTrue(marked?.note.contains("Kein neuer Eintrag") ?? false)
+        let caution = RheosNightCaution.dampen(
+            RheosHourlyFactors(basal: hourFactors(hour: 23, value: 1.15), isf: hourFactors(hour: 23, value: 0.85), carbRatio: Array(repeating: 1, count: 24)),
+            now: date(day: 3, hour: 23, minute: 30),
+            marks: marked.map { [$0.mark] } ?? [],
+            modeIsScharf: true,
+            calendar: calendar
+        )
+        XCTAssertTrue(caution.apply)
+        XCTAssertEqual(caution.factors.basal[23], 1, accuracy: 0.001)
+        XCTAssertEqual(caution.factors.isf[23], 1, accuracy: 0.001)
+        let logged = RheosNightCaution.dampen(
+            caution.factors,
+            now: date(day: 3, hour: 23, minute: 30),
+            marks: marked.map { [$0.mark] } ?? [],
+            modeIsScharf: false,
+            calendar: calendar
+        )
+        XCTAssertFalse(logged.apply)
+
+        var nightGlucose: [RheosGlucosePoint] = []
+        for day in 1 ... 6 {
+            nightGlucose.append(RheosGlucosePoint(date: date(day: day, hour: 2), mgdl: 60))
+            nightGlucose.append(RheosGlucosePoint(date: date(day: day, hour: 4), mgdl: 190))
+        }
+        let night = RheosNightReview.check(glucose: nightGlucose, now: date(day: 7, hour: 8), calendar: calendar)
+        XCTAssertTrue(night.shouldShowBeforeBasal)
+        XCTAssertTrue(RheosNightReview.blocksBasalChange(show: true, acknowledgedDay: nil, today: "2026-01-07"))
+        XCTAssertFalse(RheosNightReview.blocksBasalChange(show: true, acknowledgedDay: "2026-01-07", today: "2026-01-07"))
+
+        let story = RheosSettingsStory.explain(RheosTrioReading(
+            bolusPercent: 0.8,
+            maxSMBMinutes: 30,
+            maxIOB: 0,
+            smbOn: true,
+            uamOn: false,
+            autosensMin: 0.7,
+            autosensMax: 1.2,
+            targets: "100–110 mg/dL",
+            dynamicISFOn: true,
+            closedLoop: true
+        ))
+        XCTAssertTrue(story.contains("ändert diese Einstellungen nicht"))
+        XCTAssertTrue(story.contains("Dynamic ISF"))
+        XCTAssertTrue(story.contains("80"))
+    }
+
     private func stableGlucose(days: ClosedRange<Int>, invertFrom: Int? = nil) -> [RheosGlucosePoint] {
         var points: [RheosGlucosePoint] = []
         for day in days {

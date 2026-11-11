@@ -16,7 +16,7 @@ The dosing model is a small on-device temporal network. A ridge regression runs 
 
 Heart rate, resting heart rate, HRV, respiratory rate, oxygen, wrist temperature, steps, active energy, workout minutes and sleep are recorded. A per-signal check can propose one of them in Rheos Vorschläge. It enters the dosing features only after a yes. A no, or no answer, leaves it out. Core ML only packages those already accepted channels. Rheos still does not deliver a bolus. SMB and UAM see only the profile values from `RheosProfileHook`.
 
-Confirming Sport, Showtime or Krank starts a Trio override or temp target that already has that name, through `AdjustmentManager`. If the name is missing, Rheos says so and does not invent a percentage or a target. There is no ketone reminder. When the saved duration ends, Rheos asks once whether to extend it.
+Confirming Sport, Showtime or Krank in Scharf starts a Trio override or temp target that already has that name, through `AdjustmentManager`. In Schatten the same tap is only logged. If the name is missing, Rheos says so and does not invent a percentage or a target. There is no ketone reminder. When the saved duration ends, Rheos asks once whether to extend it.
 
 A Sunday weekly notification exists and is off until the switch in Rheos settings is on.
 
@@ -35,6 +35,12 @@ When Dynamic ISF is on (`useNewFormula`), the applied Rheos ISF factor stays 1 a
 Sensor gaps, the two hours after them, six hours after a recorded patch change, compression lows, and a high that is not falling are left out of learning. Glucose alarms are unchanged.
 
 Cloud text is off until the Cloud-Auswertung switch is on. With the switch and a Keychain key, chat, meal text, photos and the learning report use the cloud model first, then Apple's on-device model, then the local text. The prompt is the summary, not the raw glucose list. Dosing and the network stay on the device. Speech recognition for the microphone button stays on the device. The usage strings are in Info.plist. No entitlement was added.
+
+## Absorption, sport, UAM, and Trio settings
+
+Rheos can learn how fast a meal rises at each time of day and suggest a smaller immediate share of Trio's own bolus percentage. That suggestion is copied into the bolus field only after a confirmation in Scharf. Schatten logs the units it would have given immediately and the SMB units that followed. Rheos does not change the bolus percentage, Max SMB, Max IOB, SMB, UAM, Autosens, targets, or Dynamic ISF.
+
+A rise with no meal asks on the phone and the watch. Late digestion is attached to the earlier meal, creates no meal entry and no extra bolus, and keeps a nighttime Rheos correction from increasing insulin. SMB and UAM are not switched. Sport learned from Apple Health workouts can suggest the saved Sport preset ahead of the usual time, including a note about a later or nighttime drop. It does not invent a target. A morning night-pattern note is shown before a basal-profile change is accepted.
 
 ## What can change insulin
 

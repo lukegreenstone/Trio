@@ -963,6 +963,19 @@ struct PopupView: View {
                 "\(insulinFormatter(state.insulinCalculated, .down, true)) "
                     + String(localized: "units", comment: "Insulin units, spoken")
             ))
+
+            RheosBolusHint(
+                trioPercent: NSDecimalNumber(decimal: state.settings.settings.overrideFactor).doubleValue,
+                smbOn: state.settings.preferences.enableSMBAlways
+                    || state.settings.preferences.enableSMBWithCOB
+                    || state.settings.preferences.enableSMBWithTemptarget
+                    || state.settings.preferences.enableSMBAfterCarbs
+                    || state.settings.preferences.enableSMB_high_bg,
+                uamOn: state.settings.preferences.enableUAM,
+                maxIOB: NSDecimalNumber(decimal: state.settings.preferences.maxIOB).doubleValue,
+                calculatorUnits: NSDecimalNumber(decimal: state.insulinCalculated).doubleValue,
+                onFill: { state.amount = Decimal($0) }
+            )
         }
     }
 

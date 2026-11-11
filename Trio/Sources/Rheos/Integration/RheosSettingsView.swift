@@ -93,6 +93,15 @@ struct RheosSettingsView: View {
                 NavigationLink("Körperdaten") {
                     RheosBodyView(resolver: resolver)
                 }
+                Text(RheosNightReview.check(
+                    glucose: RheosStore.shared.loadDataset().glucose,
+                    now: Date(),
+                    calendar: .current
+                ).summary)
+                .font(.footnote)
+                Button("Nachtmuster gesehen") {
+                    _ = coordinator?.acknowledgeNight()
+                }
                 Button("Basalprofil-Vorschlag") {
                     basalText = coordinator?.basalProposal().summary ?? ""
                 }
