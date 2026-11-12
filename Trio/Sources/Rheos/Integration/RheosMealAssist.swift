@@ -40,17 +40,19 @@ enum RheosMealAssist {
         }
         let prompt = RheosMealText.prompt(for: trimmed)
         if RheosCloudPolicy.allowsCloud() {
-            guard hasCloudKey(resolver) else {
-                debug(.default, "Rheos meal text: cloud on, no key")
-                return await onDeviceOrGrams(prompt, missing: "Cloud-Auswertung ist an, aber im Schlüsselbund liegt kein API-Schlüssel.")
+            let outcome = await RheosCloudChat.reply(prompt: prompt, resolver: resolver)
+            switch outcome {
+            case let .success(text, model):
+                if let estimate = RheosMealParser.estimate(in: text) {
+                    debug(.default, "Rheos meal text from \(model)")
+                    return (estimate, RheosCloudChat.sourceName(model: model))
+                }
+                debug(.default, "Rheos meal text: cloud text had no usable grams")
+                return await onDeviceOrGrams(prompt, missing: "\(RheosCloudChat.sourceName(model: model)): die Antwort hatte keine brauchbaren Gramm. 0/0/0 zählt nicht.")
+            case let .failure(message):
+                debug(.default, "Rheos meal text cloud failure")
+                return await onDeviceOrGrams(prompt, missing: message)
             }
-            let cloud = await RheosCloudChat.reply(prompt: prompt, resolver: resolver)
-            if let cloud, let estimate = RheosMealParser.estimate(in: cloud) {
-                debug(.default, "Rheos meal text from cloud")
-                return (estimate, "Cloud-Modell")
-            }
-            debug(.default, "Rheos meal text: cloud gave no usable estimate")
-            return await onDeviceOrGrams(prompt, missing: "Das Cloud-Modell hat keine verwertbare Schätzung geliefert.")
         }
         debug(.default, "Rheos meal text: cloud switch off")
         return await onDeviceOrGrams(prompt, missing: "Cloud-Auswertung ist aus.")
@@ -61,82 +63,54 @@ enum RheosMealAssist {
             debug(.default, "Rheos meal photo: cloud switch off")
             return (nil, "Foto-Schätzung braucht die Cloud-Auswertung. Sie ist aus. Bitte Gramm eintragen. Ein Foto geht nicht an Apple Foundation Models.")
         }
-        guard hasCloudKey(resolver) else {
-            debug(.default, "Rheos meal photo: no key")
-            return (nil, "Foto-Schätzung braucht einen API-Schlüssel im Schlüsselbund. Bitte Gramm eintragen.")
-        }
-        guard let keychain = resolver.resolve(Keychain.self),
-              let key = try? keychain.getValue(String.self, forKey: RheosCloudChat.keychainKey).get(),
-              !key.isEmpty else { return (nil, "Foto-Schätzung braucht einen API-Schlüssel im Schlüsselbund. Bitte Gramm eintragen.") }
-        var base = UserDefaults.standard.string(forKey: RheosCloudChat.baseURLKey)
-            .flatMap { $0.isEmpty ? nil : $0 } ?? RheosCloudChat.defaultBaseURL
-        while base.hasSuffix("/") { base.removeLast() }
-        let model = UserDefaults.standard.string(forKey: RheosCloudChat.modelKey)
-            .flatMap { $0.isEmpty ? nil : $0 } ?? RheosCloudChat.defaultModel
-        guard let url = URL(string: base + "/chat/completions") else {
-            return (nil, "Die Cloud-Adresse ist ungültig. Bitte Gramm eintragen.")
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         let encoded = jpeg.base64EncodedString()
         let body: [String: Any] = [
-            "model": model,
             "messages": [
                 [
                     "role": "user",
                     "content": [
-                        ["type": "text", "text": "Schätze Kohlenhydrate, Fett und Protein in Gramm. Antworte nur mit JSON: {\"carbs\":0,\"fat\":0,\"protein\":0,\"kcal\":0}"],
+                        ["type": "text", "text": RheosMealText.photoPrompt],
                         ["type": "image_url", "image_url": ["url": "data:image/jpeg;base64,\(encoded)"]]
                     ]
                 ]
             ]
         ]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        let downloaded: (Data, URLResponse)
-        do {
-            downloaded = try await URLSession.shared.data(for: request)
-        } catch {
-            debug(.default, "Rheos meal photo request failed")
-            return (nil, "Das Cloud-Modell hat nicht geantwortet. Bitte Gramm eintragen.")
+        let outcome = await RheosCloudChat.perform(extra: body, resolver: resolver)
+        switch outcome {
+        case let .success(text, model):
+            if let estimate = RheosMealParser.estimate(in: text) {
+                debug(.default, "Rheos meal photo from \(model)")
+                return (estimate, "\(RheosCloudChat.sourceName(model: model)), Foto")
+            }
+            return (nil, "\(RheosCloudChat.sourceName(model: model)): das Foto ergab keine brauchbaren Gramm. 0/0/0 zählt nicht. Bitte Gramm eintragen.")
+        case let .failure(message):
+            return (nil, message + " Bitte Gramm eintragen.")
         }
-        let (data, response) = downloaded
-        guard let http = response as? HTTPURLResponse, (200 ... 299).contains(http.statusCode),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = json["choices"] as? [[String: Any]],
-              let message = choices.first?["message"] as? [String: Any],
-              let content = message["content"] as? String,
-              let estimate = RheosMealParser.estimate(in: content) else {
-            debug(.default, "Rheos meal photo: unusable response")
-            return (nil, "Das Foto ergab keine verwertbare Schätzung. Bitte Gramm eintragen.")
-        }
-        debug(.default, "Rheos meal photo from cloud")
-        return (estimate, "Cloud-Modell, Foto")
-    }
-
-    private static func hasCloudKey(_ resolver: Resolver) -> Bool {
-        guard let keychain = resolver.resolve(Keychain.self),
-              let key = try? keychain.getValue(String.self, forKey: RheosCloudChat.keychainKey).get() else { return false }
-        return !key.isEmpty
     }
 
     private static func onDeviceOrGrams(_ prompt: String, missing: String) async -> (RheosMealEstimate?, String) {
         #if canImport(FoundationModels)
         if #available(iOS 26, *) {
             do {
+                let meal = try await RheosFoundationChat.meal(from: prompt)
+                debug(.default, "Rheos meal from guided Apple model")
+                return (meal, "Apple auf dem Gerät")
+            } catch {
+                debug(.default, "Rheos guided Apple meal failed, trying text")
+            }
+            do {
                 let text = try await RheosFoundationChat.reply(prompt: prompt)
                 if let estimate = RheosMealParser.estimate(in: text) {
                     debug(.default, "Rheos meal text from Apple on device")
-                    return (estimate, "Apple Foundation Models, auf dem Gerät")
+                    return (estimate, "Apple auf dem Gerät")
                 }
             } catch {
                 debug(.default, "Rheos Apple model unavailable")
             }
-            return (nil, "\(missing) Apple Foundation Models auf diesem iPhone hat keine Schätzung geliefert. Bitte Gramm eintragen.")
+            return (nil, "\(missing) Apple auf dem Gerät hat keine brauchbaren Gramm geliefert. Bitte Gramm eintragen.")
         }
         #endif
-        return (nil, "\(missing) Apple Foundation Models braucht iOS 26. Bitte Gramm eintragen.")
+        return (nil, "\(missing) Apple auf dem Gerät braucht iOS 26. Bitte Gramm eintragen.")
     }
 }
 

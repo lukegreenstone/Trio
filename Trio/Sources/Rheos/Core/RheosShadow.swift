@@ -192,28 +192,82 @@ enum RheosPresetPlan {
 }
 
 enum RheosMealParser {
+    /// All-zero macros are a copied template, not a meal. Callers show a message instead.
     static func estimate(in text: String) -> RheosMealEstimate? {
-        let pattern = #"\{[^{}]*\}"#
-        guard let regex = try? NSRegularExpression(pattern: pattern),
-              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
-              let range = Range(match.range, in: text),
-              let data = String(text[range]).data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        func number(_ key: String) -> Double? {
-            if let value = json[key] as? Double { return value }
-            if let value = json[key] as? NSNumber { return value.doubleValue }
-            return nil
+        let stripped = stripFences(text)
+        if let meal = object(in: stripped) { return meal }
+        guard let regex = try? NSRegularExpression(pattern: #"\{[^{}]*\}"#),
+              let match = regex.firstMatch(in: stripped, range: NSRange(stripped.startIndex..., in: stripped)),
+              let range = Range(match.range, in: stripped) else { return nil }
+        return object(in: String(stripped[range]))
+    }
+
+    static func stripFences(_ text: String) -> String {
+        var copy = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if copy.hasPrefix("```") {
+            if let firstNewline = copy.firstIndex(of: "\n") {
+                copy = String(copy[copy.index(after: firstNewline)...])
+            }
+            if let fence = copy.range(of: "```", options: .backwards) {
+                copy = String(copy[..<fence.lowerBound])
+            }
         }
-        guard let carbs = number("carbs") else { return nil }
-        let fat = number("fat") ?? 0
-        let protein = number("protein") ?? 0
+        return copy.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func object(in text: String) -> RheosMealEstimate? {
+        guard let data = text.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let carbs = number(json["carbs"]) else { return nil }
+        let fat = number(json["fat"]) ?? 0
+        let protein = number(json["protein"]) ?? 0
+        guard carbs > 0 || fat > 0 || protein > 0 else { return nil }
         return RheosMealEstimate(
             carbs: carbs,
             fat: fat,
             protein: protein,
-            kcal: number("kcal") ?? (4 * carbs + 9 * fat + 4 * protein),
-            note: "Foto-Schätzung, bitte prüfen"
+            kcal: number(json["kcal"]) ?? (4 * carbs + 9 * fat + 4 * protein),
+            note: "Schätzung, bitte prüfen"
         )
+    }
+
+    static func number(_ value: Any?) -> Double? {
+        if let value = value as? Double { return value }
+        if let value = value as? NSNumber { return value.doubleValue }
+        if let value = value as? String {
+            return Double(value.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: ",", with: "."))
+        }
+        return nil
+    }
+}
+
+enum RheosCloudContent {
+    /// Chat content may be a string or a list of text parts. Never includes a secret.
+    static func text(from content: Any?) -> String? {
+        if let value = content as? String {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        if let parts = content as? [String] {
+            let joined = parts.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            return joined.isEmpty ? nil : joined
+        }
+        if let parts = content as? [[String: Any]] {
+            return joinedText(parts.map { $0 as Any })
+        }
+        if let parts = content as? [Any] {
+            return joinedText(parts)
+        }
+        return nil
+    }
+
+    private static func joinedText(_ parts: [Any]) -> String? {
+        let joined = parts.compactMap { item -> String? in
+            if let text = item as? String { return text }
+            if let part = item as? [String: Any], let text = part["text"] as? String { return text }
+            return nil
+        }.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return joined.isEmpty ? nil : joined
     }
 }
 

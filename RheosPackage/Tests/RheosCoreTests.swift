@@ -1243,6 +1243,29 @@ final class RheosCoreTests: XCTestCase {
         XCTAssertTrue(story.contains("80"))
     }
 
+    func testMealParserRejectsZerosAndReadsFences() {
+        XCTAssertNil(RheosMealParser.estimate(in: "{\"carbs\":0,\"fat\":0,\"protein\":0,\"kcal\":0}"))
+        XCTAssertNil(RheosMealParser.estimate(in: "keine zahlen"))
+        let fenced = """
+        Hier die Schätzung:
+        ```json
+        {"carbs":"42","fat":8,"protein":12,"kcal":"300"}
+        ```
+        """
+        let meal = RheosMealParser.estimate(in: fenced)
+        XCTAssertEqual(meal?.carbs ?? 0, 42, accuracy: 0.001)
+        XCTAssertEqual(meal?.fat ?? 0, 8, accuracy: 0.001)
+        XCTAssertEqual(meal?.protein ?? 0, 12, accuracy: 0.001)
+        let parts: [Any] = [
+            ["type": "text", "text": "Reis"] as [String: Any],
+            ["text": "40 g"] as [String: Any]
+        ]
+        XCTAssertEqual(RheosCloudContent.text(from: parts), "Reis\n40 g")
+        XCTAssertNil(RheosCloudContent.text(from: "   "))
+        XCTAssertFalse(RheosMealText.prompt(for: "Reis").contains("\"carbs\":0"))
+        XCTAssertFalse(RheosMealText.photoPrompt.contains("\"carbs\":0"))
+    }
+
     func testStepWindowsLieInPulseAndShortNights() {
         let quiet = RheosStepActivity.Windows(steps5: 0, steps15: 0, steps30: 0, steps60: 0, feedFresh: false)
         let unknown = RheosStepActivity.status(windows: quiet, heartRate: nil, restingHeartRate: 60)

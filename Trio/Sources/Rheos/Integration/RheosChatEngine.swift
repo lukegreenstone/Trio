@@ -15,21 +15,30 @@ enum RheosChatEngine {
         settingsNote: String = ""
     ) async -> RheosChatResult {
         let prompt = prompt(question: question, report: report, settingsNote: settingsNote)
-        if RheosCloudPolicy.allowsCloud(), let text = await RheosCloudChat.reply(prompt: prompt, resolver: resolver) {
-            return packaged(text, source: "Cloud-Modell, Schlüssel aus dem Schlüsselbund")
+        var cloudFailure = ""
+        if RheosCloudPolicy.allowsCloud() {
+            let outcome = await RheosCloudChat.reply(prompt: prompt, resolver: resolver)
+            if case let .success(text, model) = outcome {
+                return packaged(text, source: RheosCloudChat.sourceName(model: model))
+            }
+            if case let .failure(message) = outcome {
+                cloudFailure = message
+            }
         }
         #if canImport(FoundationModels)
         if #available(iOS 26, *) {
             do {
                 let text = try await RheosFoundationChat.reply(prompt: prompt)
-                return packaged(text, source: "Apple Foundation Models, auf dem Gerät")
+                let prefix = cloudFailure.isEmpty ? "" : cloudFailure + " Apple hat geantwortet.\n\n"
+                return packaged(prefix + text, source: "Apple auf dem Gerät")
             } catch {
-                // The on-device model is unavailable. The local report answers.
+                debug(.default, "Rheos Apple chat model unavailable")
             }
         }
         #endif
         let local = RheosChatStub.reply(question: question, report: report, settingsNote: settingsNote)
-        return packaged(local, source: "Lokale Auswertung, ohne Sprachmodell")
+        let text = cloudFailure.isEmpty ? local : cloudFailure + "\n\n" + local
+        return packaged(text, source: "lokal")
     }
 
     static func packaged(_ text: String, source: String) -> RheosChatResult {
@@ -73,51 +82,156 @@ enum RheosFoundationChat {
         guard !text.isEmpty else { throw CancellationError() }
         return text
     }
+
+    static func meal(from prompt: String) async throws -> RheosMealEstimate {
+        let model = SystemLanguageModel.default
+        guard case .available = model.availability else {
+            throw CancellationError()
+        }
+        let session = LanguageModelSession(instructions: "Schätze eine Mahlzeit. Kein Bolus.")
+        let response = try await session.respond(to: prompt, generating: RheosGeneratedMeal.self)
+        let generated = response.content
+        guard let meal = RheosMealParser.estimate(in: """
+        {"carbs":\(generated.carbs),"fat":\(generated.fat),"protein":\(generated.protein),"kcal":\(generated.kcal)}
+        """) else {
+            throw CancellationError()
+        }
+        return meal
+    }
+}
+
+@available(iOS 26, *)
+@Generable
+struct RheosGeneratedMeal {
+    @Guide(description: "Realistic carbohydrates in grams. Not a placeholder and not zero for a real dish.")
+    var carbs: Double
+    @Guide(description: "Realistic fat in grams.")
+    var fat: Double
+    @Guide(description: "Realistic protein in grams.")
+    var protein: Double
+    @Guide(description: "Approximate kilocalories.")
+    var kcal: Double
 }
 #endif
+
+enum RheosCloudOutcome: Equatable {
+    case success(text: String, model: String)
+    case failure(String)
+}
 
 enum RheosCloudChat {
     static let keychainKey = "rheos.llm.apiKey"
     static let baseURLKey = "rheos.llm.baseURL"
     static let modelKey = "rheos.llm.model"
-    static let defaultBaseURL = "https://api.openai.com/v1"
-    static let defaultModel = "gpt-4o-mini"
+    static let defaultBaseURL = "https://api.x.ai/v1"
+    static let defaultModel = "grok-4.7"
+    static let previousBaseURL = "https://api.openai.com/v1"
+    static let previousModel = "gpt-4o-mini"
+    static let requestTimeout: TimeInterval = 120
 
-    static func reply(prompt: String, resolver: Resolver) async -> String? {
-        guard let keychain = resolver.resolve(Keychain.self),
-              let key = try? keychain.getValue(String.self, forKey: keychainKey).get(),
-              !key.isEmpty else { return nil }
-        var base = UserDefaults.standard.string(forKey: baseURLKey).flatMap { $0.isEmpty ? nil : $0 } ?? defaultBaseURL
-        while base.hasSuffix("/") { base.removeLast() }
-        let model = UserDefaults.standard.string(forKey: modelKey).flatMap { $0.isEmpty ? nil : $0 } ?? defaultModel
-        guard let url = URL(string: base + "/chat/completions") else {
-            return nil
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+    static func sourceName(model: String) -> String {
+        if model.lowercased().contains("grok") { return "Grok" }
+        return "Cloud \(model)"
+    }
+
+    /// True only when the user already stored the old OpenAI pair. Those values stay.
+    static func showsPreviousOpenAIChoice(defaults: UserDefaults = .standard) -> Bool {
+        let base = defaults.string(forKey: baseURLKey) ?? ""
+        let model = defaults.string(forKey: modelKey) ?? ""
+        return base.contains("api.openai.com") && model == previousModel
+    }
+
+    static func saveEndpoint(base: String, model: String, defaults: UserDefaults = .standard) {
+        saveBase(base, defaults: defaults)
+        saveModel(model, defaults: defaults)
+    }
+
+    /// Writes one field only when it actually changed, so loading the screen cannot replace the other field.
+    static func saveBase(_ value: String, defaults: UserDefaults = .standard) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let stored = defaults.string(forKey: baseURLKey) ?? ""
+        guard trimmed != stored else { return }
+        defaults.set(trimmed, forKey: baseURLKey)
+    }
+
+    static func saveModel(_ value: String, defaults: UserDefaults = .standard) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let stored = defaults.string(forKey: modelKey) ?? ""
+        guard trimmed != stored else { return }
+        defaults.set(trimmed, forKey: modelKey)
+    }
+
+    static func reply(prompt: String, resolver: Resolver) async -> RheosCloudOutcome {
         let body: [String: Any] = [
-            "model": model,
             "messages": [
                 ["role": "system", "content": RheosChatParser.instructions()],
                 ["role": "user", "content": prompt]
             ]
         ]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        return await perform(extra: body, resolver: resolver)
+    }
+
+    static func perform(extra: [String: Any], resolver: Resolver) async -> RheosCloudOutcome {
+        guard let keychain = resolver.resolve(Keychain.self) else {
+            return .failure("Grok: der Schlüsselbund ist nicht erreichbar.")
+        }
+        guard let key = try? keychain.getValue(String.self, forKey: keychainKey).get(), !key.isEmpty else {
+            return .failure("Grok: kein API-Schlüssel im Schlüsselbund.")
+        }
+        var base = UserDefaults.standard.string(forKey: baseURLKey)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if base.isEmpty { base = defaultBaseURL }
+        while base.hasSuffix("/") { base.removeLast() }
+        var model = UserDefaults.standard.string(forKey: modelKey)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if model.isEmpty { model = defaultModel }
+        let name = sourceName(model: model)
+        guard let url = URL(string: base + "/chat/completions") else {
+            return .failure("\(name): die Basis-URL ist ungültig.")
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = requestTimeout
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        var payload = extra
+        payload["model"] = model
+        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
         let downloaded: (Data, URLResponse)
         do {
             downloaded = try await URLSession.shared.data(for: request)
         } catch {
-            return nil
+            let timedOut = (error as? URLError)?.code == .timedOut
+            debug(.default, "Rheos cloud request failed, timeout=\(timedOut)")
+            if timedOut {
+                return .failure("\(name): Zeitüberschreitung nach 120 Sekunden.")
+            }
+            return .failure("\(name): keine Verbindung.")
         }
         let (data, response) = downloaded
-        guard let http = response as? HTTPURLResponse, (200 ... 299).contains(http.statusCode),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        guard let http = response as? HTTPURLResponse else {
+            return .failure("\(name): keine HTTP-Antwort.")
+        }
+        guard (200 ... 299).contains(http.statusCode) else {
+            debug(.default, "Rheos cloud HTTP \(http.statusCode)")
+            return .failure(httpFailure(name: name, status: http.statusCode, data: data))
+        }
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let choices = json["choices"] as? [[String: Any]],
               let message = choices.first?["message"] as? [String: Any],
-              let content = message["content"] as? String else { return nil }
-        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+              let content = RheosCloudContent.text(from: message["content"]) else {
+            return .failure("\(name): leere Antwort.")
+        }
+        return .success(text: content, model: model)
+    }
+
+    static func httpFailure(name: String, status: Int, data: Data) -> String {
+        if status == 401 || status == 403 {
+            return "\(name): \(status), Schlüssel ungültig."
+        }
+        let raw = String(data: data, encoding: .utf8) ?? ""
+        let clipped = String(raw.replacingOccurrences(of: "\n", with: " ").prefix(160))
+        if clipped.isEmpty { return "\(name): HTTP \(status)." }
+        return "\(name): HTTP \(status), \(clipped)"
     }
 }

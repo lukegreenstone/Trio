@@ -480,8 +480,9 @@ final class RheosCoordinator {
     private func weeklyProse(_ local: String) async -> (String, String) {
         let prompt = "Formuliere knapp und ohne Bolus, ohne einzelne Glukosewerte: \(local)"
         if RheosCloudPolicy.allowsCloud() {
-            if let text = await RheosCloudChat.reply(prompt: prompt, resolver: resolver) {
-                return (text, "Cloud-Modell")
+            let outcome = await RheosCloudChat.reply(prompt: prompt, resolver: resolver)
+            if case let .success(text, model) = outcome {
+                return (text, RheosCloudChat.sourceName(model: model))
             }
         }
         #if canImport(FoundationModels)

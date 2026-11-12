@@ -260,9 +260,6 @@ extension Home {
                     .font(.footnote.weight(.semibold))
                     .buttonStyle(.bordered)
                     .padding(.bottom, 4)
-                    .sheet(isPresented: $showRheosSheet, onDismiss: openTreatmentsAfterRheos) {
-                        RheosHomeSheet(resolver: resolver)
-                    }
 
                 mealPanel()
                     .frame(height: HomeLayout.mealSlotHeight)
@@ -597,6 +594,9 @@ extension Home {
                     },
                     isPresented: $showQuickPickTreatmentsPicker
                 )
+            }
+            .sheet(isPresented: $showRheosSheet, onDismiss: openTreatmentsAfterRheos) {
+                RheosHomeSheet(resolver: resolver)
             }
             .alert(
                 String(

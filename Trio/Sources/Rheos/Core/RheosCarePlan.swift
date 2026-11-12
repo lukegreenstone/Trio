@@ -325,7 +325,18 @@ enum RheosUpkeep {
 }
 
 enum RheosMealText {
+    /// No sample numbers. A model copies 0,0,0 when the prompt shows that object.
     static func prompt(for description: String) -> String {
-        "Schätze nur Kohlenhydrate, Fett und Protein in Gramm für: \(description). Antworte nur mit JSON {\"carbs\":0,\"fat\":0,\"protein\":0,\"kcal\":0}. Kein Bolus."
+        """
+        Schätze Kohlenhydrate, Fett und Protein in Gramm für diese Mahlzeit: \(description).
+        Antworte nur mit einem JSON-Objekt. Die Schlüssel heißen carbs, fat, protein und kcal.
+        Jeder Wert ist eine realistische Zahl in Gramm, kein Platzhalter. Eine echte Mahlzeit hat nicht bei allen drei Nährwerten 0. Kein Bolus.
+        """
     }
+
+    static let photoPrompt = """
+    Schätze Kohlenhydrate, Fett und Protein in Gramm für das Foto.
+    Antworte nur mit einem JSON-Objekt. Die Schlüssel heißen carbs, fat, protein und kcal.
+    Jeder Wert ist eine realistische Zahl in Gramm, kein Platzhalter. Nicht alle drei Nährwerte dürfen 0 sein. Kein Bolus.
+    """
 }

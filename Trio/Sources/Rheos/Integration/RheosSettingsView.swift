@@ -29,6 +29,7 @@ struct RheosSettingsView: View {
     @State private var apiKey = ""
     @State private var cloudURL = RheosCloudChat.defaultBaseURL
     @State private var cloudModel = RheosCloudChat.defaultModel
+    @State private var cloudTest = ""
     @State private var keyStored = false
 
     var body: some View {
@@ -79,6 +80,8 @@ struct RheosSettingsView: View {
                 }
                 Toggle("Sonntags Wochenbericht", isOn: $sundayReport)
                 Toggle("Cloud-Auswertung", isOn: $cloudAnalysis)
+                Text(cloudAnalysis ? "Cloud-Auswertung ist an." : "Cloud-Auswertung ist aus.")
+                    .font(.footnote)
             } header: {
                 Text("Band")
             } footer: {
@@ -150,15 +153,41 @@ struct RheosSettingsView: View {
             } header: {
                 Text("Letzte Auswertung")
             } footer: {
-                Text("Cloud-Auswertung ist aus, bis du sie einschaltest. Dann gehen nur die schon zusammengefassten Sätze an das Modell, keine Rohwerte. Die Dosis bleibt auf dem Gerät.")
+                Text(cloudAnalysis
+                    ? "Cloud-Auswertung ist an. Es gehen nur die schon zusammengefassten Sätze an das Modell, keine Rohwerte. Die Dosis bleibt auf dem Gerät."
+                    : "Cloud-Auswertung ist aus. Nichts wird an ein Cloud-Modell geschickt. Die Dosis bleibt auf dem Gerät.")
             }
 
             Section {
                 SecureField("API-Schlüssel, optional", text: $apiKey)
                 TextField("Basis-URL", text: $cloudURL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .onSubmit { RheosCloudChat.saveBase(cloudURL) }
                 TextField("Modellname", text: $cloudModel)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .onSubmit { RheosCloudChat.saveModel(cloudModel) }
+                if RheosCloudChat.showsPreviousOpenAIChoice() {
+                    Text("Gespeichert ist noch api.openai.com mit gpt-4o-mini. Der Vorschlag ist jetzt https://api.x.ai/v1 und grok-4.7. Nichts wird automatisch ersetzt.")
+                        .font(.footnote)
+                }
                 Button(keyStored ? "Schlüssel ersetzen" : "Schlüssel im Schlüsselbund sichern") {
                     saveKey()
+                }
+                Button("Verbindung testen") {
+                    Task {
+                        let outcome = await RheosCloudChat.reply(prompt: "Antworte nur mit ok.", resolver: resolver)
+                        switch outcome {
+                        case let .success(text, model):
+                            cloudTest = "ok, \(RheosCloudChat.sourceName(model: model)): \(text)"
+                        case let .failure(message):
+                            cloudTest = message
+                        }
+                    }
+                }
+                if !cloudTest.isEmpty {
+                    Text(cloudTest).font(.footnote)
                 }
                 if keyStored {
                     Button("Schlüssel löschen", role: .destructive) {
@@ -168,7 +197,7 @@ struct RheosSettingsView: View {
             } header: {
                 Text("Chat")
             } footer: {
-                Text("Wenn das iPhone Apple Intelligence hat, antwortet das Modell auf dem Gerät. Sonst kann ein Cloud-Modell den Schlüssel aus dem Schlüsselbund nutzen. Der Schlüssel steht in keiner Datei im Projekt. Der Chat erklärt und darf Hinweise vorschlagen. Er dosiert nicht und ändert keine Grenzen.")
+                Text("Mit Cloud-Auswertung an fragt Rheos zuerst Grok. Ohne Netz oder bei einem Fehler antwortet Apple auf dem Gerät, und Rheos zeigt den Grund. Der Schlüssel liegt nur im Schlüsselbund. Der Chat erklärt und darf Hinweise vorschlagen. Er dosiert nicht und ändert keine Grenzen.")
             }
 
             Section {
@@ -215,6 +244,12 @@ struct RheosSettingsView: View {
         }
         .onChange(of: cloudAnalysis) { _, newValue in
             UserDefaults.standard.set(newValue, forKey: RheosCloudPolicy.key)
+        }
+        .onChange(of: cloudURL) { _, newValue in
+            RheosCloudChat.saveBase(newValue)
+        }
+        .onChange(of: cloudModel) { _, newValue in
+            RheosCloudChat.saveModel(newValue)
         }
         .onReceive(
             Foundation.NotificationCenter.default.publisher(for: Foundation.Notification.Name.rheosModeDidChange)
@@ -342,8 +377,8 @@ struct RheosSettingsView: View {
     }
 
     private func saveKey() {
-        UserDefaults.standard.set(cloudURL, forKey: RheosCloudChat.baseURLKey)
-        UserDefaults.standard.set(cloudModel, forKey: RheosCloudChat.modelKey)
+        RheosCloudChat.saveBase(cloudURL)
+        RheosCloudChat.saveModel(cloudModel)
         guard let keychain = resolver.resolve(Keychain.self) else { return }
         if apiKey.isEmpty {
             keyStored = (try? keychain.hasValue(forKey: RheosCloudChat.keychainKey).get()) ?? false

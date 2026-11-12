@@ -283,7 +283,7 @@ struct RheosSuggestionsView: View {
                     data = nil
                 }
                 guard let data else {
-                    status = "Keine Foto-Schätzung. Offline oder ohne Schlüssel trägst du Kohlenhydrate, Fett und Protein selbst ein."
+                    status = "Das Foto konnte nicht gelesen werden."
                     return
                 }
                 let result = await RheosMealAssist.estimate(jpeg: data, resolver: resolver)

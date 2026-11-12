@@ -10,6 +10,8 @@ struct RheosHomeSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var question = ""
     @State private var answer = ""
+    @State private var showCamera = false
+    @State private var cameraJPEG: Data?
 
     var body: some View {
         NavigationStack {
@@ -27,11 +29,23 @@ struct RheosHomeSheet: View {
                         Text(answer).font(.footnote)
                     }
                 }
-                RheosMealForm(resolver: resolver, nestedInHomeSheet: true, dismissHome: { dismiss() })
+                RheosMealForm(
+                    resolver: resolver,
+                    nestedInHomeSheet: true,
+                    showCamera: $showCamera,
+                    cameraJPEG: $cameraJPEG,
+                    dismissHome: { dismiss() }
+                )
             }
             .navigationTitle("Rheos")
             .toolbar {
                 Button("Schließen") { dismiss() }
+            }
+        }
+        .fullScreenCover(isPresented: $showCamera) {
+            RheosCameraPicker { data in
+                cameraJPEG = data
+                showCamera = false
             }
         }
     }
@@ -62,6 +76,8 @@ struct RheosHomeSheet: View {
 struct RheosMealForm: View {
     let resolver: Resolver
     var nestedInHomeSheet = false
+    var showCamera: Binding<Bool> = .constant(false)
+    var cameraJPEG: Binding<Data?> = .constant(Optional<Data>.none)
     var dismissHome: () -> Void = {}
     @State private var note = ""
     @State private var carbs = ""
@@ -69,7 +85,6 @@ struct RheosMealForm: View {
     @State private var protein = ""
     @State private var status = ""
     @State private var photo: PhotosPickerItem?
-    @State private var showCamera = false
 
     var body: some View {
         Section("Mahlzeit") {
@@ -81,7 +96,7 @@ struct RheosMealForm: View {
                 PhotosPicker(selection: $photo, matching: .images) { Text("Mediathek") }
                 Button("Kamera") {
                     if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                        showCamera = true
+                        showCamera.wrappedValue = true
                     } else {
                         status = "Keine Kamera auf diesem Gerät. Bitte die Mediathek oder Gramm verwenden."
                     }
@@ -99,17 +114,20 @@ struct RheosMealForm: View {
             Task {
                 let data: Data?
                 do { data = try await item.loadTransferable(type: Data.self) } catch { data = nil }
-                guard let data else { return }
+                guard let data else {
+                    status = "Das Foto konnte nicht gelesen werden."
+                    return
+                }
                 let result = await RheosMealAssist.estimate(jpeg: data, resolver: resolver)
                 show(result)
             }
         }
-        .sheet(isPresented: $showCamera) {
-            RheosCameraPicker { data in
-                Task {
-                    let result = await RheosMealAssist.estimate(jpeg: data, resolver: resolver)
-                    show(result)
-                }
+        .onChange(of: cameraJPEG.wrappedValue) { _, data in
+            guard let data else { return }
+            cameraJPEG.wrappedValue = nil
+            Task {
+                let result = await RheosMealAssist.estimate(jpeg: data, resolver: resolver)
+                show(result)
             }
         }
     }
