@@ -1,5 +1,18 @@
 import Foundation
 
+enum RheosModelCard {
+    static func line(trained: Bool, networkMAE: Double?, ridgeMAE: Double?, source: String) -> String {
+        guard trained, networkMAE != nil || ridgeMAE != nil else {
+            return "Noch nicht trainiert, zu wenig Daten."
+        }
+        func number(_ value: Double?) -> String {
+            guard let value else { return "—" }
+            return String(format: "%.1f", value).replacingOccurrences(of: ".", with: ",")
+        }
+        return "Netz \(number(networkMAE)) mg/dL, Ridge \(number(ridgeMAE)) mg/dL, gewählt \(source)."
+    }
+}
+
 struct RheosShadowStatus: Codable, Equatable {
     var trained: Bool = false
     var source: String = "median"
@@ -110,10 +123,14 @@ enum RheosShadowCompare {
         let near = points.isEmpty ? nil : Double(points.filter { abs($0.mgdl - 100) <= 15 }.count) / Double(points.count)
         let meanBasal = fit.factors.basal.isEmpty ? 1 : fit.factors.basal.reduce(0, +) / Double(fit.factors.basal.count)
         let id = weekID(start, calendar: calendar)
-        let netText = fit.weights.networkMAE.map { String(format: "%.1f", $0) } ?? "—"
-        let ridgeText = fit.weights.ridgeMAE.map { String(format: "%.1f", $0) } ?? "—"
         let trioText = trioMAE.map { String(format: "%.1f", $0) } ?? "—"
-        let summary = "Schattenvergleich \(id), kein kontrafaktisches Ergebnis. Netz \(netText) mg/dL, Ridge \(ridgeText) mg/dL, gewählt \(fit.chosen). Abstand zum Ziel 100 \(trioText) mg/dL. Tatsächliches Insulin \(String(format: "%.1f", insulin)) E. Mittlerer Schatten-Basalfaktor \(String(format: "%.2f", meanBasal))."
+        let modelText = RheosModelCard.line(
+            trained: fit.weights.networkMAE != nil || fit.weights.ridgeMAE != nil,
+            networkMAE: fit.weights.networkMAE,
+            ridgeMAE: fit.weights.ridgeMAE,
+            source: fit.chosen
+        )
+        let summary = "Schattenvergleich \(id), kein kontrafaktisches Ergebnis. \(modelText) Abstand zum Ziel 100 \(trioText) mg/dL. Tatsächliches Insulin \(String(format: "%.1f", insulin)) E. Mittlerer Schatten-Basalfaktor \(String(format: "%.2f", meanBasal))."
         return RheosWeekComparison(
             id: id,
             start: start,

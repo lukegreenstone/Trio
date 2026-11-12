@@ -20,10 +20,17 @@ enum RheosCoreMLAdapter {
     }
 
     static func statusLine(_ status: RheosShadowStatus) -> String {
+        let card = RheosModelCard.line(
+            trained: status.trained,
+            networkMAE: status.networkMAE,
+            ridgeMAE: status.ridgeMAE,
+            source: status.source
+        )
+        guard status.trained, status.networkMAE != nil || status.ridgeMAE != nil else {
+            return "\(card) Signale kommen nur nach einem Ja in das Dosismodell. Sonst bleibt der Median."
+        }
         let window = Array(repeating: Array(repeating: 0.0, count: RheosCoreModel.baseFeatureCount), count: 3)
         let packaged = sequence(window) == nil ? "ohne Zeitfenster" : "mit Core-ML-Zeitfenster"
-        let net = status.networkMAE.map { String(format: "%.1f", $0) } ?? "—"
-        let ridge = status.ridgeMAE.map { String(format: "%.1f", $0) } ?? "—"
-        return "Netz \(net) mg/dL, Ridge \(ridge) mg/dL, gewählt \(status.source), \(packaged). Signale kommen nur nach einem Ja in das Dosismodell. Sonst bleibt der Median."
+        return "\(card) \(packaged). Signale kommen nur nach einem Ja in das Dosismodell. Sonst bleibt der Median."
     }
 }

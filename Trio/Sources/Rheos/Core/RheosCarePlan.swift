@@ -247,6 +247,10 @@ struct RheosHourDecision: Codable, Equatable, Identifiable {
     var reason: String
     var autosensRatio: Double?
     var applied: Bool
+    /// First time this same situation was seen. Missing on older files.
+    var since: Date? = nil
+    /// How often this row was refreshed without a material change.
+    var repeatCount: Int? = nil
 }
 
 enum RheosDecisionLog {
@@ -273,11 +277,44 @@ enum RheosDecisionLog {
         )
     }
 
-    static func appending(_ log: [RheosHourDecision], _ entry: RheosHourDecision) -> [RheosHourDecision] {
-        var copy = log.filter { $0.id != entry.id }
-        copy.append(entry)
+    /// A new row only when the hour changes or the situation actually changes.
+    /// Otherwise the last row keeps its start time and counts the refresh.
+    static func appending(
+        _ log: [RheosHourDecision],
+        _ entry: RheosHourDecision,
+        calendar: Calendar = .current
+    ) -> [RheosHourDecision] {
+        var copy = log
+        if let last = copy.last,
+           !materialChange(from: last, to: entry),
+           calendar.isDate(last.date, equalTo: entry.date, toGranularity: .hour)
+        {
+            var updated = entry
+            updated.id = last.id
+            updated.since = last.since ?? last.date
+            updated.repeatCount = (last.repeatCount ?? 1) + 1
+            copy[copy.count - 1] = updated
+        } else {
+            var fresh = entry
+            if fresh.since == nil { fresh.since = fresh.date }
+            if fresh.repeatCount == nil { fresh.repeatCount = 1 }
+            copy.append(fresh)
+        }
         if copy.count > 24 * 14 { copy.removeFirst(copy.count - 24 * 14) }
         return copy
+    }
+
+    static func materialChange(from last: RheosHourDecision, to entry: RheosHourDecision) -> Bool {
+        if last.applied != entry.applied { return true }
+        if abs(last.basal - entry.basal) > 0.02 { return true }
+        if abs(last.isf - entry.isf) > 0.02 { return true }
+        if abs(last.carbRatio - entry.carbRatio) > 0.02 { return true }
+        return signature(last.reason) != signature(entry.reason) || signature(last.inputs) != signature(entry.inputs)
+    }
+
+    /// Digits drop out, so "60 unter 500" and "61 unter 500" are the same sentence.
+    static func signature(_ text: String) -> String {
+        String(text.unicodeScalars.filter { !CharacterSet.decimalDigits.contains($0) })
     }
 }
 

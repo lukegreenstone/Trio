@@ -129,12 +129,14 @@ enum RheosFit {
         }
         var byHour: [Int: [Double]] = [:]
         for meal in dataset.meals {
-            guard let before = RheosStats.nearest(dataset.glucose, to: meal.date, within: 45 * 60),
-                  let after = RheosStats.nearest(dataset.glucose, to: meal.date.addingTimeInterval(3 * 3600), within: 45 * 60)
+            guard let before = RheosMealDelta.sample(dataset.glucose, at: meal.date),
+                  let after = RheosMealDelta.sample(dataset.glucose, at: meal.date.addingTimeInterval(3 * 3600))
             else { continue }
+            let change = after - before
+            guard abs(change) <= RheosMealDelta.uncertainMagnitude else { continue }
             let hour = calendar.component(.hour, from: meal.date)
             let target = targets.value(atHour: hour)
-            let delta = (after - before - RheosReference.expectedMealRiseMgdl) / max(target, 1)
+            let delta = (change - RheosReference.expectedMealRiseMgdl) / max(target, 1)
             byHour[hour, default: []].append(1 - RheosReference.deviationGain * delta)
         }
         for hour in 0 ..< 24 {
@@ -160,9 +162,9 @@ enum RheosFit {
             let rises = meals.compactMap(\.riseAt4am)
             let fatty = meals.filter { $0.fat + $0.protein > 0 && calendar.component(.hour, from: $0.date) >= 20 }
             let absorption = meals.compactMap { absorptionHours(for: $0, glucose: dataset.glucose) }
-            let delta2 = RheosStats.median(meals.compactMap(\.delta2h))
-            let delta4 = RheosStats.median(meals.compactMap(\.delta4h))
-            let rise = RheosStats.median(rises)
+            let delta2 = RheosStats.median(meals.compactMap { RheosMealDelta.usable($0.delta2h) })
+            let delta4 = RheosStats.median(meals.compactMap { RheosMealDelta.usable($0.delta4h) })
+            let rise = RheosStats.median(rises.filter { abs($0) <= RheosMealDelta.uncertainMagnitude })
             let suggestion: String
             if !fatty.isEmpty, let rise, rise > 20 {
                 suggestion = "„\(key)“: nach später fettreicher Mahlzeit liegt der 4-Uhr-Anstieg im Median bei \(Int(rise)) mg/dL. Vorschlag, nur zur Kenntnis: den Eintrag in Trio über mehr Stunden verteilen. Rheos gibt keinen Bolus."

@@ -141,14 +141,18 @@ struct RheosSettingsView: View {
                         }
                     }
                 }
-                ForEach(Array(RheosStore.shared.loadDocument().hourLog.suffix(12).reversed())) { row in
-                    let autosens = row.autosensRatio ?? 1
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("\(row.hour) Uhr · Basal ×\(row.basal, format: .number.precision(.fractionLength(2))) · ISF ×\(row.isf, format: .number.precision(.fractionLength(2))) · Autosens \(autosens, format: .number.precision(.fractionLength(2))) · \(row.applied ? "angewendet" : "Schatten")")
-                        Text(row.inputs)
-                        Text(row.reason)
+                let rows = Array(RheosStore.shared.loadDocument().hourLog.suffix(24 * 7).reversed())
+                let recent = Array(rows.prefix(6))
+                let older = Array(rows.dropFirst(6))
+                ForEach(recent) { row in
+                    hourDecisionRow(row)
+                }
+                if !older.isEmpty {
+                    DisclosureGroup("Ältere Einträge (\(older.count))") {
+                        ForEach(older) { row in
+                            hourDecisionRow(row)
+                        }
                     }
-                    .font(.footnote)
                 }
             } header: {
                 Text("Letzte Auswertung")
@@ -396,6 +400,28 @@ struct RheosSettingsView: View {
     }
 
     private func format(_ value: Double) -> String {
-        String(format: "%.2f", value)
+        String(format: "%.2f", value).replacingOccurrences(of: ".", with: ",")
+    }
+
+    private func hourDecisionRow(_ row: RheosHourDecision) -> some View {
+        let autosens = format(row.autosensRatio ?? 1)
+        let since = row.since ?? row.date
+        let repeats = row.repeatCount ?? 1
+        return VStack(alignment: .leading, spacing: 2) {
+            Text("\(row.hour) Uhr · Basal ×\(format(row.basal)) · ISF ×\(format(row.isf)) · Autosens \(autosens) · \(row.applied ? "angewendet" : "Schatten")")
+            if repeats > 1 {
+                Text("seit \(clock(since)) · \(repeats)×")
+            }
+            Text(row.inputs)
+            Text(row.reason)
+        }
+        .font(.footnote)
+    }
+
+    private func clock(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "de_DE")
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: date)
     }
 }

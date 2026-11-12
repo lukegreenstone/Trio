@@ -121,7 +121,10 @@ enum RheosLearner {
                 modeIsScharf: false,
                 calendar: calendar
             )
-            let shadowReason = reason + wakePreview.line + caution.line
+            let lowNote = RheosNightLow.notice(
+                RheosNightLow.hours(from: RheosAnalysis.hourlyGlucose(learningSet.glucose, calendar: calendar))
+            ).map { " \($0)" } ?? ""
+            let shadowReason = reason + wakePreview.line + caution.line + lowNote
             return decision(
                 mode: mode,
                 code: code,
@@ -170,6 +173,13 @@ enum RheosLearner {
             calendar: calendar
         )
         if caution.apply { delivered = caution.factors }
+        let lowHours = RheosNightLow.hours(from: RheosAnalysis.hourlyGlucose(learningSet.glucose, calendar: calendar))
+        if !lowHours.isEmpty {
+            delivered = RheosNightLow.protect(delivered, hours: Set(lowHours))
+        }
+        let lowNote = lowHours.isEmpty
+            ? ""
+            : " Stunden mit Median unter 70: Basal nicht erhöht, ISF nicht gesenkt."
         let contextNote = contexts.isEmpty
             ? ""
             : " Kontext aus Daten: \(contexts.map(\.title).joined(separator: ", "))."
@@ -182,7 +192,7 @@ enum RheosLearner {
             mode: mode,
             code: .applied,
             applied: true,
-            reason: "Scharf. Stundenfaktoren für ISF, KH-Faktor und Basal, Band \(format(band.lowerBound))–\(format(band.upperBound)), höchstens \(format(limits.maxDailyChange)) pro Tag für das Stundenmodell. SMB und UAM bleiben an.\(contextNote)\(bodyNote(dataset))\(dynamicNote)\(wakeResult.line)\(caution.line)\(doubleNote)",
+            reason: "Scharf. Stundenfaktoren für ISF, KH-Faktor und Basal, Band \(format(band.lowerBound))–\(format(band.upperBound)), höchstens \(format(limits.maxDailyChange)) pro Tag für das Stundenmodell. SMB und UAM bleiben an.\(contextNote)\(bodyNote(dataset))\(dynamicNote)\(wakeResult.line)\(caution.line)\(doubleNote)\(lowNote)",
             factors: delivered,
             slowFactors: slow,
             learned: learned,

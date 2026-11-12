@@ -472,7 +472,11 @@ final class RheosCoordinator {
         )
         let settings = RheosTrioSettingsReader.note(resolver: resolver)
         let activityLine = state.activity?.line ?? ""
-        let combined = local + "\n" + weekly + "\n" + settings + "\n" + activityLine
+        let lowHours = RheosNightLow.hours(
+            from: RheosAnalysis.hourlyGlucose(RheosStore.shared.loadDataset().glucose, calendar: .current)
+        )
+        let lowNote = RheosNightLow.notice(lowHours) ?? ""
+        let combined = local + "\n" + weekly + "\n" + settings + "\n" + activityLine + "\n" + lowNote
         let result = await weeklyProse(combined)
         return result
     }

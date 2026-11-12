@@ -194,12 +194,15 @@ enum RheosAbsorptionShadow {
         }.reduce(0) { $0 + $1.units }
         guard bolus > 0, trioPercent > 0 else { return nil }
         let would = bolus / trioPercent * refinedPercent
-        let line = String(
-            format: "Schatten, als ob: sofort etwa %.2f E statt %.2f E. SMB in den Stunden danach %.2f E. Rheos hat nichts abgegeben.",
-            would,
-            bolus,
-            smb
-        )
+        let units = { (value: Double) -> String in
+            String(format: "%.2f", value).replacingOccurrences(of: ".", with: ",")
+        }
+        let line: String
+        if abs(would - bolus) < 0.05 {
+            line = "Schatten, als ob: keine Abweichung (sofort \(units(bolus)) E). SMB in den Stunden danach \(units(smb)) E. Rheos hat nichts abgegeben."
+        } else {
+            line = "Schatten, als ob: sofort etwa \(units(would)) E statt \(units(bolus)) E. SMB in den Stunden danach \(units(smb)) E. Rheos hat nichts abgegeben."
+        }
         return (would, smb, line)
     }
 }

@@ -40,6 +40,11 @@ struct RheosSuggestionsView: View {
                     Text("Scharf kann ISF, KH-Faktor und Basal über den Profil-Haken anpassen. SMB und UAM bleiben Trios Algorithmus.")
                         .font(.footnote)
                 }
+                if let report, let notice = RheosNightLow.notice(RheosNightLow.hours(from: report.hourly)) {
+                    Text(notice)
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                }
             }
 
             mealSection
@@ -50,7 +55,7 @@ struct RheosSuggestionsView: View {
                 Section("Stabilität") {
                     Text(report.stability.summary)
                     labeled("Werte", "\(report.stability.sampleCount)")
-                    labeled("70–140 mg/dL", percent(report.stability.timeInTightRange))
+                    labeled("Zeit im engen Bereich (TITR, 70–140 mg/dL)", percent(report.stability.timeInTightRange))
                     labeled("70–180 mg/dL", percent(report.stability.timeInRange))
                     labeled("Variationskoeffizient", cv(report.stability.coefficientOfVariationPercent))
                 }
@@ -99,7 +104,7 @@ struct RheosSuggestionsView: View {
                     ForEach(report.hourly) { row in
                         VStack(alignment: .leading, spacing: 2) {
                             Text("\(row.hour) Uhr · Median \(format(row.medianMgdl)) mg/dL (n=\(row.count))")
-                            Text("Gelernt Basal ×\(factor(report.decision.learnedFactors.basal, row.hour)), ISF ×\(factor(report.decision.learnedFactors.isf, row.hour)), KH ×\(factor(report.decision.learnedFactors.carbRatio, row.hour))")
+                            Text("Gelernt Basal ×\(factor(report.decision.learnedFactors.basal, row.hour)), ISF ×\(factor(report.decision.learnedFactors.isf, row.hour)), KH ×\(factor(report.decision.learnedFactors.carbRatio, row.hour))".replacingOccurrences(of: ".", with: ","))
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                         }
@@ -120,7 +125,7 @@ struct RheosSuggestionsView: View {
                             if !meal.note.isEmpty {
                                 Text(meal.note).font(.footnote)
                             }
-                            Text("Δ 2 h \(delta(meal.delta2h)) mg/dL · Δ 4 h \(delta(meal.delta4h)) mg/dL · 4 Uhr \(delta(meal.riseAt4am)) mg/dL")
+                            Text(mealDeltaLine(meal))
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                             if meal.acknowledged {
@@ -137,7 +142,7 @@ struct RheosSuggestionsView: View {
                 }
 
                 Section("Hinweise") {
-                    Text("Trios Statistik zeigt TITR, TIR und CV bereits. Trios Tief- und Hoch-Alarme und der Alarm „Kohlenhydrate nötig“ bleiben unverändert. Die Texte hier dosieren nicht.")
+                    Text("TITR heißt Zeit im engen Bereich, hier 70–140 mg/dL. TIR heißt Zeit im Bereich, hier 70–180 mg/dL. Trios Statistik zeigt beides und den Variationskoeffizienten bereits. Trios Tief- und Hoch-Alarme und der Alarm „Kohlenhydrate nötig“ bleiben unverändert. Die Texte hier dosieren nicht.")
                         .font(.footnote)
                     if let patch = care.patchCheck { Text(patch).font(.footnote) }
                     if care.compressionExcluded.isEmpty {
@@ -444,13 +449,26 @@ struct RheosSuggestionsView: View {
         String(format: "%.0f", value)
     }
 
-    private func delta(_ value: Double?) -> String {
-        guard let value else { return "–" }
-        return String(format: "%+.0f", value)
+    private func factor(_ values: [Double], _ hour: Int) -> String {
+        guard values.count == 24, (0 ..< 24).contains(hour) else { return "1,00" }
+        return String(format: "%.2f", values[hour]).replacingOccurrences(of: ".", with: ",")
     }
 
-    private func factor(_ values: [Double], _ hour: Int) -> String {
-        guard values.count == 24 else { return "1.00" }
-        return String(format: "%.2f", values[hour])
+    private func mealDeltaLine(_ meal: RheosMealOutcome) -> String {
+        let now = Date()
+        let two = RheosMealDelta.text(meal.delta2h, due: meal.date.addingTimeInterval(2 * 3600 + RheosMealDelta.windowSeconds), now: now)
+        let four = RheosMealDelta.text(meal.delta4h, due: meal.date.addingTimeInterval(4 * 3600 + RheosMealDelta.windowSeconds), now: now)
+        let morning: String
+        if calendarHour(meal.date) >= 20, let nextMorning = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: meal.date)),
+           let atFour = Calendar.current.date(bySettingHour: 4, minute: 20, second: 0, of: nextMorning) {
+            morning = RheosMealDelta.text(meal.riseAt4am, due: atFour, now: now)
+        } else {
+            morning = RheosMealDelta.text(meal.riseAt4am, due: meal.date, now: now)
+        }
+        return "Δ 2 h \(two) · Δ 4 h \(four) · 4 Uhr \(morning)"
+    }
+
+    private func calendarHour(_ date: Date) -> Int {
+        Calendar.current.component(.hour, from: date)
     }
 }

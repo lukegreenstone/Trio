@@ -56,6 +56,7 @@ enum RheosStepActivity {
         windows: Windows,
         heartRate: Double?,
         restingHeartRate: Double?,
+        asleep: Bool = false,
         thresholds: Thresholds = Thresholds()
     ) -> (status: Status, line: String) {
         guard windows.feedFresh else {
@@ -69,6 +70,9 @@ enum RheosStepActivity {
             return (.active, "Schritte aktiv: \(windows.steps5)/5, \(windows.steps15)/15, \(windows.steps30)/30, \(windows.steps60)/60. Nur Schatten, nichts geändert.")
         }
         if windows.steps60 < thresholds.inactive60 {
+            if asleep {
+                return (.normal, "")
+            }
             let heartZone: Int?
             if let heartRate, let restingHeartRate {
                 heartZone = RheosStepActivity.zone(bpm: heartRate, resting: restingHeartRate)
@@ -140,6 +144,31 @@ enum RheosStepActivity {
         guard short >= minimumNights else { return "" }
         return "Mehrere kurze Nächte: \(short) von \(byNight.count) in 14 Tagen unter \(Int(shortHours)) Stunden. Nur beobachtet, nichts geändert."
     }
+
+    /// A HealthKit sleep interval covering now, or the usual sleep window from recent nights.
+    static func isAsleep(now: Date, sleep: [RheosSleepInterval], calendar: Calendar) -> Bool {
+        if sleep.contains(where: { interval in
+            interval.start <= now && now < interval.end && interval.stage.lowercased() != "awake"
+        }) {
+            return true
+        }
+        let nights = sleep.filter { $0.end > $0.start && $0.stage.lowercased() != "awake" }
+        guard nights.count >= 3 else { return false }
+        let starts = nights.map { minutes($0.start, calendar) }.sorted()
+        let ends = nights.map { minutes($0.end, calendar) }.sorted()
+        let start = starts[starts.count / 2]
+        let end = ends[ends.count / 2]
+        guard start != end else { return false }
+        let nowMinutes = minutes(now, calendar)
+        if start < end {
+            return nowMinutes >= start && nowMinutes < end
+        }
+        return nowMinutes >= start || nowMinutes < end
+    }
+
+    private static func minutes(_ date: Date, _ calendar: Calendar) -> Int {
+        calendar.component(.hour, from: date) * 60 + calendar.component(.minute, from: date)
+    }
 }
 
 struct RheosActivitySnapshot: Codable, Equatable {
@@ -168,7 +197,8 @@ enum RheosActivityReport {
         let classified = RheosStepActivity.status(
             windows: windows,
             heartRate: heartRate,
-            restingHeartRate: restingHeartRate
+            restingHeartRate: restingHeartRate,
+            asleep: RheosStepActivity.isAsleep(now: now, sleep: sleep, calendar: calendar)
         )
         let usual = RheosStepActivity.usualWakeHour(sleepEnds: sleep.map(\.end), calendar: calendar)
         let lieIn = RheosStepActivity.lieIn(

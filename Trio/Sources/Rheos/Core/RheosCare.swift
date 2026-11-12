@@ -103,7 +103,7 @@ enum RheosCare {
         let cv = stability.coefficientOfVariationPercent.map { String(format: "%.0f %%", $0) } ?? "–"
         return """
         Rheos-Wochenbericht (letzte 7 Tage). Trios Statistikansicht bleibt die laufende Ansicht.
-        Zeit 70–140 mg/dL (TITR): \(titr)
+        Zeit im engen Bereich 70–140 mg/dL (TITR, time in tight range): \(titr)
         Zeit 70–180 mg/dL (TIR): \(tir)
         Variationskoeffizient: \(cv)
         Werte unter 70 mg/dL: \(hypos) (\(String(format: "%.0f", hypoPercent)) %)

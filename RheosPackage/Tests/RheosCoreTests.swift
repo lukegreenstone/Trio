@@ -953,7 +953,8 @@ final class RheosCoreTests: XCTestCase {
         )
         XCTAssertTrue(week.shadowOnly)
         XCTAssertTrue(week.summary.contains("kein kontrafaktisches"))
-        XCTAssertTrue(week.summary.contains("Ridge"))
+        XCTAssertTrue(week.summary.contains("zu wenig Daten"))
+        XCTAssertFalse(week.summary.contains("Ridge —"))
         XCTAssertEqual(
             RheosCoreModel.features(hour: 8, iob: 1, carbs: 10, fpu: 2).count,
             RheosCoreModel.baseFeatureCount
@@ -1310,6 +1311,92 @@ final class RheosCoreTests: XCTestCase {
         XCTAssertEqual(taken?.carbs, 30)
         XCTAssertEqual(taken?.fat, 10)
         XCTAssertNil(RheosMealDraftStore.take(defaults: defaults))
+    }
+
+    func testHourLogUpdatesInsteadOfRepeating() {
+        let first = RheosDecisionLog.entry(
+            now: date(day: 3, hour: 1, minute: 5),
+            factors: .identity,
+            inputs: "Wenig Schritte über 60 Minuten (60 unter 500)",
+            reason: "Schatten",
+            autosensRatio: 1,
+            applied: false
+        )
+        let again = RheosDecisionLog.entry(
+            now: date(day: 3, hour: 1, minute: 20),
+            factors: .identity,
+            inputs: "Wenig Schritte über 60 Minuten (61 unter 500)",
+            reason: "Schatten",
+            autosensRatio: 1,
+            applied: false
+        )
+        let log = RheosDecisionLog.appending([first], again, calendar: calendar)
+        XCTAssertEqual(log.count, 1)
+        XCTAssertEqual(log[0].repeatCount, 2)
+        XCTAssertEqual(log[0].since, first.date)
+        let nextHour = RheosDecisionLog.entry(
+            now: date(day: 3, hour: 2),
+            factors: .identity,
+            inputs: again.inputs,
+            reason: again.reason,
+            autosensRatio: 1,
+            applied: false
+        )
+        XCTAssertEqual(RheosDecisionLog.appending(log, nextHour, calendar: calendar).count, 2)
+        var moved = again
+        moved.basal = 1.2
+        moved.applied = true
+        XCTAssertEqual(RheosDecisionLog.appending([first], moved, calendar: calendar).count, 2)
+    }
+
+    func testSleepHidesInactivityAndLowHoursStaySafe() {
+        let still = RheosStepActivity.Windows(steps5: 0, steps15: 10, steps30: 20, steps60: 40, feedFresh: true)
+        let asleep = RheosStepActivity.status(windows: still, heartRate: 55, restingHeartRate: 60, asleep: true)
+        XCTAssertFalse(asleep.line.contains("Wenig Schritte"))
+        XCTAssertEqual(asleep.status, .normal)
+        let awake = RheosStepActivity.status(windows: still, heartRate: 55, restingHeartRate: 60, asleep: false)
+        XCTAssertTrue(awake.line.contains("Wenig Schritte"))
+
+        let nights = (1 ... 3).map { day in
+            RheosSleepInterval(id: "s\(day)", start: date(day: day, hour: 23), end: date(day: day + 1, hour: 7), stage: "asleep")
+        }
+        XCTAssertTrue(RheosStepActivity.isAsleep(now: date(day: 4, hour: 1), sleep: nights, calendar: calendar))
+
+        let covered = [RheosSleepInterval(id: "now", start: date(day: 4, hour: 0), end: date(day: 4, hour: 6), stage: "asleep")]
+        XCTAssertTrue(RheosStepActivity.isAsleep(now: date(day: 4, hour: 1), sleep: covered, calendar: calendar))
+
+        XCTAssertNil(RheosMealDelta.usable(-210))
+        XCTAssertEqual(RheosMealDelta.usable(-40) ?? 0, -40, accuracy: 0.001)
+        XCTAssertEqual(RheosMealDelta.text(nil, due: date(day: 4, hour: 6), now: date(day: 4, hour: 5)), "noch offen")
+        XCTAssertEqual(RheosMealDelta.text(nil, due: date(day: 4, hour: 4), now: date(day: 4, hour: 5)), "keine Daten")
+        XCTAssertEqual(RheosMealDelta.text(-210, due: date(day: 4, hour: 4), now: date(day: 4, hour: 5)), "unsicher")
+        XCTAssertNil(RheosMealDelta.sample([RheosGlucosePoint(date: date(day: 4, hour: 1), mgdl: 4.2)], at: date(day: 4, hour: 1)))
+
+        let low = RheosNightLow.hours(from: [
+            RheosHourlyGlucose(hour: 4, medianMgdl: 59, count: 12),
+            RheosHourlyGlucose(hour: 5, medianMgdl: 90, count: 12),
+            RheosHourlyGlucose(hour: 6, medianMgdl: 62, count: 2)
+        ])
+        XCTAssertEqual(low, [4])
+        XCTAssertTrue(RheosNightLow.notice(low)?.contains("Diabetes-Team") ?? false)
+        let protected = RheosNightLow.protect(
+            RheosHourlyFactors(basal: hourFactors(hour: 4, value: 1.15), isf: hourFactors(hour: 4, value: 0.8), carbRatio: Array(repeating: 1, count: 24)),
+            hours: Set(low)
+        )
+        XCTAssertEqual(protected.basal[4], 1, accuracy: 0.001)
+        XCTAssertEqual(protected.isf[4], 1, accuracy: 0.001)
+        XCTAssertEqual(protected.basal[5], 1, accuracy: 0.001)
+        XCTAssertTrue(RheosModelCard.line(trained: false, networkMAE: nil, ridgeMAE: nil, source: "median").contains("zu wenig Daten"))
+
+        let same = RheosAbsorptionShadow.split(
+            meal: RheosMealEvent(id: "same", date: date(day: 3, hour: 12), carbs: 40, fat: 0, protein: 0, note: "", acknowledged: false),
+            insulin: [RheosInsulinEvent(date: date(day: 3, hour: 12, minute: 2), units: 2.55, kind: "bolus")],
+            trioPercent: 0.5,
+            refinedPercent: 0.5
+        )
+        XCTAssertTrue(same?.line.contains("keine Abweichung") ?? false)
+        XCTAssertTrue(same?.line.contains("2,55") ?? false)
+        XCTAssertFalse(same?.line.contains("statt") ?? true)
     }
 
     private func stableGlucose(days: ClosedRange<Int>, invertFrom: Int? = nil) -> [RheosGlucosePoint] {

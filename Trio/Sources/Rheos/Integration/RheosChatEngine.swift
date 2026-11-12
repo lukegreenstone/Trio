@@ -82,35 +82,6 @@ enum RheosFoundationChat {
         guard !text.isEmpty else { throw CancellationError() }
         return text
     }
-
-    static func meal(from prompt: String) async throws -> RheosMealEstimate {
-        let model = SystemLanguageModel.default
-        guard case .available = model.availability else {
-            throw CancellationError()
-        }
-        let session = LanguageModelSession(instructions: "Schätze eine Mahlzeit. Kein Bolus.")
-        let response = try await session.respond(to: prompt, generating: RheosGeneratedMeal.self)
-        let generated = response.content
-        guard let meal = RheosMealParser.estimate(in: """
-        {"carbs":\(generated.carbs),"fat":\(generated.fat),"protein":\(generated.protein),"kcal":\(generated.kcal)}
-        """) else {
-            throw CancellationError()
-        }
-        return meal
-    }
-}
-
-@available(iOS 26, *)
-@Generable
-struct RheosGeneratedMeal {
-    @Guide(description: "Realistic carbohydrates in grams. Not a placeholder and not zero for a real dish.")
-    var carbs: Double
-    @Guide(description: "Realistic fat in grams.")
-    var fat: Double
-    @Guide(description: "Realistic protein in grams.")
-    var protein: Double
-    @Guide(description: "Approximate kilocalories.")
-    var kcal: Double
 }
 #endif
 

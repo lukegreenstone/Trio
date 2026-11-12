@@ -98,6 +98,10 @@ extension Home {
         var waitForSuggestion: Bool = false
         var glucoseFromPersistence: [GlucoseStored] = []
         var latestTwoGlucoseValues: [GlucoseStored] = []
+        /// Newest sample from the CGM, even when Core Data kept an older one for the loop.
+        var liveGlucoseDate: Date?
+        var liveGlucoseMgdl: Int?
+        var liveGlucoseDirection: BloodGlucose.Direction?
         var carbsFromPersistence: [CarbEntryStored] = []
         var fpusFromPersistence: [CarbEntryStored] = []
         var determinationsFromPersistence: [OrefDetermination] = []
@@ -608,6 +612,17 @@ extension Home {
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] state in self?.cgmDisplayState = state }
                 .store(in: &lifetime)
+            fetchGlucoseManager.latestLiveGlucose
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] reading in
+                    guard let self, let reading else { return }
+                    let mgdl = reading.glucose ?? reading.sgv
+                    guard let mgdl else { return }
+                    self.liveGlucoseDate = reading.dateString
+                    self.liveGlucoseMgdl = mgdl
+                    self.liveGlucoseDirection = reading.direction
+                }
+                .store(in: &lifetime)
             fetchGlucoseManager.cgmProgressHighlight
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] progress in
@@ -822,8 +837,9 @@ extension Home {
         }
 
         func showProgressView() {
+            // Ascending list: the newest reading is last, not first.
             glucoseStorage
-                .isGlucoseDataFresh(glucoseFromPersistence.first?.date) ? (waitForSuggestion = true) : (waitForSuggestion = false)
+                .isGlucoseDataFresh(glucoseFromPersistence.last?.date) ? (waitForSuggestion = true) : (waitForSuggestion = false)
         }
 
         func cancelBolus() {

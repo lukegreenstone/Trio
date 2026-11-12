@@ -75,15 +75,15 @@ enum RheosAnalysis {
         dataset.meals.map { meal in
             let plus2 = meal.date.addingTimeInterval(2 * 3600)
             let plus4 = meal.date.addingTimeInterval(4 * 3600)
-            let before = RheosStats.nearest(dataset.glucose, to: meal.date, within: 45 * 60)
-            let at2 = RheosStats.nearest(dataset.glucose, to: plus2, within: 45 * 60)
-            let at4 = RheosStats.nearest(dataset.glucose, to: plus4, within: 45 * 60)
+            let before = RheosMealDelta.sample(dataset.glucose, at: meal.date)
+            let at2 = RheosMealDelta.sample(dataset.glucose, at: plus2)
+            let at4 = RheosMealDelta.sample(dataset.glucose, at: plus4)
             var riseAt4: Double?
             if calendar.component(.hour, from: meal.date) >= 20 {
                 let start = calendar.startOfDay(for: meal.date)
                 if let nextDay = calendar.date(byAdding: .day, value: 1, to: start),
                    let atFour = calendar.date(bySettingHour: 4, minute: 0, second: 0, of: nextDay),
-                   let four = RheosStats.nearest(dataset.glucose, to: atFour, within: 45 * 60),
+                   let four = RheosMealDelta.sample(dataset.glucose, at: atFour),
                    let baseline = before {
                     riseAt4 = four - baseline
                 }
@@ -300,3 +300,60 @@ enum RheosAnalysis {
         return String(format: "%.0f", value)
     }
 }
+
+/// Meal glucose change: later minus the value at the meal, in mg/dL.
+/// A sample has to sit within 20 minutes and inside 20–600 mg/dL.
+/// A change beyond ±150 mg/dL in that window is shown as uncertain and is not a learning signal.
+enum RheosMealDelta {
+    static let uncertainMagnitude = 150.0
+    static let windowSeconds: TimeInterval = 20 * 60
+    static let plausible = 20.0 ... 600.0
+
+    static func sample(_ points: [RheosGlucosePoint], at date: Date) -> Double? {
+        guard let value = RheosStats.nearest(points, to: date, within: windowSeconds),
+              plausible.contains(value)
+        else { return nil }
+        return value
+    }
+
+    static func usable(_ delta: Double?) -> Double? {
+        guard let delta, delta.isFinite, abs(delta) <= uncertainMagnitude else { return nil }
+        return delta
+    }
+
+    static func text(_ delta: Double?, due: Date, now: Date) -> String {
+        if let delta, delta.isFinite {
+            if abs(delta) > uncertainMagnitude { return "unsicher" }
+            let shown = String(format: "%+.0f", delta).replacingOccurrences(of: ".", with: ",")
+            return "\(shown) mg/dL"
+        }
+        return now < due ? "noch offen" : "keine Daten"
+    }
+}
+
+enum RheosNightLow {
+    static let floorMgdl = 70.0
+    static let minimumCount = 3
+
+    static func hours(from hourly: [RheosHourlyGlucose]) -> [Int] {
+        hourly.filter { $0.medianMgdl < floorMgdl && $0.count >= minimumCount }.map(\.hour).sorted()
+    }
+
+    static func notice(_ hours: [Int]) -> String? {
+        guard !hours.isEmpty else { return nil }
+        let list = hours.map(String.init).joined(separator: ", ")
+        return "Wiederholte Werte unter 70 in der Nacht (\(list) Uhr), bitte mit dem Diabetes-Team ansehen. Nur ein Hinweis, nichts wird automatisch geändert."
+    }
+
+    /// Scharf must not give more insulin in these hours: basal stays at or below 1, ISF at or above 1.
+    static func protect(_ factors: RheosHourlyFactors, hours: Set<Int>) -> RheosHourlyFactors {
+        guard factors.basal.count == 24, factors.isf.count == 24 else { return factors }
+        var copy = factors
+        for hour in hours where (0 ..< 24).contains(hour) {
+            copy.basal[hour] = min(copy.basal[hour], 1)
+            copy.isf[hour] = max(copy.isf[hour], 1)
+        }
+        return copy
+    }
+}
+

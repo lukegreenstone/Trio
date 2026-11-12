@@ -343,4 +343,31 @@ import Testing
 
         #expect(result == .temp(1.1))
     }
+
+    @Test("Open-loop hours count the profile and skip temp basal and suspend")
+    func testScheduledInsulinFillsOpenLoopHours() {
+        let calendar = Calendar.current
+        let hours = ScheduledBasalInference.scheduledInsulinByHour(
+            windowStart: time(8),
+            now: time(11),
+            profile: flatProfile,
+            tempIntervals: [(time(9), time(9, 30))],
+            suspensions: [(time(10), time(10, 30))],
+            calendar: calendar
+        )
+        func units(_ hour: Int) -> Double {
+            let start = calendar.date(from: calendar.dateComponents([.year, .month, .day, .hour], from: time(hour))) ?? time(hour)
+            return hours[start] ?? 0
+        }
+        #expect(abs(units(8) - 1) < 0.02)
+        #expect(abs(units(9) - 0.5) < 0.02)
+        #expect(abs(units(10) - 0.5) < 0.02)
+        #expect(ScheduledBasalInference.scheduledInsulinByHour(
+            windowStart: time(8),
+            now: time(11),
+            profile: [],
+            tempIntervals: [],
+            suspensions: []
+        ).isEmpty)
+    }
 }

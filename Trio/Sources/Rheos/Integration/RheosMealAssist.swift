@@ -92,13 +92,6 @@ enum RheosMealAssist {
         #if canImport(FoundationModels)
         if #available(iOS 26, *) {
             do {
-                let meal = try await RheosFoundationChat.meal(from: prompt)
-                debug(.default, "Rheos meal from guided Apple model")
-                return (meal, "Apple auf dem Gerät")
-            } catch {
-                debug(.default, "Rheos guided Apple meal failed, trying text")
-            }
-            do {
                 let text = try await RheosFoundationChat.reply(prompt: prompt)
                 if let estimate = RheosMealParser.estimate(in: text) {
                     debug(.default, "Rheos meal text from Apple on device")
