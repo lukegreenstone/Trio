@@ -589,6 +589,7 @@
 		BD7DA9AC2AE06EB900601B20 /* BolusCalculatorConfigRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD7DA9AB2AE06EB900601B20 /* BolusCalculatorConfigRootView.swift */; };
 		BD7DB88E2D2C4A17003D3155 /* BolusCalculationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD7DB88D2D2C4A0A003D3155 /* BolusCalculationManager.swift */; };
 		BD8207C42D2B42E60023339D /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6B1A8D182B14D91600E76752 /* WidgetKit.framework */; };
+		C0E05A7C0000000000000F24 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6B1A8D182B14D91600E76752 /* WidgetKit.framework */; };
 		BD8207C52D2B42E60023339D /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6B1A8D1A2B14D91600E76752 /* SwiftUI.framework */; };
 		BD8207CE2D2B42E70023339D /* Trio Watch Complication Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = BD8207C32D2B42E50023339D /* Trio Watch Complication Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		BD8E6B212D9036CA00ABF8FA /* OnboardingProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD8E6B202D9036CA00ABF8FA /* OnboardingProvider.swift */; };
@@ -991,6 +992,46 @@
 		FE66D16B291F74F8005D6F77 /* Bundle+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE66D16A291F74F8005D6F77 /* Bundle+Extensions.swift */; };
 		7A11AC0DE000000000000030 /* UIHostingController+KeyboardSafeArea.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A11AC0DE000000000000130 /* UIHostingController+KeyboardSafeArea.swift */; };
 		FEFFA7A22929FE49007B8193 /* UIDevice+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEFFA7A12929FE49007B8193 /* UIDevice+Extensions.swift */; };
+		338B388F5A9F4DBAA9973AB4 /* RheosMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37C0A6DE17EB4728BDB8A5DE /* RheosMode.swift */; };
+		85F470D9BC744E6F985366CE /* RheosModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0342F6D4C4045A8B3D5ABCE /* RheosModels.swift */; };
+		30A3EADF37444326853D7EB2 /* RheosStats.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42BBB38319A44AF9AE4891A2 /* RheosStats.swift */; };
+		488CD0C0BDE7469F95A96647 /* RheosAnalysis.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D5CE2C350AB4008930D4C36 /* RheosAnalysis.swift */; };
+		6EBBAC1ACCB44DC5860BB4E3 /* RheosApplicationPoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90BCE2C4F6594E37A1C88650 /* RheosApplicationPoint.swift */; };
+		D8A61BD063774ACA8C979A02 /* RheosLearning.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E6A1C492B2A4D8CAAFE74F9 /* RheosLearning.swift */; };
+		3BF53AD00262417FBF11B7CF /* RheosStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D086641C5554270A7A474B3 /* RheosStore.swift */; };
+		EE984A517A864F68ACC3ED03 /* RheosModeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 108E03FBDA154ED298D61419 /* RheosModeStore.swift */; };
+		4CC7746554C34B05A963C4C5 /* RheosProfileHook.swift in Sources */ = {isa = PBXBuildFile; fileRef = E39D2483EDC54702A42C54E1 /* RheosProfileHook.swift */; };
+		C4FB715478F24C0D9FB52CD1 /* RheosSnapshotReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 458A1B7BD825442297E8E484 /* RheosSnapshotReader.swift */; };
+		9D34434D0DFD41AEB0BB01EB /* RheosHealthReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D8EC68B72E24BAEBBCDA13C /* RheosHealthReader.swift */; };
+		3CEE681F45DB401D8FDB8A78 /* RheosCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A3D81D486B6425A88EC9523 /* RheosCoordinator.swift */; };
+		B034C5EC50AA4D07AF064249 /* RheosModeBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = E79C07F8A0044FFD8420C72A /* RheosModeBanner.swift */; };
+		DA7EAAD506FE4672A6495B09 /* RheosSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A007A14147F146A09D7DA662 /* RheosSettingsView.swift */; };
+		6A77E1804C6D4C8DB1976EC1 /* RheosSuggestionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65D7541F741D42619DFAC7BD /* RheosSuggestionsView.swift */; };
+		A11C0DE2E10A0000000000C8 /* RheosBodyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000C7 /* RheosBodyView.swift */; };
+		A11C0DE2E10A0000000000CA /* RheosBodyRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000C9 /* RheosBodyRecord.swift */; };
+		A11C0DE2E10A0000000000D4 /* RheosCoreModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000D3 /* RheosCoreModel.swift */; };
+		A11C0DE2E10A0000000000DC /* RheosCarePlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000DB /* RheosCarePlan.swift */; };
+		A11C0DE2E10A0000000000E6 /* RheosDayPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000E5 /* RheosDayPlan.swift */; };
+		A11C0DE2E10A0000000000E8 /* RheosActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000E7 /* RheosActivity.swift */; };
+		A11C0DE2E10A0000000000DE /* RheosHomeSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000DD /* RheosHomeSheet.swift */; };
+		A11C0DE2E10A0000000000D6 /* RheosShadow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000D5 /* RheosShadow.swift */; };
+		A11C0DE2E10A0000000000D8 /* RheosCoreMLAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000D7 /* RheosCoreMLAdapter.swift */; };
+		A11C0DE2E10A0000000000DA /* RheosMealAssist.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000D9 /* RheosMealAssist.swift */; };
+		A11C0DE2E10A0000000000A2 /* RheosMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000A1 /* RheosMigration.swift */; };
+		A11C0DE2E10A0000000000B2 /* RheosICloudBackup.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000B1 /* RheosICloudBackup.swift */; };
+		A11C0DE2E10A0000000000C2 /* RheosContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000C1 /* RheosContext.swift */; };
+		A11C0DE2E10A0000000000D2 /* RheosFit.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000D1 /* RheosFit.swift */; };
+		A11C0DE2E10A0000000000E2 /* RheosChatParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000E1 /* RheosChatParser.swift */; };
+		A11C0DE2E10A0000000000F2 /* RheosTargetLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000F1 /* RheosTargetLoader.swift */; };
+		A11C0DE2E10A0000000000F4 /* RheosChatEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000F3 /* RheosChatEngine.swift */; };
+		A11C0DE2E10A0000000000C4 /* RheosCare.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000C3 /* RheosCare.swift */; };
+		A11C0DE2E10A0000000000A6 /* AlarmSilencePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000A5 /* AlarmSilencePolicy.swift */; };
+		A11C0DE2E10A0000000000A8 /* RheosWatchMessages.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000A7 /* RheosWatchMessages.swift */; };
+		A11C0DE2E10A0000000000B7 /* WatchFaceReading.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000B5 /* WatchFaceReading.swift */; };
+		A11C0DE2E10A0000000000B8 /* WatchFaceReading.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000B5 /* WatchFaceReading.swift */; };
+		A11C0DE2E10A0000000000B9 /* WatchFacePublisher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000BA /* WatchFacePublisher.swift */; };
+		B1E05A7C0000000000000E12 /* RheosWatchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1E05A7C0000000000000E11 /* RheosWatchView.swift */; };
+		A11C0DE2E10A0000000000C6 /* RheosCareNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000C5 /* RheosCareNotifier.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -2074,6 +2115,48 @@
 		FE66D16A291F74F8005D6F77 /* Bundle+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Bundle+Extensions.swift"; sourceTree = "<group>"; };
 		7A11AC0DE000000000000130 /* UIHostingController+KeyboardSafeArea.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "UIHostingController+KeyboardSafeArea.swift"; sourceTree = "<group>"; };
 		FEFFA7A12929FE49007B8193 /* UIDevice+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "UIDevice+Extensions.swift"; sourceTree = "<group>"; };
+		37C0A6DE17EB4728BDB8A5DE /* RheosMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosMode.swift; sourceTree = "<group>"; };
+		A0342F6D4C4045A8B3D5ABCE /* RheosModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosModels.swift; sourceTree = "<group>"; };
+		42BBB38319A44AF9AE4891A2 /* RheosStats.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosStats.swift; sourceTree = "<group>"; };
+		2D5CE2C350AB4008930D4C36 /* RheosAnalysis.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosAnalysis.swift; sourceTree = "<group>"; };
+		90BCE2C4F6594E37A1C88650 /* RheosApplicationPoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosApplicationPoint.swift; sourceTree = "<group>"; };
+		8E6A1C492B2A4D8CAAFE74F9 /* RheosLearning.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosLearning.swift; sourceTree = "<group>"; };
+		8D086641C5554270A7A474B3 /* RheosStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosStore.swift; sourceTree = "<group>"; };
+		108E03FBDA154ED298D61419 /* RheosModeStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosModeStore.swift; sourceTree = "<group>"; };
+		E39D2483EDC54702A42C54E1 /* RheosProfileHook.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosProfileHook.swift; sourceTree = "<group>"; };
+		458A1B7BD825442297E8E484 /* RheosSnapshotReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosSnapshotReader.swift; sourceTree = "<group>"; };
+		5D8EC68B72E24BAEBBCDA13C /* RheosHealthReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosHealthReader.swift; sourceTree = "<group>"; };
+		0A3D81D486B6425A88EC9523 /* RheosCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosCoordinator.swift; sourceTree = "<group>"; };
+		E79C07F8A0044FFD8420C72A /* RheosModeBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosModeBanner.swift; sourceTree = "<group>"; };
+		A007A14147F146A09D7DA662 /* RheosSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosSettingsView.swift; sourceTree = "<group>"; };
+		65D7541F741D42619DFAC7BD /* RheosSuggestionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosSuggestionsView.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000C7 /* RheosBodyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosBodyView.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000C9 /* RheosBodyRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosBodyRecord.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000D3 /* RheosCoreModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosCoreModel.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000DB /* RheosCarePlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosCarePlan.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000E5 /* RheosDayPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosDayPlan.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000E7 /* RheosActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosActivity.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000DD /* RheosHomeSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosHomeSheet.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000D5 /* RheosShadow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosShadow.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000D7 /* RheosCoreMLAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosCoreMLAdapter.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000D9 /* RheosMealAssist.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosMealAssist.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000A1 /* RheosMigration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosMigration.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000B1 /* RheosICloudBackup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosICloudBackup.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000C1 /* RheosContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosContext.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000D1 /* RheosFit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosFit.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000E1 /* RheosChatParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosChatParser.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000F1 /* RheosTargetLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosTargetLoader.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000F3 /* RheosChatEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosChatEngine.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000C3 /* RheosCare.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosCare.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000A5 /* AlarmSilencePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlarmSilencePolicy.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000A7 /* RheosWatchMessages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosWatchMessages.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000B5 /* WatchFaceReading.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchFaceReading.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000BA /* WatchFacePublisher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchFacePublisher.swift; sourceTree = "<group>"; };
+		C0E05A7C0000000000000F21 /* Watch.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Watch.entitlements; sourceTree = "<group>"; };
+		C0E05A7C0000000000000F22 /* Complication.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Complication.entitlements; sourceTree = "<group>"; };
+		C0E05A7C0000000000000F23 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B1E05A7C0000000000000E11 /* RheosWatchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosWatchView.swift; sourceTree = "<group>"; };
+		A11C0DE2E10A0000000000C5 /* RheosCareNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosCareNotifier.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -2160,6 +2243,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C0E05A7C0000000000000F24 /* WidgetKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2481,6 +2565,7 @@
 				38E98A1A25F52C9300C0CED0 /* Logger */,
 				388E5A5925B6F0250019842D /* Models */,
 				3811DE0325C9D31700A708ED /* Modules */,
+				E1281F827AE9409CB9028F2C /* Rheos */,
 				3811DE1425C9D40400A708ED /* Router */,
 				3811DE9125C9D88200A708ED /* Services */,
 				3883582E25EEAFC000E024B2 /* Views */,
@@ -3937,6 +4022,7 @@
 				DD6F63CB2D27F606007D94CF /* TreatmentMenuView.swift */,
 				BDA25F1B2D26BD0300035F34 /* TrendShape.swift */,
 				BDFF7A842D25F97D0016C40C /* TrioMainWatchView.swift */,
+				B1E05A7C0000000000000E11 /* RheosWatchView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -3974,6 +4060,9 @@
 			isa = PBXGroup;
 			children = (
 				DDFF204D2DB2C00B00AB8A96 /* WatchStateSnapshot.swift */,
+				A11C0DE2E10A0000000000BA /* WatchFacePublisher.swift */,
+				C0E05A7C0000000000000F21 /* Watch.entitlements */,
+				C0E05A7C0000000000000F23 /* Info.plist */,
 				DDFF20492DB29EF500AB8A96 /* WatchLogger.swift */,
 				BDA25EE52D260D5800035F34 /* WatchState.swift */,
 				BDAE3FFF2D372BA8009C12B1 /* WatchState+Requests.swift */,
@@ -4194,6 +4283,7 @@
 				DD09D6412D2B553A000D82C9 /* Assets.xcassets */,
 				DD09D6422D2B553A000D82C9 /* Info.plist */,
 				DD09D6432D2B553A000D82C9 /* TrioWatchComplication.swift */,
+				C0E05A7C0000000000000F22 /* Complication.entitlements */,
 			);
 			path = "Trio Watch Complication";
 			sourceTree = "<group>";
@@ -4805,6 +4895,67 @@
 			path = QuickPickTreatments;
 			sourceTree = "<group>";
 		};
+
+		E1281F827AE9409CB9028F2C /* Rheos */ = {
+			isa = PBXGroup;
+			children = (
+				732D3F8C4CBA43FF9F970DE2 /* Core */,
+				6ECCC4031BB64F749F85571B /* Integration */,
+			);
+			path = Rheos;
+			sourceTree = "<group>";
+		};
+		732D3F8C4CBA43FF9F970DE2 /* Core */ = {
+			isa = PBXGroup;
+			children = (
+				37C0A6DE17EB4728BDB8A5DE /* RheosMode.swift */,
+				A0342F6D4C4045A8B3D5ABCE /* RheosModels.swift */,
+				42BBB38319A44AF9AE4891A2 /* RheosStats.swift */,
+				2D5CE2C350AB4008930D4C36 /* RheosAnalysis.swift */,
+				90BCE2C4F6594E37A1C88650 /* RheosApplicationPoint.swift */,
+				8E6A1C492B2A4D8CAAFE74F9 /* RheosLearning.swift */,
+				8D086641C5554270A7A474B3 /* RheosStore.swift */,
+				A11C0DE2E10A0000000000A1 /* RheosMigration.swift */,
+				A11C0DE2E10A0000000000C1 /* RheosContext.swift */,
+				A11C0DE2E10A0000000000E1 /* RheosChatParser.swift */,
+				A11C0DE2E10A0000000000D1 /* RheosFit.swift */,
+				A11C0DE2E10A0000000000C3 /* RheosCare.swift */,
+				A11C0DE2E10A0000000000A5 /* AlarmSilencePolicy.swift */,
+				A11C0DE2E10A0000000000A7 /* RheosWatchMessages.swift */,
+				A11C0DE2E10A0000000000B5 /* WatchFaceReading.swift */,
+				A11C0DE2E10A0000000000C9 /* RheosBodyRecord.swift */,
+				A11C0DE2E10A0000000000D3 /* RheosCoreModel.swift */,
+				A11C0DE2E10A0000000000DB /* RheosCarePlan.swift */,
+				A11C0DE2E10A0000000000E5 /* RheosDayPlan.swift */,
+				A11C0DE2E10A0000000000E7 /* RheosActivity.swift */,
+				A11C0DE2E10A0000000000D5 /* RheosShadow.swift */,
+			);
+			path = Core;
+			sourceTree = "<group>";
+		};
+		6ECCC4031BB64F749F85571B /* Integration */ = {
+			isa = PBXGroup;
+			children = (
+				108E03FBDA154ED298D61419 /* RheosModeStore.swift */,
+				A11C0DE2E10A0000000000B1 /* RheosICloudBackup.swift */,
+				A11C0DE2E10A0000000000F3 /* RheosChatEngine.swift */,
+				A11C0DE2E10A0000000000C5 /* RheosCareNotifier.swift */,
+				A11C0DE2E10A0000000000F1 /* RheosTargetLoader.swift */,
+				E39D2483EDC54702A42C54E1 /* RheosProfileHook.swift */,
+				458A1B7BD825442297E8E484 /* RheosSnapshotReader.swift */,
+				5D8EC68B72E24BAEBBCDA13C /* RheosHealthReader.swift */,
+				0A3D81D486B6425A88EC9523 /* RheosCoordinator.swift */,
+				E79C07F8A0044FFD8420C72A /* RheosModeBanner.swift */,
+				A007A14147F146A09D7DA662 /* RheosSettingsView.swift */,
+				A11C0DE2E10A0000000000C7 /* RheosBodyView.swift */,
+				A11C0DE2E10A0000000000D7 /* RheosCoreMLAdapter.swift */,
+				A11C0DE2E10A0000000000D9 /* RheosMealAssist.swift */,
+				A11C0DE2E10A0000000000DD /* RheosHomeSheet.swift */,
+				65D7541F741D42619DFAC7BD /* RheosSuggestionsView.swift */,
+			);
+			path = Integration;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -5210,6 +5361,42 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				338B388F5A9F4DBAA9973AB4 /* RheosMode.swift in Sources */,
+				85F470D9BC744E6F985366CE /* RheosModels.swift in Sources */,
+				30A3EADF37444326853D7EB2 /* RheosStats.swift in Sources */,
+				488CD0C0BDE7469F95A96647 /* RheosAnalysis.swift in Sources */,
+				6EBBAC1ACCB44DC5860BB4E3 /* RheosApplicationPoint.swift in Sources */,
+				D8A61BD063774ACA8C979A02 /* RheosLearning.swift in Sources */,
+				3BF53AD00262417FBF11B7CF /* RheosStore.swift in Sources */,
+				A11C0DE2E10A0000000000A2 /* RheosMigration.swift in Sources */,
+				A11C0DE2E10A0000000000C2 /* RheosContext.swift in Sources */,
+				A11C0DE2E10A0000000000F4 /* RheosChatEngine.swift in Sources */,
+				A11C0DE2E10A0000000000F2 /* RheosTargetLoader.swift in Sources */,
+				A11C0DE2E10A0000000000E2 /* RheosChatParser.swift in Sources */,
+				A11C0DE2E10A0000000000D2 /* RheosFit.swift in Sources */,
+				A11C0DE2E10A0000000000C6 /* RheosCareNotifier.swift in Sources */,
+				A11C0DE2E10A0000000000C4 /* RheosCare.swift in Sources */,
+				A11C0DE2E10A0000000000A6 /* AlarmSilencePolicy.swift in Sources */,
+				A11C0DE2E10A0000000000A8 /* RheosWatchMessages.swift in Sources */,
+				A11C0DE2E10A0000000000B2 /* RheosICloudBackup.swift in Sources */,
+				EE984A517A864F68ACC3ED03 /* RheosModeStore.swift in Sources */,
+				4CC7746554C34B05A963C4C5 /* RheosProfileHook.swift in Sources */,
+				C4FB715478F24C0D9FB52CD1 /* RheosSnapshotReader.swift in Sources */,
+				9D34434D0DFD41AEB0BB01EB /* RheosHealthReader.swift in Sources */,
+				3CEE681F45DB401D8FDB8A78 /* RheosCoordinator.swift in Sources */,
+				B034C5EC50AA4D07AF064249 /* RheosModeBanner.swift in Sources */,
+				DA7EAAD506FE4672A6495B09 /* RheosSettingsView.swift in Sources */,
+				6A77E1804C6D4C8DB1976EC1 /* RheosSuggestionsView.swift in Sources */,
+				A11C0DE2E10A0000000000C8 /* RheosBodyView.swift in Sources */,
+				A11C0DE2E10A0000000000CA /* RheosBodyRecord.swift in Sources */,
+				A11C0DE2E10A0000000000D4 /* RheosCoreModel.swift in Sources */,
+				A11C0DE2E10A0000000000DC /* RheosCarePlan.swift in Sources */,
+				A11C0DE2E10A0000000000E6 /* RheosDayPlan.swift in Sources */,
+				A11C0DE2E10A0000000000E8 /* RheosActivity.swift in Sources */,
+				A11C0DE2E10A0000000000DE /* RheosHomeSheet.swift in Sources */,
+				A11C0DE2E10A0000000000D6 /* RheosShadow.swift in Sources */,
+				A11C0DE2E10A0000000000D8 /* RheosCoreMLAdapter.swift in Sources */,
+				A11C0DE2E10A0000000000DA /* RheosMealAssist.swift in Sources */,
 				DD5DC9F12CF3D97C00AB8703 /* AdjustmentsStateModel+Overrides.swift in Sources */,
 				3811DE2325C9D48300A708ED /* MainDataFlow.swift in Sources */,
 				C2A0A42F2CE03131003B98E8 /* ConstantValues.swift in Sources */,
@@ -6075,6 +6262,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				DD09D6462D2B553A000D82C9 /* TrioWatchComplication.swift in Sources */,
+				A11C0DE2E10A0000000000B8 /* WatchFaceReading.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -6084,6 +6272,9 @@
 			files = (
 				BDA25F222D26D62800035F34 /* BolusInputView.swift in Sources */,
 				BDFF7A882D25F97D0016C40C /* TrioMainWatchView.swift in Sources */,
+				B1E05A7C0000000000000E12 /* RheosWatchView.swift in Sources */,
+				A11C0DE2E10A0000000000B7 /* WatchFaceReading.swift in Sources */,
+				A11C0DE2E10A0000000000B9 /* WatchFacePublisher.swift in Sources */,
 				BDA25F202D26D5FE00035F34 /* CarbsInputView.swift in Sources */,
 				BDA25F1C2D26BD0700035F34 /* TrendShape.swift in Sources */,
 				BDFF7A892D25F97D0016C40C /* TrioWatchApp.swift in Sources */,
@@ -6482,10 +6673,12 @@
 		BD8207D02D2B42E80023339D /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APP_GROUP_ID = "$(TRIO_APP_GROUP_ID)";
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_ENTITLEMENTS = "Trio Watch Complication/Complication.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -6519,10 +6712,12 @@
 		BD8207D12D2B42E80023339D /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APP_GROUP_ID = "$(TRIO_APP_GROUP_ID)";
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_ENTITLEMENTS = "Trio Watch Complication/Complication.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -6555,10 +6750,12 @@
 		BDFF79A12D25AA890016C40C /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APP_GROUP_ID = "$(TRIO_APP_GROUP_ID)";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_ENTITLEMENTS = "Trio Watch App Extension/Watch.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -6568,6 +6765,7 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Trio Watch App Extension/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "$(APP_DISPLAY_NAME)";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = "$(BUNDLE_IDENTIFIER)";
@@ -6592,10 +6790,12 @@
 		BDFF79A22D25AA890016C40C /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APP_GROUP_ID = "$(TRIO_APP_GROUP_ID)";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_ENTITLEMENTS = "Trio Watch App Extension/Watch.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -6605,6 +6805,7 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Trio Watch App Extension/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "$(APP_DISPLAY_NAME)";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = "$(BUNDLE_IDENTIFIER)";

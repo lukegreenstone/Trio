@@ -29,6 +29,12 @@ extension AddCarbs {
             maxCarbs = settings.settings.maxCarbs
             maxFat = settings.settings.maxFat
             maxProtein = settings.settings.maxProtein
+            if let draft = RheosMealDraftStore.take() {
+                carbs = Decimal(draft.carbs)
+                fat = Decimal(draft.fat)
+                protein = Decimal(draft.protein)
+                if note.isEmpty { note = draft.note }
+            }
         }
 
         func add() {

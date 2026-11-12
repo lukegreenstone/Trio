@@ -44,5 +44,7 @@ final class ServiceAssembly: Assembly {
             .inObjectScope(.container)
         container.register(TelemetryAttestor.self) { r in TelemetryAttestor(resolver: r) }
             .inObjectScope(.container)
+        container.register(RheosCoordinator.self) { r in RheosCoordinator(resolver: r) }
+            .inObjectScope(.container)
     }
 }

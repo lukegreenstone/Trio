@@ -24,6 +24,9 @@ protocol FetchGlucoseManager: SourceInfoProvider {
     var settingsManager: SettingsManager! { get }
     var shouldSyncToRemoteService: Bool { get }
     var cgmDisplayState: CurrentValueSubject<CgmDisplayState?, Never> { get }
+    /// Newest CGM sample for the home bubble, including readings the 3.5-minute
+    /// store filter drops. The loop still reads only stored glucose.
+    var latestLiveGlucose: CurrentValueSubject<BloodGlucose?, Never> { get }
     var cgmProgressHighlight: CurrentValueSubject<DeviceLifecycleProgress?, Never> { get }
     /// Routes CGMManager-issued alerts (sensor failure, signal loss, expiry,
     /// etc.) into the unified `TrioAlertManager` pipeline. Read by
@@ -160,6 +163,7 @@ final class BaseFetchGlucoseManager: FetchGlucoseManager, Injectable {
     }
 
     let cgmDisplayState = CurrentValueSubject<CgmDisplayState?, Never>(nil)
+    let latestLiveGlucose = CurrentValueSubject<BloodGlucose?, Never>(nil)
     let cgmProgressHighlight = CurrentValueSubject<DeviceLifecycleProgress?, Never>(nil)
     private var cgmStatusSubscriptions = Set<AnyCancellable>()
 
@@ -315,6 +319,12 @@ final class BaseFetchGlucoseManager: FetchGlucoseManager, Injectable {
         guard newGlucose.isNotEmpty else {
             endBackgroundTaskSafely(&backgroundTaskID, taskName: "Glucose Store and Heartbeat Decision")
             return
+        }
+
+        // The home bubble shows this even when the store keeps only one sample
+        // every 3.5 minutes. Nothing here is written for the algorithm.
+        if let newest = newGlucose.max(by: { $0.dateString < $1.dateString }) {
+            latestLiveGlucose.send(newest)
         }
 
         let backfillGlucose = newGlucose.filter { $0.dateString <= syncDate }

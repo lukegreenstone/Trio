@@ -33,7 +33,7 @@ protocol HealthKitManager {
 public enum AppleHealthConfig {
     // unwraped HKObjects
     static var writePermissions: Set<HKSampleType> {
-        Set([healthBGObject, healthCarbObject, healthFatObject, healthProteinObject, healthInsulinObject].compactMap { $0 }) }
+        Set([healthBGObject, healthCarbObject, healthFatObject, healthProteinObject, healthInsulinObject, healthEnergyObject].compactMap { $0 }) }
 
     // link to object in HealthKit
     static let healthBGObject = HKObjectType.quantityType(forIdentifier: .bloodGlucose)
@@ -41,6 +41,7 @@ public enum AppleHealthConfig {
     static let healthFatObject = HKObjectType.quantityType(forIdentifier: .dietaryFatTotal)
     static let healthProteinObject = HKObjectType.quantityType(forIdentifier: .dietaryProtein)
     static let healthInsulinObject = HKObjectType.quantityType(forIdentifier: .insulinDelivery)
+    static let healthEnergyObject = HKObjectType.quantityType(forIdentifier: .dietaryEnergyConsumed)
 
     // MetaDataKey of Trio data in HealthStore
     static let TrioInsulinType = "Trio Insulin Type"
@@ -336,6 +337,26 @@ final class BaseHealthKitManager: HealthKitManager, Injectable {
                 }
 
                 // Protein Sample (only if value is greater than 0)
+                if let energyType = AppleHealthConfig.healthEnergyObject,
+                   checkWriteToHealthPermissions(objectTypeToHealthStore: energyType) {
+                    let fatGrams = Double(allSamples.fat ?? 0)
+                    let proteinGrams = Double(allSamples.protein ?? 0)
+                    let kcal = 4 * Double(carbValue) + 9 * fatGrams + 4 * proteinGrams
+                    if kcal > 0 {
+                        samples.append(HKQuantitySample(
+                            type: energyType,
+                            quantity: HKQuantity(unit: .kilocalorie(), doubleValue: kcal),
+                            start: startDate,
+                            end: startDate,
+                            metadata: [
+                                HKMetadataKeyExternalUUID: fpuID,
+                                HKMetadataKeySyncIdentifier: fpuID + "-kcal",
+                                HKMetadataKeySyncVersion: 1
+                            ]
+                        ))
+                    }
+                }
+
                 if let proteinValue = allSamples.protein, proteinValue > 0 {
                     let proteinSample = HKQuantitySample(
                         type: proteinSampleType,

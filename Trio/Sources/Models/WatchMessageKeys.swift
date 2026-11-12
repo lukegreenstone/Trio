@@ -54,6 +54,18 @@ enum WatchMessageKeys {
 
     // Notification Actions
     static let snoozeDuration = "snoozeDuration"
+    /// `vibrateOnly` or `fullySilent`. Absent means the older full mute of non-urgent alarms.
+    static let snoozeStyle = "snoozeStyle"
+
+    // Rheos. These notes never carry a bolus amount. Bolus stays on `bolus`.
+    static let rheosMode = "rheosMode"
+    static let rheosSuggestions = "rheosSuggestions"
+    static let rheosDecision = "rheosDecision"
+    static let rheosKind = "rheosKind"
+    static let rheosNote = "rheosNote"
+    static let rheosSuggestionID = "rheosSuggestionID"
+    static let rheosChat = "rheosChat"
+    static let rheosChatReply = "rheosChatReply"
 
     // Forecast
     static let showForecastWatch = "showForecastWatch"

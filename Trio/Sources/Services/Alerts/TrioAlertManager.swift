@@ -1,3 +1,4 @@
+import AudioToolbox
 import Combine
 import Foundation
 import LoopKit
@@ -230,7 +231,9 @@ final class BaseTrioAlertManager: TrioAlertManager, Injectable {
             guard let tier = DeviceAlertSeverity(level: entry.interruptionLevel) else { return }
 
             // Per-tier snooze. Critical tier ignores snooze.
-            if tier != .critical, DeviceAlertsStore.shared.isTierSnoozed(tier, at: fireDate) {
+            // An urgent low, or a glucose reading under 55 mg/dL, is not dropped here.
+            let floor = Self.urgentFloor(for: alert)
+            if tier != .critical, DeviceAlertsStore.shared.isTierSnoozed(tier, at: fireDate), !floor {
                 debug(.service, "TrioAlertManager dropped \(alert.identifier.value): tier \(tier) snoozed")
                 return
             }
@@ -248,12 +251,24 @@ final class BaseTrioAlertManager: TrioAlertManager, Injectable {
             effective = alert
         }
 
-        // Critical alerts pierce the snooze/mute window. Everything else is
-        // suppressed entirely while muted (no modal, no UN sound, no critical
-        // audio fallback).
-        if effective.interruptionLevel != .critical, muter.shouldMute(at: fireDate) {
+        // Silence comes from the existing snooze window.
+        // Fully silent hides ordinary alarms. Vibrate only keeps the banner and
+        // asks the phone to vibrate without a tone. An urgent low under 55 mg/dL,
+        // and any critical alert, still sounds.
+        let decision = AlarmSilencePolicy.delivery(
+            snoozed: muter.shouldMute(at: fireDate),
+            style: AlarmSilenceStore.current(),
+            isUrgentLow: GlucoseAlertType(slug: effective.identifier.alertIdentifier) == .urgentLow,
+            glucoseMgdl: AlarmSilenceContext.currentMgdl,
+            isCritical: effective.interruptionLevel == .critical
+        )
+        let tone: Bool
+        switch decision {
+        case .suppress:
             debug(.service, "TrioAlertManager muted \(effective.identifier.value) (snooze window active)")
             return
+        case let .deliver(keepTone):
+            tone = keepTone
         }
         guard throttler.shouldDeliver(effective) else {
             debug(.service, "TrioAlertManager throttled \(effective.identifier.value)")
@@ -263,7 +278,10 @@ final class BaseTrioAlertManager: TrioAlertManager, Injectable {
             self.liveAlerts[effective.identifier] = effective
         }
         recordIssued(effective)
-        let muted = muter.shouldMute(at: now)
+        let muted = !tone
+        if !tone, case .immediate = effective.trigger {
+            AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+        }
         modalScheduler.schedule(effective)
         // AlarmKit sounds critical alerts itself; posting the notification with
         // a sound too would play the tone twice, at once.
@@ -421,12 +439,12 @@ final class BaseTrioAlertManager: TrioAlertManager, Injectable {
             let center = UNUserNotificationCenter.current()
             center.getPendingNotificationRequests { requests in
                 let ids = requests
-                    .filter { $0.content.interruptionLevel != .critical }
+                    .filter { Self.shouldClearDuringSilence($0.content) }
                     .map(\.identifier)
                 if !ids.isEmpty { center.removePendingNotificationRequests(withIdentifiers: ids) }
                 center.getDeliveredNotifications { delivered in
                     let ids = delivered
-                        .filter { $0.request.content.interruptionLevel != .critical }
+                        .filter { Self.shouldClearDuringSilence($0.request.content) }
                         .map(\.request.identifier)
                     if !ids.isEmpty { center.removeDeliveredNotifications(withIdentifiers: ids) }
                     continuation.resume()
@@ -439,18 +457,41 @@ final class BaseTrioAlertManager: TrioAlertManager, Injectable {
         let center = UNUserNotificationCenter.current()
         center.getPendingNotificationRequests { requests in
             let ids = requests
-                .filter { $0.content.interruptionLevel != .critical }
+                .filter { Self.shouldClearDuringSilence($0.content) }
                 .map(\.identifier)
             guard !ids.isEmpty else { return }
             center.removePendingNotificationRequests(withIdentifiers: ids)
         }
         center.getDeliveredNotifications { delivered in
             let ids = delivered
-                .filter { $0.request.content.interruptionLevel != .critical }
+                .filter { Self.shouldClearDuringSilence($0.request.content) }
                 .map(\.request.identifier)
             guard !ids.isEmpty else { return }
             center.removeDeliveredNotifications(withIdentifiers: ids)
         }
+    }
+
+    /// Critical alerts stay. Low and urgent-low notifications stay too, because a
+    /// reading under 55 mg/dL may be a `.low` alarm and the notification does not
+    /// carry the number. The next evaluation would not re-issue an alarm that is
+    /// already marked firing.
+    private static func shouldClearDuringSilence(_ content: UNNotificationContent) -> Bool {
+        if content.interruptionLevel == .critical { return false }
+        let slug = content.userInfo[AlertUserInfoKey.alertIdentifier.rawValue] as? String ?? ""
+        switch GlucoseAlertType(slug: slug) {
+        case .urgentLow,
+             .low:
+            return false
+        default:
+            return true
+        }
+    }
+
+    private static func urgentFloor(for alert: Alert) -> Bool {
+        AlarmSilencePolicy.isUrgentFloor(
+            isUrgentLow: GlucoseAlertType(slug: alert.identifier.alertIdentifier) == .urgentLow,
+            glucoseMgdl: AlarmSilenceContext.currentMgdl
+        )
     }
 
     /// Persisted under the same key UN reads, so a force-quit + relaunch
@@ -475,6 +516,7 @@ final class BaseTrioAlertManager: TrioAlertManager, Injectable {
             modalScheduler.clearNonCriticalBanners()
         } else {
             muter.unmute()
+            AlarmSilenceStore.set(nil)
         }
 
         broadcaster.notify(SnoozeObserver.self, on: .main) { (observer: SnoozeObserver) in

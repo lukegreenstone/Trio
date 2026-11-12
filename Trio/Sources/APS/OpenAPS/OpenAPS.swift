@@ -570,13 +570,27 @@ final class OpenAPS {
             let carbRatios = try JSONBridge.carbRatios(from: carbRatios)
             let tempTargets = try JSONBridge.tempTargets(from: tempTargets)
 
+            // Rheos may scale copies of basal, ISF and carb ratio here, and nowhere else.
+            // SMB, UAM, max IOB, max basal, max bolus and autosens limits stay on
+            // adjustedPreferences and pumpSettings, which are not modified.
+            // Aus and Schatten return the original schedules. See Rheos/RHEOS_SAFETY.md.
+            let rheosSchedules = RheosProfileHook.applying(
+                basal: basalProfile,
+                isf: insulinSensitivities,
+                carbRatios: carbRatios,
+                maxBasal: pumpSettings.maxBasal,
+                autosensMin: adjustedPreferences.autosensMin,
+                autosensMax: adjustedPreferences.autosensMax,
+                now: clock
+            )
+
             let pumpProfile = try ProfileGenerator.generate(
                 pumpSettings: pumpSettings,
                 bgTargets: bgTargets,
-                basalProfile: basalProfile,
-                isf: insulinSensitivities,
+                basalProfile: rheosSchedules.basal,
+                isf: rheosSchedules.isf,
                 preferences: adjustedPreferences,
-                carbRatios: carbRatios,
+                carbRatios: rheosSchedules.carbRatios,
                 tempTargets: tempTargets,
                 clock: clock
             )
@@ -584,10 +598,10 @@ final class OpenAPS {
             let profile = try ProfileGenerator.generate(
                 pumpSettings: pumpSettings,
                 bgTargets: bgTargets,
-                basalProfile: basalProfile,
-                isf: insulinSensitivities,
+                basalProfile: rheosSchedules.basal,
+                isf: rheosSchedules.isf,
                 preferences: adjustedPreferences,
-                carbRatios: carbRatios,
+                carbRatios: rheosSchedules.carbRatios,
                 tempTargets: tempTargets,
                 clock: clock
             )

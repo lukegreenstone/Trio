@@ -247,6 +247,72 @@ extension WatchState {
         }
     }
 
+    /// Asks the phone to silence glucose alarms. Urgent low under 55 mg/dL still sounds there.
+    func sendAlarmSilence(minutes: Int, style: String) {
+        sendToPhone(
+            [
+                WatchMessageKeys.snoozeDuration: minutes,
+                WatchMessageKeys.snoozeStyle: style
+            ],
+            log: "⌚️ Silence \(minutes) min (\(style))"
+        )
+        if minutes <= 0 {
+            silenceUntil = nil
+        } else {
+            silenceUntil = Date().addingTimeInterval(TimeInterval(minutes * 60))
+        }
+    }
+
+    /// Records a Rheos note on the phone. This is not a bolus.
+    func sendRheosConfirm(kind: String, note: String, suggestionID: String? = nil) {
+        var message: [String: Any] = [
+            WatchMessageKeys.rheosDecision: "confirm",
+            WatchMessageKeys.rheosKind: kind,
+            WatchMessageKeys.rheosNote: note
+        ]
+        if let suggestionID {
+            message[WatchMessageKeys.rheosSuggestionID] = suggestionID
+        }
+        sendToPhone(message, log: "⌚️ Rheos confirm \(kind)")
+    }
+
+    func sendRheosReject(kind: String, note: String, suggestionID: String) {
+        sendToPhone(
+            [
+                WatchMessageKeys.rheosDecision: "reject",
+                WatchMessageKeys.rheosKind: kind,
+                WatchMessageKeys.rheosNote: note,
+                WatchMessageKeys.rheosSuggestionID: suggestionID
+            ],
+            log: "⌚️ Rheos reject \(kind)"
+        )
+    }
+
+    func sendRheosChat(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        sendToPhone(
+            [WatchMessageKeys.rheosChat: String(trimmed.prefix(240))],
+            log: "⌚️ Rheos chat"
+        )
+    }
+
+    /// Same delivery Trio already uses for a watch snooze: immediate when the
+    /// phone is reachable, queued transfer when it is nearby but not in front.
+    private func sendToPhone(_ message: [String: Any], log: String) {
+        guard WCSession.isSupported() else { return }
+        let active = session ?? WCSession.default
+        Task { await WatchLogger.shared.log(log) }
+        if active.isReachable, active.activationState == .activated {
+            active.sendMessage(message, replyHandler: nil) { _ in
+                active.transferUserInfo(message)
+            }
+        } else {
+            active.transferUserInfo(message)
+        }
+        showCommsAnimation = true
+    }
+
     func requestWatchStateUpdate() {
         guard let session = session else {
             Task {

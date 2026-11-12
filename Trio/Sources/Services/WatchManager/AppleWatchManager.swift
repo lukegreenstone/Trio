@@ -27,6 +27,7 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
     @Injected() private var bolusCalculationManager: BolusCalculationManager!
     @Injected() private var iobService: IOBService!
     @Injected() private var notificationsManager: UserNotificationsManager!
+    @Injected() private var rheosCoordinator: RheosCoordinator!
 
     private var units: GlucoseUnits = .mgdL
     private var glucoseColorScheme: GlucoseColorScheme = .staticColor
@@ -549,6 +550,18 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
             WatchMessageKeys.isForecastCone: state.isForecastCone
         ]
 
+        let rheos = rheosCoordinator.watchSnapshot()
+        dictionary[WatchMessageKeys.rheosMode] = rheos.mode
+        dictionary[WatchMessageKeys.rheosChatReply] = rheos.chatReply
+        dictionary[WatchMessageKeys.rheosSuggestions] = rheos.suggestions.map { line in
+            [
+                "id": line.id,
+                "kind": line.kind,
+                "title": line.title,
+                "note": line.note
+            ]
+        }
+
         var forecastData: [String: Any] = [
             WatchMessageKeys.forecastConeMin: state.forecastConeMin,
             WatchMessageKeys.forecastConeMax: state.forecastConeMax,
@@ -665,9 +678,7 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
                 return
             }
 
-            if let snoozeMinutes = message[WatchMessageKeys.snoozeDuration] as? Int {
-                debug(.watchManager, "📱 Received snooze request from watch: \(snoozeMinutes) minutes")
-                await self.notificationsManager.applySnooze(for: TimeInterval(snoozeMinutes * 60))
+            if await self.consumeCompanionCommand(message) {
                 return
             } else if let bolusAmount = message[WatchMessageKeys.bolus] as? Double,
                       message[WatchMessageKeys.carbs] == nil,
@@ -788,13 +799,82 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
             SimpleLogReporter.appendToWatchLog(logs)
         }
 
-        if let snoozeMinutes = userInfo[WatchMessageKeys.snoozeDuration] as? Int {
-            debug(.watchManager, "📱 Received snooze userInfo from watch: \(snoozeMinutes) minutes")
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                await self.notificationsManager.applySnooze(for: TimeInterval(snoozeMinutes * 60))
-            }
+        Task { @MainActor [weak self] in
+            await self?.consumeCompanionCommand(userInfo)
         }
+    }
+
+    /// Snooze and Rheos notes from the watch. Bolus and carb messages are left
+    /// for the existing treatment handlers and are never turned into a note.
+    @MainActor private func consumeCompanionCommand(_ message: [String: Any]) async -> Bool {
+        let fields = RheosWatchFields(
+            snoozeMinutes: Self.intValue(message, WatchMessageKeys.snoozeDuration),
+            snoozeStyle: message[WatchMessageKeys.snoozeStyle] as? String,
+            decision: message[WatchMessageKeys.rheosDecision] as? String,
+            kind: message[WatchMessageKeys.rheosKind] as? String,
+            note: message[WatchMessageKeys.rheosNote] as? String,
+            suggestionID: message[WatchMessageKeys.rheosSuggestionID] as? String,
+            chat: message[WatchMessageKeys.rheosChat] as? String,
+            containsBolusOrCarbs: message[WatchMessageKeys.bolus] != nil || message[WatchMessageKeys.carbs] != nil
+        )
+        guard let action = RheosWatchMessages.action(fields) else { return false }
+        switch action {
+        case let .silence(minutes, style):
+            debug(.watchManager, "📱 Watch silence \(minutes) min, style \(style?.rawValue ?? "legacy")")
+            if minutes <= 0 {
+                AlarmSilenceStore.set(nil)
+                await notificationsManager.applySnooze(for: 0)
+            } else {
+                AlarmSilenceStore.set(style)
+                await notificationsManager.applySnooze(for: TimeInterval(minutes * 60))
+            }
+            sendAcknowledgment(
+                toWatch: true,
+                message: minutes <= 0 ? "Alarms on" : "Alarms silenced",
+                ackCode: .genericSuccess
+            )
+        case let .confirm(kind, note, suggestionID):
+            let text = await rheosCoordinator.confirmKind(kind: kind, note: note, suggestionID: suggestionID)
+            sendAcknowledgment(toWatch: true, message: text, ackCode: .genericSuccess)
+        case let .reject(kind, note, suggestionID):
+            let text = rheosCoordinator.reject(kind: kind, note: note, suggestionID: suggestionID)
+            sendAcknowledgment(toWatch: true, message: text, ackCode: .genericSuccess)
+        case let .chat(question):
+            let reply = await rheosCoordinator.replyFromWatch(question: question)
+            sendAcknowledgment(toWatch: true, message: reply, ackCode: .genericSuccess)
+        }
+        pushRheosSnapshot()
+        return true
+    }
+
+    private func pushRheosSnapshot() {
+        guard let session, session.activationState == .activated else { return }
+        let snapshot = rheosCoordinator.watchSnapshot()
+        let message: [String: Any] = [
+            WatchMessageKeys.rheosMode: snapshot.mode,
+            WatchMessageKeys.rheosChatReply: snapshot.chatReply,
+            WatchMessageKeys.rheosSuggestions: snapshot.suggestions.map { line in
+                [
+                    "id": line.id,
+                    "kind": line.kind,
+                    "title": line.title,
+                    "note": line.note
+                ]
+            }
+        ]
+        if session.isReachable {
+            session.sendMessage(message, replyHandler: nil) { _ in
+                session.transferUserInfo(message)
+            }
+        } else {
+            session.transferUserInfo(message)
+        }
+    }
+
+    private static func intValue(_ message: [String: Any], _ key: String) -> Int? {
+        if let value = message[key] as? Int { return value }
+        if let value = message[key] as? NSNumber { return value.intValue }
+        return nil
     }
 
     #if os(iOS)
