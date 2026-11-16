@@ -21,6 +21,24 @@ enum HandyFreiPhone {
 
     static func prepare(fingerprint: HandyFrei.Fingerprint, snapshot: HandyFrei.Snapshot) -> HandyFrei.Session {
         HandyFrei.setEnabled(HandyFrei.isEnabled())
+        if let refusal = snapshot.refusal {
+            var session = HandyFrei.idle(fingerprint: fingerprint)
+            session.enabled = HandyFrei.isEnabled()
+            session.step = .failed(refusal)
+            session.note = refusal
+            session.phoneOwnsRadio = true
+            session.watchOwnsRadio = false
+            session.phoneLoopPaused = false
+            session.keysDeleted = false
+            lock.lock()
+            pending = session
+            logImported = false
+            lastSnapshot = nil
+            lock.unlock()
+            HandyFreiGate.setPhoneLoopPaused(false)
+            store(session)
+            return session
+        }
         let session = HandyFrei.prepare(enabled: HandyFrei.isEnabled(), fingerprint: fingerprint)
         lock.lock()
         pending = session
@@ -132,42 +150,24 @@ enum HandyFreiPhone {
         }
         if let libre = cgm as? LibreLoopCGMManager {
             let state = libre.state
-            snapshot.sensorSerial = mirrorString(state, "sensorSerial")
-            snapshot.bleAddress = mirrorString(state, "bleAddress")
-            snapshot.blePIN = mirrorData(state, "blePIN")?.base64EncodedString()
-            if let serial = snapshot.sensorSerial {
-                let keys = HandyFreiKeyCopy.read(serial: serial)
-                snapshot.kEnc = keys?.kEnc.base64EncodedString()
-                snapshot.ivEnc = keys?.ivEnc.base64EncodedString()
-                snapshot.phase5RawKey = keys?.phase5.base64EncodedString()
-                if let receiver = keys?.receiverID {
+            snapshot.sensorSerial = state.sensorSerial
+            snapshot.bleAddress = state.bleAddress
+            snapshot.blePIN = state.blePIN?.base64EncodedString()
+            if let serial = state.sensorSerial, !serial.isEmpty,
+               let keys = HandyFreiKeyCopy.read(serial: serial),
+               let phase5 = keys.phase5, !phase5.isEmpty
+            {
+                snapshot.kEnc = keys.kEnc.base64EncodedString()
+                snapshot.ivEnc = keys.ivEnc.base64EncodedString()
+                snapshot.phase5RawKey = phase5.base64EncodedString()
+                if let receiver = keys.receiverID {
                     snapshot.receiverID = String(receiver)
                 }
+            } else {
+                snapshot.refusal = "Phase-5-Schlüssel fehlt. Handy-frei startet nicht. Die Kopplung bleibt auf dem iPhone."
             }
         }
         return snapshot
-    }
-
-    private static func mirrorString(_ value: Any, _ name: String) -> String? {
-        for child in Mirror(reflecting: value).children where child.label == name {
-            if let text = child.value as? String { return text }
-            let inner = Mirror(reflecting: child.value)
-            if inner.displayStyle == .optional, let nested = inner.children.first?.value as? String {
-                return nested
-            }
-        }
-        return nil
-    }
-
-    private static func mirrorData(_ value: Any, _ name: String) -> Data? {
-        for child in Mirror(reflecting: value).children where child.label == name {
-            if let data = child.value as? Data { return data }
-            let inner = Mirror(reflecting: child.value)
-            if inner.displayStyle == .optional, let nested = inner.children.first?.value as? Data {
-                return nested
-            }
-        }
-        return nil
     }
 
     private static func storeDeliveries(_ entries: [[String: Any]]) {

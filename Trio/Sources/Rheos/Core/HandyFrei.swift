@@ -68,6 +68,8 @@ enum HandyFrei {
         var rheosCarbRatio: [Double]
         var loopFiles: [String: String]
         var glucose: Double?
+        /// Set when a required Libre key is missing. Handy-frei must not start.
+        var refusal: String? = nil
 
         var plist: [String: Any] {
             var raw: [String: Any] = [
