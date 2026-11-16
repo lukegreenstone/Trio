@@ -322,6 +322,7 @@
 		3BD9687C2D8DDD4600899469 /* SlideButton in Frameworks */ = {isa = PBXBuildFile; productRef = 3BD9687B2D8DDD4600899469 /* SlideButton */; };
 		5E12FE112EBC0000000000A2 /* LoopAlgorithm in Frameworks */ = {isa = PBXBuildFile; productRef = 5E12FE112EBC0000000000A1 /* LoopAlgorithm */; };
 		5E12FE112EBC0000000000B2 /* RoundWhiteDiscKit in Frameworks */ = {isa = PBXBuildFile; productRef = 5E12FE112EBC0000000000B1 /* RoundWhiteDiscKit */; };
+		H4ND7F0200000000000000C2 /* HandyFreiDrivers in Frameworks */ = {isa = PBXBuildFile; productRef = H4ND7F0200000000000000C1 /* HandyFreiDrivers */; };
 		3BD9687F2D8DDD8800899469 /* CryptoSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 3BD9687E2D8DDD8800899469 /* CryptoSwift */; };
 		3BE2F1E82E030E2F009E2900 /* MealCobTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BE2F1E72E030E2F009E2900 /* MealCobTests.swift */; };
 		3BE2F1EA2E031951009E2900 /* MealCobBucketingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BE2F1E92E031951009E2900 /* MealCobBucketingTests.swift */; };
@@ -2249,6 +2250,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				C0E05A7C0000000000000F24 /* WidgetKit.framework in Frameworks */,
+				H4ND7F0200000000000000C2 /* HandyFreiDrivers in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -5082,6 +5084,7 @@
 			);
 			name = "Trio Watch App";
 			packageProductDependencies = (
+				H4ND7F0200000000000000C1 /* HandyFreiDrivers */,
 			);
 			productName = "TrioWatch Watch App";
 			productReference = BDFF797C2D25AA870016C40C /* Trio Watch App.app */;
@@ -5180,6 +5183,7 @@
 				3E28F2A92EB5337F00FB9EEB /* XCRemoteSwiftPackageReference "connectiq-companion-app-sdk-ios" */,
 				5E12FE112EBC0000000000A0 /* XCLocalSwiftPackageReference "LoopAlgorithm" */,
 				5E12FE112EBC0000000000B0 /* XCLocalSwiftPackageReference "RoundWhiteDiscKit" */,
+				H4ND7F0200000000000000C0 /* XCLocalSwiftPackageReference "HandyFreiDrivers" */,
 			);
 			productRefGroup = 388E595925AD948C0019842D /* Products */;
 			projectDirPath = "";
@@ -7047,6 +7051,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = RoundWhiteDiscKit;
 		};
+		H4ND7F0200000000000000C0 /* XCLocalSwiftPackageReference "HandyFreiDrivers" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Trio/Packages/HandyFreiDrivers;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -7109,6 +7117,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 5E12FE112EBC0000000000B0 /* XCLocalSwiftPackageReference "RoundWhiteDiscKit" */;
 			productName = RoundWhiteDiscKit;
+		};
+		H4ND7F0200000000000000C1 /* HandyFreiDrivers */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = H4ND7F0200000000000000C0 /* XCLocalSwiftPackageReference "HandyFreiDrivers" */;
+			productName = HandyFreiDrivers;
 		};
 /* End XCSwiftPackageProductDependency section */
 

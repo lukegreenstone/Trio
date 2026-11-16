@@ -40,6 +40,11 @@ import WatchConnectivity
     var handyFreiPhase2 = false
     var handyFreiReadyToConfirm = false
     var handyFreiBleAddress = ""
+    var handyFreiBlePIN = ""
+    var handyFreiPhase5 = ""
+    var handyFreiPumpSerial = ""
+    var handyFreiSessionToken = ""
+    var handyFreiGlucose: Int?
 
     // Safety limits
     var maxBolus: Decimal = 10
@@ -213,6 +218,10 @@ import WatchConnectivity
                 if let snapshot = handyFrei["snapshot"] as? [String: Any] {
                     self.handyFreiReadyToConfirm = true
                     self.handyFreiBleAddress = snapshot["bleAddress"] as? String ?? ""
+                    self.handyFreiBlePIN = snapshot["blePIN"] as? String ?? ""
+                    self.handyFreiPhase5 = snapshot["phase5RawKey"] as? String ?? ""
+                    self.handyFreiPumpSerial = snapshot["pumpSerial"] as? String ?? ""
+                    self.handyFreiSessionToken = snapshot["sessionToken"] as? String ?? ""
                 }
             }
             return

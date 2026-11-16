@@ -1,4 +1,4 @@
-import CoreBluetooth
+import HandyFreiDrivers
 import HealthKit
 import SwiftUI
 import WatchKit
@@ -30,8 +30,8 @@ struct HandyFreiWatchView: View {
                     finish()
                 }
                 Text(state.handyFreiPhase2
-                    ? "Phase 2 ist an. Befehle bleiben in der erlaubten Liste und werden hier nur ins Protokoll geschrieben."
-                    : "Phase 1: Schatten. Die Pumpe wird nicht gestellt.")
+                    ? "Phase 2 ist an. Die Uhr liest den Libre und darf nur die sechs erlaubten Pumpenbefehle senden."
+                    : "Phase 1: die Uhr liest den Libre und rechnet im Schatten. Die Pumpe wird nicht gestellt.")
                     .font(.footnote)
             }
             .padding()
@@ -45,9 +45,28 @@ struct HandyFreiWatchView: View {
                 fail("Die Workout-Sitzung ist zu Ende. Bluetooth am iPhone wieder einschalten.")
             }
         }
-        HandyFreiScan.shared.lookForSensor(named: state.handyFreiBleAddress) { found in
-            if !found {
-                fail("Sensor nicht gesehen. Bluetooth am iPhone wieder einschalten.")
+        let address = state.handyFreiBleAddress
+        let pin = Data(base64Encoded: state.handyFreiBlePIN) ?? Data()
+        let phase5 = Data(base64Encoded: state.handyFreiPhase5) ?? Data()
+        let pump = state.handyFreiPumpSerial
+        let token = state.handyFreiSessionToken
+        let phase2 = state.handyFreiPhase2
+        Task {
+            do {
+                try await HandyFreiLibreLink.reconnect(bleAddress: address, blePIN: pin, phase5RawKey: phase5) { mgdl in
+                    DispatchQueue.main.async {
+                        self.state.handyFreiGlucose = mgdl
+                        self.state.handyFreiStatus = HandyFrei.shadowLine(glucose: Double(mgdl), iob: 0)
+                    }
+                }
+                guard phase2 else { return }
+                try await HandyFreiMedtrumLink.shared.connect(pumpSerialBase64: pump, sessionTokenBase64: token)
+                try await HandyFreiMedtrumLink.shared.send(.readStatus)
+                try await HandyFreiMedtrumLink.shared.send(.readHistory)
+            } catch {
+                await MainActor.run {
+                    fail("Verbindung fehlgeschlagen. Bluetooth am iPhone wieder einschalten.")
+                }
             }
         }
     }
@@ -66,8 +85,14 @@ struct HandyFreiWatchView: View {
         } else {
             state.session?.transferUserInfo(message)
         }
+        if state.handyFreiPhase2 {
+            Task {
+                try? await HandyFreiMedtrumLink.shared.send(.cancelTempBasal)
+                HandyFreiMedtrumLink.shared.stop()
+            }
+        }
+        HandyFreiLibreLink.stop()
         HandyFreiWorkout.shared.stop()
-        HandyFreiScan.shared.stop()
         state.handyFreiStatus = "Handy-frei beendet. Bluetooth am iPhone wieder einschalten."
     }
 
@@ -79,7 +104,8 @@ struct HandyFreiWatchView: View {
             "kind": "alarm",
             "text": text
         ])
-        HandyFreiScan.shared.stop()
+        HandyFreiLibreLink.stop()
+        HandyFreiMedtrumLink.shared.stop()
     }
 }
 
@@ -118,45 +144,5 @@ final class HandyFreiWorkout: NSObject, HKWorkoutSessionDelegate {
 
     func workoutSession(_ workoutSession: HKWorkoutSession, didFailWithError error: Error) {
         onEnd?(true)
-    }
-}
-
-/// Looks for a Libre by its advertised name. It never writes to the sensor.
-final class HandyFreiScan: NSObject, CBCentralManagerDelegate {
-    static let shared = HandyFreiScan()
-    private var central: CBCentralManager?
-    private var done: ((Bool) -> Void)?
-
-    func lookForSensor(named: String?, found: @escaping (Bool) -> Void) {
-        wantedName = named ?? ""
-        done = found
-        central = CBCentralManager(delegate: self, queue: nil)
-    }
-
-    func stop() {
-        if let central, central.state == .poweredOn {
-            central.stopScan()
-        }
-        central = nil
-    }
-
-    func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        guard central.state == .poweredOn else {
-            if central.state == .poweredOff { done?(false) }
-            return
-        }
-        central.scanForPeripherals(withServices: nil)
-    }
-
-    private var wantedName = ""
-
-    func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String: Any], rssi RSSI: NSNumber) {
-        let advertised = (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? peripheral.name ?? ""
-        let expected = wantedName.replacingOccurrences(of: ":", with: "").uppercased()
-        guard expected.isEmpty || advertised.uppercased().contains(expected) else { return }
-        central.stopScan()
-        central.connect(peripheral)
-        done?(true)
-        done = nil
     }
 }
