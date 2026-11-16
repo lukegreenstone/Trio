@@ -1399,6 +1399,61 @@ final class RheosCoreTests: XCTestCase {
         XCTAssertFalse(same?.line.contains("statt") ?? true)
     }
 
+    func testHandyFreiNeverDropsPairingOrAllowsDangerousCommands() {
+        let before = HandyFrei.Fingerprint(
+            pumpPeripheralID: "pump-id",
+            pumpSerial: "nano",
+            sensorSerial: "libre",
+            sensorPeripheralID: "sensor-id"
+        )
+        XCTAssertFalse(HandyFrei.isEnabled(UserDefaults(suiteName: UUID().uuidString)!))
+        let blocked = HandyFrei.offer(enabled: false, fingerprint: before)
+        XCTAssertFalse(blocked.phoneLoopPaused)
+        XCTAssertEqual(blocked.fingerprint, before)
+        XCTAssertFalse(blocked.keysDeleted)
+
+        var session = HandyFrei.offer(enabled: true, fingerprint: before)
+        session = HandyFrei.watchAck(session)
+        let refused = HandyFrei.releaseRadio(session, canRelease: false)
+        XCTAssertFalse(refused.phoneLoopPaused)
+        XCTAssertTrue(refused.phoneOwnsRadio)
+        XCTAssertFalse(refused.watchOwnsRadio)
+        XCTAssertTrue(HandyFrei.roundTripHolds(before, refused))
+        XCTAssertTrue(HandyFrei.checklist(before: before, after: refused).contains("Schlüssel bleiben auf dem iPhone"))
+        XCTAssertTrue(HandyFrei.checklist(before: before, after: refused).contains("nie beide verbunden"))
+
+        let owning = HandyFrei.releaseRadio(session, canRelease: true)
+        XCTAssertTrue(owning.watchOwnsRadio)
+        XCTAssertFalse(owning.phoneOwnsRadio)
+        XCTAssertTrue(owning.phoneLoopPaused)
+        XCTAssertFalse(owning.keysDeleted)
+        XCTAssertEqual(owning.watchCopy, before)
+        let limits = HandyFrei.Limits(maxBolus: 1, maxIOB: 2, currentIOB: 1.5)
+        let (withTemp, temp) = HandyFrei.enact(.setTempBasal(unitsPerHour: 0.5, minutes: 30), session: owning, limits: limits)
+        XCTAssertEqual(temp, .accepted(.setTempBasal(unitsPerHour: 0.5, minutes: 30)))
+        let tooMuch = HandyFrei.enact(.bolus(units: 5), session: withTemp, limits: limits).1
+        if case let .refused(reason) = tooMuch {
+            XCTAssertTrue(reason.contains("Grenzen"))
+        } else {
+            XCTFail("Bolus über Max Bolus")
+        }
+        let (failed, cancel) = HandyFrei.fail(withTemp, reason: "Uhr weg")
+        XCTAssertEqual(cancel, .cancelTempBasal)
+        XCTAssertTrue(failed.phoneOwnsRadio)
+        XCTAssertFalse(failed.watchOwnsRadio)
+        XCTAssertFalse(failed.phoneLoopPaused)
+        XCTAssertTrue(HandyFrei.roundTripHolds(before, failed))
+        XCTAssertFalse(failed.watchSetTempBasal)
+
+        for name in HandyFrei.forbiddenNames {
+            XCTAssertNil(HandyFrei.command(named: name))
+        }
+        XCTAssertEqual(HandyFrei.command(named: "readGlucose"), .readGlucose)
+        XCTAssertTrue(HandyFrei.shadowLine(glucose: 110, iob: 1).contains("Kein Befehl"))
+        let (_, shadowEnact) = HandyFrei.enact(.setTempBasal(unitsPerHour: 1, minutes: 10), session: refused, limits: limits)
+        if case .refused = shadowEnact {} else { XCTFail("ohne Funk kein Basal") }
+    }
+
     private func stableGlucose(days: ClosedRange<Int>, invertFrom: Int? = nil) -> [RheosGlucosePoint] {
         var points: [RheosGlucosePoint] = []
         for day in days {

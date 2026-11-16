@@ -12,6 +12,7 @@ struct TrioMainWatchView: View {
 
     // view visbility
     @State private var showingTreatmentMenuSheet: Bool = false
+    @State private var showingHandyFrei = false
     @State private var showingOverrideSheet: Bool = false
     // navigation flag for meal bolus combo
     @State private var continueToBolus = false
@@ -69,6 +70,11 @@ struct TrioMainWatchView: View {
                         rotationDegrees: rotationDegrees,
                         isWatchStateDated: isWatchStateDated || isSessionUnreachable
                     )
+
+                    Button("Handy-frei") { showingHandyFrei = true }
+                        .font(.footnote)
+                        .buttonStyle(.bordered)
+                        .frame(maxHeight: .infinity, alignment: .top)
 
                     if state.showSyncingAnimation {
                         Image(systemName: "iphone.radiowaves.left.and.right")
@@ -183,6 +189,9 @@ struct TrioMainWatchView: View {
                     showingOverrideSheet = false
                     navigationPath.append(NavigationDestinations.acknowledgmentPending)
                 }
+            }
+            .sheet(isPresented: $showingHandyFrei) {
+                HandyFreiWatchView(state: state)
             }
             .sheet(isPresented: $showingTempTargetSheet) {
                 TempTargetPresetsView(

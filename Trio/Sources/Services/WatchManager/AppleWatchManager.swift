@@ -661,6 +661,13 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
             SimpleLogReporter.appendToWatchLog(logs)
         }
 
+        if message["handyFreiAck"] as? Bool == true {
+            Task { @MainActor in
+                _ = HandyFreiPhone.receiveAck()
+            }
+            return
+        }
+
         Task { @MainActor [weak self] in
             guard let self else { return }
 

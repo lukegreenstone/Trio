@@ -35,6 +35,8 @@ import WatchConnectivity
     var proteinAmount: Int = 0
     var bolusAmount: Double = 0.0
     var confirmationProgress: Double = 0.0
+    /// Last Handy-frei note from the iPhone. The watch does not connect by itself.
+    var handyFreiStatus = "Handy-frei ist aus."
 
     // Safety limits
     var maxBolus: Decimal = 10
@@ -197,6 +199,18 @@ import WatchConnectivity
     func session(_: WCSession, didReceiveMessage message: [String: Any]) {
         Task {
             await WatchLogger.shared.log("⌚️ Watch received data: \(message)")
+        }
+
+        if let handyFrei = message["handyFrei"] as? [String: Any] {
+            let note = handyFrei["note"] as? String ?? "Handy-frei."
+            let shadow = handyFrei["shadow"] as? String ?? ""
+            DispatchQueue.main.async {
+                self.handyFreiStatus = [note, shadow].filter { !$0.isEmpty }.joined(separator: " ")
+            }
+            if handyFrei["kind"] as? String == "offer" {
+                self.session?.sendMessage(["handyFreiAck": true], replyHandler: nil) { _ in }
+            }
+            return
         }
 
         // Ack at top level — no `watchState` wrapper, no staleness check.

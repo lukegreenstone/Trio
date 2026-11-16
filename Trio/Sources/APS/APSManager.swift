@@ -301,6 +301,12 @@ final class BaseAPSManager: APSManager, Injectable {
             let userInitiated = self.nextLoopUserInitiated
             self.nextLoopUserInitiated = false
 
+            // Handy-frei pauses enacting only after the radio was released without deleting keys.
+            if HandyFreiGate.phoneLoopPaused {
+                debug(.apsManager, "Handy-frei: iPhone loop is paused. Pairing state is unchanged.")
+                return
+            }
+
             // Don't try to run a loop while pump setup / pod pairing is in
             // progress — `verifyStatus` would throw `invalidPumpState("Pump
             // not set")` and surface a modal banner on top of the pod

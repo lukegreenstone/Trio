@@ -1013,6 +1013,9 @@
 		A11C0DE2E10A0000000000DC /* RheosCarePlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000DB /* RheosCarePlan.swift */; };
 		A11C0DE2E10A0000000000E6 /* RheosDayPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000E5 /* RheosDayPlan.swift */; };
 		A11C0DE2E10A0000000000E8 /* RheosActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000E7 /* RheosActivity.swift */; };
+		H4ND7F0100000000000000A2 /* HandyFrei.swift in Sources */ = {isa = PBXBuildFile; fileRef = H4ND7F0100000000000000A1 /* HandyFrei.swift */; };
+		H4ND7F0100000000000000A3 /* HandyFrei.swift in Sources */ = {isa = PBXBuildFile; fileRef = H4ND7F0100000000000000A1 /* HandyFrei.swift */; };
+		H4ND7F0100000000000000B2 /* HandyFreiPhone.swift in Sources */ = {isa = PBXBuildFile; fileRef = H4ND7F0100000000000000B1 /* HandyFreiPhone.swift */; };
 		A11C0DE2E10A0000000000DE /* RheosHomeSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000DD /* RheosHomeSheet.swift */; };
 		A11C0DE2E10A0000000000D6 /* RheosShadow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000D5 /* RheosShadow.swift */; };
 		A11C0DE2E10A0000000000D8 /* RheosCoreMLAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000D7 /* RheosCoreMLAdapter.swift */; };
@@ -2136,6 +2139,8 @@
 		A11C0DE2E10A0000000000DB /* RheosCarePlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosCarePlan.swift; sourceTree = "<group>"; };
 		A11C0DE2E10A0000000000E5 /* RheosDayPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosDayPlan.swift; sourceTree = "<group>"; };
 		A11C0DE2E10A0000000000E7 /* RheosActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosActivity.swift; sourceTree = "<group>"; };
+		H4ND7F0100000000000000A1 /* HandyFrei.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HandyFrei.swift; sourceTree = "<group>"; };
+		H4ND7F0100000000000000B1 /* HandyFreiPhone.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HandyFreiPhone.swift; sourceTree = "<group>"; };
 		A11C0DE2E10A0000000000DD /* RheosHomeSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosHomeSheet.swift; sourceTree = "<group>"; };
 		A11C0DE2E10A0000000000D5 /* RheosShadow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosShadow.swift; sourceTree = "<group>"; };
 		A11C0DE2E10A0000000000D7 /* RheosCoreMLAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosCoreMLAdapter.swift; sourceTree = "<group>"; };
@@ -4928,6 +4933,7 @@
 				A11C0DE2E10A0000000000DB /* RheosCarePlan.swift */,
 				A11C0DE2E10A0000000000E5 /* RheosDayPlan.swift */,
 				A11C0DE2E10A0000000000E7 /* RheosActivity.swift */,
+				H4ND7F0100000000000000A1 /* HandyFrei.swift */,
 				A11C0DE2E10A0000000000D5 /* RheosShadow.swift */,
 			);
 			path = Core;
@@ -4937,6 +4943,7 @@
 			isa = PBXGroup;
 			children = (
 				108E03FBDA154ED298D61419 /* RheosModeStore.swift */,
+				H4ND7F0100000000000000B1 /* HandyFreiPhone.swift */,
 				A11C0DE2E10A0000000000B1 /* RheosICloudBackup.swift */,
 				A11C0DE2E10A0000000000F3 /* RheosChatEngine.swift */,
 				A11C0DE2E10A0000000000C5 /* RheosCareNotifier.swift */,
@@ -5393,6 +5400,8 @@
 				A11C0DE2E10A0000000000DC /* RheosCarePlan.swift in Sources */,
 				A11C0DE2E10A0000000000E6 /* RheosDayPlan.swift in Sources */,
 				A11C0DE2E10A0000000000E8 /* RheosActivity.swift in Sources */,
+				H4ND7F0100000000000000A2 /* HandyFrei.swift in Sources */,
+				H4ND7F0100000000000000B2 /* HandyFreiPhone.swift in Sources */,
 				A11C0DE2E10A0000000000DE /* RheosHomeSheet.swift in Sources */,
 				A11C0DE2E10A0000000000D6 /* RheosShadow.swift in Sources */,
 				A11C0DE2E10A0000000000D8 /* RheosCoreMLAdapter.swift in Sources */,
@@ -6272,6 +6281,7 @@
 			files = (
 				BDA25F222D26D62800035F34 /* BolusInputView.swift in Sources */,
 				BDFF7A882D25F97D0016C40C /* TrioMainWatchView.swift in Sources */,
+				H4ND7F0100000000000000A3 /* HandyFrei.swift in Sources */,
 				B1E05A7C0000000000000E12 /* RheosWatchView.swift in Sources */,
 				A11C0DE2E10A0000000000B7 /* WatchFaceReading.swift in Sources */,
 				A11C0DE2E10A0000000000B9 /* WatchFacePublisher.swift in Sources */,
