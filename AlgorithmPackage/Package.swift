@@ -65,10 +65,20 @@ let package = Package(
         .target(
             name: "Trio",
             path: "Sources",
+            // Sources is the app tree. Xcode 26 turns a string catalog in a
+            // package into Swift symbols, and the app catalog has keys that
+            // differ only by case. The package does not need that catalog:
+            // String(localized:) in this code uses the host bundle, and the
+            // watch app already copies the catalog itself.
+            exclude: [
+                "Localizations",
+                "AnimatedBackground"
+            ],
             sources: [
                 "APS/OpenAPSSwift",
                 "APS/Extensions/DecimalExtensions.swift"
             ] + algorithmModels + algorithmHelpers,
+            resources: [Resource](),
             swiftSettings: [.define("TRIO_ALGORITHM_PACKAGE")]
         ),
         .testTarget(
