@@ -37,6 +37,9 @@ import WatchConnectivity
     var confirmationProgress: Double = 0.0
     /// Last Handy-frei note from the iPhone. The watch does not connect by itself.
     var handyFreiStatus = "Handy-frei ist aus."
+    var handyFreiPhase2 = false
+    var handyFreiReadyToConfirm = false
+    var handyFreiBleAddress = ""
 
     // Safety limits
     var maxBolus: Decimal = 10
@@ -206,9 +209,11 @@ import WatchConnectivity
             let shadow = handyFrei["shadow"] as? String ?? ""
             DispatchQueue.main.async {
                 self.handyFreiStatus = [note, shadow].filter { !$0.isEmpty }.joined(separator: " ")
-            }
-            if handyFrei["kind"] as? String == "offer" {
-                self.session?.sendMessage(["handyFreiAck": true], replyHandler: nil) { _ in }
+                self.handyFreiPhase2 = handyFrei["phase2"] as? Bool ?? false
+                if let snapshot = handyFrei["snapshot"] as? [String: Any] {
+                    self.handyFreiReadyToConfirm = true
+                    self.handyFreiBleAddress = snapshot["bleAddress"] as? String ?? ""
+                }
             }
             return
         }

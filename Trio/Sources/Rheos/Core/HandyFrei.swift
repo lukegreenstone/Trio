@@ -4,6 +4,7 @@ import Foundation
 /// Pairing keys and peripheral ids stay on the iPhone. This type never talks to a pump or a sensor.
 enum HandyFrei {
     static let enabledKey = "handyfrei.experimental"
+    static let phase2Key = "handyfrei.phase2"
 
     /// Missing key means off.
     static func isEnabled(_ defaults: UserDefaults = .standard) -> Bool {
@@ -12,6 +13,14 @@ enum HandyFrei {
 
     static func setEnabled(_ on: Bool, defaults: UserDefaults = .standard) {
         defaults.set(on, forKey: enabledKey)
+    }
+
+    static func phase2Enabled(_ defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: phase2Key) as? Bool ?? false
+    }
+
+    static func setPhase2(_ on: Bool, defaults: UserDefaults = .standard) {
+        defaults.set(on, forKey: phase2Key)
     }
 
     /// Commands the watch is allowed to ask for. There is no case for deactivate, prime,
@@ -41,6 +50,52 @@ enum HandyFrei {
         var maxBolus: Double
         var maxIOB: Double
         var currentIOB: Double
+    }
+
+    /// A copy for the watch. The iPhone keychain is not written.
+    struct Snapshot: Equatable {
+        var pumpSerial: String?
+        var sessionToken: String?
+        var patchId: String?
+        var patchActivatedAt: Date?
+        var patchExpiresAt: Date?
+        var blePIN: String?
+        var phase5RawKey: String?
+        var kEnc: String?
+        var ivEnc: String?
+        var receiverID: String?
+        var sensorSerial: String?
+        var bleAddress: String?
+        var iob: Double
+        var cob: Double
+        var maxBolus: Double
+        var maxIOB: Double
+        var rheosBasal: [Double]
+        var glucose: Double?
+
+        var plist: [String: Any] {
+            var raw: [String: Any] = [
+                "iob": iob,
+                "cob": cob,
+                "maxBolus": maxBolus,
+                "maxIOB": maxIOB,
+                "rheosBasal": rheosBasal
+            ]
+            if let pumpSerial { raw["pumpSerial"] = pumpSerial }
+            if let sessionToken { raw["sessionToken"] = sessionToken }
+            if let patchId { raw["patchId"] = patchId }
+            if let patchActivatedAt { raw["patchActivatedAt"] = patchActivatedAt.timeIntervalSince1970 }
+            if let patchExpiresAt { raw["patchExpiresAt"] = patchExpiresAt.timeIntervalSince1970 }
+            if let blePIN { raw["blePIN"] = blePIN }
+            if let phase5RawKey { raw["phase5RawKey"] = phase5RawKey }
+            if let kEnc { raw["kEnc"] = kEnc }
+            if let ivEnc { raw["ivEnc"] = ivEnc }
+            if let receiverID { raw["receiverID"] = receiverID }
+            if let bleAddress { raw["bleAddress"] = bleAddress }
+            if let sensorSerial { raw["sensorSerial"] = sensorSerial }
+            if let glucose { raw["glucose"] = glucose }
+            return raw
+        }
     }
 
     enum Step: Equatable {
@@ -188,6 +243,93 @@ enum HandyFrei {
     static func stop(_ session: Session) -> (Session, WatchCommand?) {
         fail(session, reason: "Handy-frei beendet. Das iPhone verbindet sich mit der bestehenden Kopplung.")
     }
+
+    /// Luke turns iPhone Bluetooth off himself. Drivers are not asked to disconnect.
+    static func prepare(enabled: Bool, fingerprint: Fingerprint) -> Session {
+        var session = offer(enabled: enabled, fingerprint: fingerprint)
+        guard session.step == .offered else { return session }
+        session.note = "Jetzt in Einstellungen Bluetooth am iPhone ausschalten. Die Kopplung bleibt gespeichert."
+        return session
+    }
+
+    /// Only after Bluetooth is really off. Keys stay. The phone loop pauses.
+    static func bluetoothIsOff(_ session: Session) -> Session {
+        guard session.step == .offered || session.step == .watchAcked else {
+            var failed = session
+            failed.phoneLoopPaused = false
+            failed.watchOwnsRadio = false
+            failed.phoneOwnsRadio = true
+            failed.note = "Bluetooth-Aus gilt nur nach der Vorbereitung."
+            return failed
+        }
+        var next = session
+        next.step = .watchOwning
+        next.phoneOwnsRadio = false
+        next.watchOwnsRadio = true
+        next.phoneLoopPaused = true
+        next.keysDeleted = false
+        next.note = "Bluetooth am iPhone ist aus. Die Uhr ist die Steuerung. Das iPhone loopt nicht."
+        return next
+    }
+
+    /// The loop stays paused until the watch log is stored.
+    static func resumeAfterLog(_ session: Session, logImported: Bool) -> Session {
+        guard logImported else {
+            var waiting = session
+            waiting.phoneLoopPaused = true
+            waiting.phoneOwnsRadio = false
+            waiting.watchOwnsRadio = false
+            waiting.keysDeleted = false
+            waiting.note = "Protokoll fehlt noch. Der Loop bleibt aus, die Kopplung bleibt."
+            return waiting
+        }
+        var next = session
+        next.step = .idle
+        next.phoneOwnsRadio = true
+        next.watchOwnsRadio = false
+        next.phoneLoopPaused = false
+        next.watchSetTempBasal = false
+        next.keysDeleted = false
+        next.note = "Protokoll ist da. Bluetooth am iPhone wieder einschalten, dann loopt das iPhone mit der alten Kopplung."
+        return next
+    }
+
+    static func enact(_ command: WatchCommand, session: Session, limits: Limits, phase2: Bool) -> (Session, Enact) {
+        switch command {
+        case .setTempBasal, .cancelTempBasal, .bolus:
+            guard phase2 else {
+                return (session, .refused("Phase 2 ist aus. Die Uhr stellt die Pumpe nicht."))
+            }
+        default:
+            break
+        }
+        return enact(command, session: session, limits: limits)
+    }
+
+    /// Request body for a temp basal, same layout as Medtrum SetTempBasalPacket. Not a stop or prime.
+    static func tempBasalBody(rate: Double, minutes: Int) -> Data {
+        var body = Data([6])
+        let units = UInt16(max(0, Int((rate / 0.05).rounded())))
+        let length = UInt16(max(0, minutes))
+        body.append(UInt8(units & 0xFF))
+        body.append(UInt8((units >> 8) & 0xFF))
+        body.append(UInt8(length & 0xFF))
+        body.append(UInt8((length >> 8) & 0xFF))
+        return body
+    }
+
+    static func commandCode(_ command: WatchCommand) -> UInt8? {
+        switch command {
+        case .readStatus: return 11
+        case .readGlucose: return nil
+        case .readHistory: return 99
+        case .setTempBasal: return 24
+        case .cancelTempBasal: return 25
+        case .bolus: return 19
+        }
+    }
+
+    static let forbiddenCommandCodes: [UInt8] = [16, 18, 21, 28, 29, 31, 35, 36]
 
     static func shadowLine(glucose: Double?, iob: Double) -> String {
         guard let glucose else {

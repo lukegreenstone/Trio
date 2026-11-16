@@ -661,9 +661,15 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
             SimpleLogReporter.appendToWatchLog(logs)
         }
 
-        if message["handyFreiAck"] as? Bool == true {
+        if message["handyFreiPhoneOff"] as? Bool == true {
             Task { @MainActor in
-                _ = HandyFreiPhone.receiveAck()
+                HandyFreiPhone.watchSaysPhoneIsOff()
+            }
+            return
+        }
+        if let log = message["handyFreiLog"] as? [[String: Any]] {
+            Task { @MainActor in
+                HandyFreiPhone.importLog(log)
             }
             return
         }
@@ -802,6 +808,11 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
     }
 
     func session(_: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
+        if let log = userInfo["handyFreiLog"] as? [[String: Any]] {
+            Task { @MainActor in
+                HandyFreiPhone.importLog(log)
+            }
+        }
         if let logs = userInfo["watchLogs"] as? String {
             SimpleLogReporter.appendToWatchLog(logs)
         }

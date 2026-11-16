@@ -70,33 +70,37 @@ struct WatchConfigAppleWatchView: BaseView {
                     get: { HandyFrei.isEnabled() },
                     set: { HandyFrei.setEnabled($0) }
                 ))
-                Text("Aus, bis du es einschaltest. Die Kopplung bleibt auf dem iPhone. Die Uhr bekommt nur eine Kopie und keine Befehle, die Patch oder Sensor beenden.")
+                Toggle("Phase 2, Pumpe scharf (experimentell)", isOn: Binding(
+                    get: { HandyFrei.phase2Enabled() },
+                    set: { HandyFrei.setPhase2($0) }
+                ))
+                .disabled(!HandyFrei.isEnabled())
+                Text("Aus, bis du es einschaltest. Das iPhone trennt nichts selbst. Du schaltest Bluetooth in den Einstellungen aus. Die Kopplung bleibt liegen.")
                     .font(.footnote)
-                Button("Handy-frei starten") {
-                    let session = HandyFreiPhone.start(
+                Button("Handy-frei vorbereiten") {
+                    let document = RheosStore.shared.loadDocument()
+                    let basal = document.decision?.learnedFactors.basal ?? document.applied?.factors.basal ?? []
+                    let session = HandyFreiPhone.prepare(
                         fingerprint: HandyFrei.Fingerprint(
                             pumpPeripheralID: nil,
                             pumpSerial: nil,
                             sensorSerial: nil,
                             sensorPeripheralID: nil
                         ),
-                        limits: HandyFrei.Limits(maxBolus: 0, maxIOB: 0, currentIOB: 0),
-                        glucose: nil
-                    )
-                    handyFreiNote = session.note
-                }
-                .disabled(!HandyFrei.isEnabled())
-                Button("Handy-frei beenden") {
-                    let session = HandyFreiPhone.stop(
-                        fingerprint: HandyFrei.Fingerprint(
-                            pumpPeripheralID: nil,
-                            pumpSerial: nil,
-                            sensorSerial: nil,
-                            sensorPeripheralID: nil
+                        snapshot: HandyFreiPhone.collectSnapshot(
+                            pump: resolver.resolve(DeviceDataManager.self)?.pumpManager,
+                            cgm: resolver.resolve(FetchGlucoseManager.self)?.cgmManager,
+                            iob: 0,
+                            cob: 0,
+                            maxBolus: 0,
+                            maxIOB: 0,
+                            rheosBasal: basal,
+                            glucose: nil
                         )
                     )
                     handyFreiNote = session.note
                 }
+                .disabled(!HandyFrei.isEnabled())
                 if !handyFreiNote.isEmpty {
                     Text(handyFreiNote).font(.footnote)
                 }

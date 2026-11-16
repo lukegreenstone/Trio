@@ -1452,6 +1452,38 @@ final class RheosCoreTests: XCTestCase {
         XCTAssertTrue(HandyFrei.shadowLine(glucose: 110, iob: 1).contains("Kein Befehl"))
         let (_, shadowEnact) = HandyFrei.enact(.setTempBasal(unitsPerHour: 1, minutes: 10), session: refused, limits: limits)
         if case .refused = shadowEnact {} else { XCTFail("ohne Funk kein Basal") }
+
+        let prepared = HandyFrei.prepare(enabled: true, fingerprint: before)
+        XCTAssertTrue(prepared.note.contains("Bluetooth"))
+        XCTAssertFalse(prepared.phoneLoopPaused)
+        XCTAssertFalse(prepared.keysDeleted)
+        let byBluetooth = HandyFrei.bluetoothIsOff(prepared)
+        XCTAssertTrue(byBluetooth.phoneLoopPaused)
+        XCTAssertTrue(byBluetooth.watchOwnsRadio)
+        XCTAssertFalse(byBluetooth.phoneOwnsRadio)
+        XCTAssertEqual(byBluetooth.fingerprint, before)
+        let waiting = HandyFrei.resumeAfterLog(byBluetooth, logImported: false)
+        XCTAssertTrue(waiting.phoneLoopPaused)
+        let back = HandyFrei.resumeAfterLog(byBluetooth, logImported: true)
+        XCTAssertFalse(back.phoneLoopPaused)
+        XCTAssertTrue(back.phoneOwnsRadio)
+        XCTAssertFalse(back.keysDeleted)
+        let body = HandyFrei.tempBasalBody(rate: 1, minutes: 30)
+        XCTAssertEqual(body.first, 6)
+        XCTAssertEqual(body.count, 5)
+        let (phase1, denied) = HandyFrei.enact(.setTempBasal(unitsPerHour: 0.5, minutes: 10), session: byBluetooth, limits: limits, phase2: false)
+        if case .refused = denied {} else { XCTFail("Phase 2 aus") }
+        XCTAssertFalse(phase1.watchSetTempBasal)
+        let allowed = [
+            HandyFrei.commandCode(.readStatus),
+            HandyFrei.commandCode(.readHistory),
+            HandyFrei.commandCode(.setTempBasal(unitsPerHour: 0, minutes: 1)),
+            HandyFrei.commandCode(.cancelTempBasal),
+            HandyFrei.commandCode(.bolus(units: 0.05))
+        ].compactMap { $0 }
+        for code in allowed {
+            XCTAssertFalse(HandyFrei.forbiddenCommandCodes.contains(code))
+        }
     }
 
     private func stableGlucose(days: ClosedRange<Int>, invertFrom: Int? = nil) -> [RheosGlucosePoint] {
