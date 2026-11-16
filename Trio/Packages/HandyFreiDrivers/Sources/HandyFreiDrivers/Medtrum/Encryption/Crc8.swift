@@ -1,3 +1,4 @@
+import Foundation
 enum Crc8 {
     public static func calculate(_ data: Data) -> Data {
         var crc8: UInt8 = 0

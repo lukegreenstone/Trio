@@ -1,3 +1,4 @@
+import Foundation
 struct SetBolusResponse {}
 
 class SetBolusPacket: MedtrumBasePacket, MedtrumBasePacketProtocol {

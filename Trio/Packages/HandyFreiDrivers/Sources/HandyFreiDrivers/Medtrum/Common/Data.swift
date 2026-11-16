@@ -1,3 +1,4 @@
+import Foundation
 extension Data {
     init?(hex: String) {
         guard hex.count.isMultiple(of: 2) else {

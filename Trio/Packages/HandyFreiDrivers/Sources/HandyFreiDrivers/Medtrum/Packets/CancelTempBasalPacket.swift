@@ -1,3 +1,4 @@
+import Foundation
 struct CancelTempBasalPacketResponse {
     let basalType: BasalType
     let basalValue: Double

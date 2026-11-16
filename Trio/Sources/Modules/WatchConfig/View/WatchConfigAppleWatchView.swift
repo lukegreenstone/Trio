@@ -70,14 +70,9 @@ struct WatchConfigAppleWatchView: BaseView {
                     get: { HandyFrei.isEnabled() },
                     set: { HandyFrei.setEnabled($0) }
                 ))
-                Toggle("Phase 2, Pumpe scharf (experimentell)", isOn: Binding(
-                    get: { HandyFrei.phase2Enabled() },
-                    set: { HandyFrei.setPhase2($0) }
-                ))
-                .disabled(!HandyFrei.isEnabled())
-                Text("Aus, bis du es einschaltest. Das iPhone trennt nichts selbst. Du schaltest Bluetooth in den Einstellungen aus. Die Kopplung bleibt liegen.")
+                Text("Aus, bis du es einschaltest. Sensor, Loop und Pumpe laufen dann auf der Uhr. Das iPhone trennt nichts selbst. Du schaltest Bluetooth in den Einstellungen aus. Die Kopplung bleibt liegen.")
                     .font(.footnote)
-                Button("Handy-frei vorbereiten") {
+                Button("Handy-frei starten") {
                     let document = RheosStore.shared.loadDocument()
                     let learned = document.decision?.learnedFactors ?? document.applied?.factors
                     let storage = resolver.resolve(FileStorage.self)

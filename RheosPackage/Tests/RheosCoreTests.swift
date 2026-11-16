@@ -1471,9 +1471,9 @@ final class RheosCoreTests: XCTestCase {
         let body = HandyFrei.tempBasalBody(rate: 1, minutes: 30)
         XCTAssertEqual(body.first, 6)
         XCTAssertEqual(body.count, 5)
-        let (phase1, denied) = HandyFrei.enact(.setTempBasal(unitsPerHour: 0.5, minutes: 10), session: byBluetooth, limits: limits, phase2: false)
-        if case .refused = denied {} else { XCTFail("Phase 2 aus") }
-        XCTAssertFalse(phase1.watchSetTempBasal)
+        let (dosing, accepted) = HandyFrei.enact(.setTempBasal(unitsPerHour: 0.5, minutes: 10), session: byBluetooth, limits: limits)
+        XCTAssertEqual(accepted, .accepted(.setTempBasal(unitsPerHour: 0.5, minutes: 10)))
+        XCTAssertTrue(dosing.watchSetTempBasal)
         let allowed = [
             HandyFrei.commandCode(.readStatus),
             HandyFrei.commandCode(.readHistory),

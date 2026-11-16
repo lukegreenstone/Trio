@@ -1,3 +1,4 @@
+import Foundation
 struct SubscribePacketResponse {}
 
 class SubscribePacket: MedtrumBasePacket, MedtrumBasePacketProtocol {

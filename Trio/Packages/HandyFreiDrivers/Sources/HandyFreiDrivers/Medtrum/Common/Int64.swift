@@ -1,3 +1,4 @@
+import Foundation
 extension UInt64 {
     func toData(length: Int) -> Data {
         var output = Data(count: length)

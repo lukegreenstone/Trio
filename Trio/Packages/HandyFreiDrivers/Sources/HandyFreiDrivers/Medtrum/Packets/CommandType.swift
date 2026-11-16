@@ -1,3 +1,4 @@
+import Foundation
 enum CommandType {
     static let SYNCHRONIZE: UInt8 = 3
     static let SUBSCRIBE: UInt8 = 4

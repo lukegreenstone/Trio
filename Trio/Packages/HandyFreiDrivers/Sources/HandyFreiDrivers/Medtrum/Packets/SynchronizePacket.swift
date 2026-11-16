@@ -1,3 +1,4 @@
+import Foundation
 class SynchronizePacket: MedtrumBasePacket, MedtrumBasePacketProtocol {
     typealias T = SynchronizePacketResponse
 

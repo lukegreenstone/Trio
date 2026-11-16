@@ -4,7 +4,6 @@ import Foundation
 /// Pairing keys and peripheral ids stay on the iPhone. This type never talks to a pump or a sensor.
 enum HandyFrei {
     static let enabledKey = "handyfrei.experimental"
-    static let phase2Key = "handyfrei.phase2"
 
     /// Missing key means off.
     static func isEnabled(_ defaults: UserDefaults = .standard) -> Bool {
@@ -13,14 +12,8 @@ enum HandyFrei {
 
     static func setEnabled(_ on: Bool, defaults: UserDefaults = .standard) {
         defaults.set(on, forKey: enabledKey)
-    }
-
-    static func phase2Enabled(_ defaults: UserDefaults = .standard) -> Bool {
-        defaults.object(forKey: phase2Key) as? Bool ?? false
-    }
-
-    static func setPhase2(_ on: Bool, defaults: UserDefaults = .standard) {
-        defaults.set(on, forKey: phase2Key)
+        // Older builds stored a second pump switch. Dosing is part of Handy-frei now.
+        defaults.removeObject(forKey: "handyfrei.phase2")
     }
 
     /// Commands the watch is allowed to ask for. There is no case for deactivate, prime,
@@ -254,7 +247,7 @@ enum HandyFrei {
     static func prepare(enabled: Bool, fingerprint: Fingerprint) -> Session {
         var session = offer(enabled: enabled, fingerprint: fingerprint)
         guard session.step == .offered else { return session }
-        session.note = "Jetzt in Einstellungen Bluetooth am iPhone ausschalten. Die Kopplung bleibt gespeichert."
+        session.note = "Jetzt in den Einstellungen Bluetooth am iPhone ausschalten. Die Uhr startet dann von allein, sonst einmal auf der Uhr tippen. Die Kopplung bleibt gespeichert."
         return session
     }
 
@@ -298,18 +291,6 @@ enum HandyFrei {
         next.keysDeleted = false
         next.note = "Protokoll ist da. Bluetooth am iPhone wieder einschalten, dann loopt das iPhone mit der alten Kopplung."
         return next
-    }
-
-    static func enact(_ command: WatchCommand, session: Session, limits: Limits, phase2: Bool) -> (Session, Enact) {
-        switch command {
-        case .setTempBasal, .cancelTempBasal, .bolus:
-            guard phase2 else {
-                return (session, .refused("Phase 2 ist aus. Die Uhr stellt die Pumpe nicht."))
-            }
-        default:
-            break
-        }
-        return enact(command, session: session, limits: limits)
     }
 
     /// Request body for a temp basal, same layout as Medtrum SetTempBasalPacket. Not a stop or prime.

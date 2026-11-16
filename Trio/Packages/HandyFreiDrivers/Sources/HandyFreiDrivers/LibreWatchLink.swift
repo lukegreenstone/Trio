@@ -1,6 +1,7 @@
 import CoreBluetooth
 import Foundation
 import RoundWhiteDiscWatch
+import Security
 
 /// Cached Libre reconnect from LibreLoopPairingService, without NFC and without the first-pair path.
 public enum HandyFreiLibreLink {
@@ -16,7 +17,8 @@ public enum HandyFreiLibreLink {
         bleAddress: String,
         blePIN: Data,
         phase5RawKey: Data,
-        onGlucose: @escaping @Sendable (Int) -> Void
+        onGlucose: @escaping @Sendable (Int) -> Void,
+        onDisconnect: @escaping @Sendable () -> Void = {}
     ) async throws {
         guard blePIN.count == 4, phase5RawKey.count == 16 else { throw HandyFreiLinkError.badKey }
         let scanner = SensorScannerNG()
@@ -66,7 +68,7 @@ public enum HandyFreiLibreLink {
                 guard sample.isActionable, !sample.hasBlockingIssue else { return }
                 onGlucose(Int(sample.valueMgDL.rounded()))
             },
-            onDisconnect: {}
+            onDisconnect: onDisconnect
         )
                 monitor.start()
                 heldMonitor = monitor

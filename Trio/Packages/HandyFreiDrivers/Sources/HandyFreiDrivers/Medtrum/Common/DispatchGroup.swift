@@ -1,3 +1,4 @@
+import Foundation
 final class MedtrumKitDispatchGroup {
     private let group = DispatchGroup()
     private let lock = NSLock()

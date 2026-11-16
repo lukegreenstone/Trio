@@ -1,3 +1,4 @@
+import Foundation
 struct AuthorizeResponse {
     let deviceType: UInt8
     let swVersion: String

@@ -51,12 +51,12 @@ public enum HandyFreiLoop {
             return stale
         }
         do {
-            let preferences = try JSONBridge.from(string: files["preferences"] ?? "") as Preferences
-            let settings = try JSONBridge.from(string: files["settings"] ?? "") as PumpSettings
-            var basal = try JSONBridge.from(string: files["basal"] ?? "") as [BasalProfileEntry]
-            let targets = try JSONBridge.from(string: files["targets"] ?? "") as BGTargets
-            var isf = try JSONBridge.from(string: files["isf"] ?? "") as InsulinSensitivities
-            var carbRatios = try JSONBridge.from(string: files["carbRatios"] ?? "") as CarbRatios
+            let preferences: Preferences = try JSONBridge.from(string: files["preferences"] ?? "")
+            let settings: PumpSettings = try JSONBridge.from(string: files["settings"] ?? "")
+            var basal: [BasalProfileEntry] = try JSONBridge.from(string: files["basal"] ?? "")
+            let targets: BGTargets = try JSONBridge.from(string: files["targets"] ?? "")
+            var isf: InsulinSensitivities = try JSONBridge.from(string: files["isf"] ?? "")
+            var carbRatios: CarbRatios = try JSONBridge.from(string: files["carbRatios"] ?? "")
             basal = scaleBasal(basal, rheosBasal, ceiling: settings.maxBasal)
             isf = scaleISF(isf, rheosISF)
             carbRatios = scaleCarb(carbRatios, rheosCarbRatio)
@@ -70,9 +70,9 @@ public enum HandyFreiLoop {
                 tempTargets: [],
                 clock: now
             )
-            var history = (try? JSONBridge.from(string: files["pumpHistory"] ?? "[]") as [PumpHistoryEvent]) ?? []
+            var history: [PumpHistoryEvent] = (try? JSONBridge.from(string: files["pumpHistory"] ?? "[]")) ?? []
             history.append(contentsOf: deliveries.map(event))
-            let carbs = (try? JSONBridge.from(string: files["carbHistory"] ?? "[]") as [CarbsEntry]) ?? []
+            let carbs: [CarbsEntry] = (try? JSONBridge.from(string: files["carbHistory"] ?? "[]")) ?? []
             let points = glucose.map { item in
                 BloodGlucose(
                     id: UUID().uuidString,

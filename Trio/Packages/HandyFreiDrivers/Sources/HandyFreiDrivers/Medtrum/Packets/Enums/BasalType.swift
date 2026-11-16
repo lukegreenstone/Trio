@@ -1,3 +1,4 @@
+import Foundation
 enum BasalType: UInt8, Codable {
     case NONE
     case STANDARD

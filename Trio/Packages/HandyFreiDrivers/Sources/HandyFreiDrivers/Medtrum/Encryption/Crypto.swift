@@ -1,3 +1,5 @@
+import Foundation
+import Security
 enum Crypto {
     private static let MEDTRUM_CIPHER: Int64 = 1_344_751_489
     private static let logger = MedtrumLogger(category: "MedtrumCrypto")

@@ -37,8 +37,9 @@ import WatchConnectivity
     var confirmationProgress: Double = 0.0
     /// Last Handy-frei note from the iPhone. The watch does not connect by itself.
     var handyFreiStatus = "Handy-frei ist aus."
-    var handyFreiPhase2 = false
     var handyFreiReadyToConfirm = false
+    var handyFreiRunning = false
+    var handyFreiAlarm = ""
     var handyFreiBleAddress = ""
     var handyFreiBlePIN = ""
     var handyFreiPhase5 = ""
@@ -209,30 +210,14 @@ import WatchConnectivity
 
     /// Handles incoming messages from the paired iPhone when Phone is in the foreground
     func session(_: WCSession, didReceiveMessage message: [String: Any]) {
-        Task {
-            await WatchLogger.shared.log("⌚️ Watch received data: \(message)")
+        if message["handyFrei"] != nil {
+            Task { await WatchLogger.shared.log("⌚️ Watch received Handy-frei") }
+            absorbHandyFrei(message)
+            return
         }
 
-        if let handyFrei = message["handyFrei"] as? [String: Any] {
-            let note = handyFrei["note"] as? String ?? "Handy-frei."
-            let shadow = handyFrei["shadow"] as? String ?? ""
-            DispatchQueue.main.async {
-                self.handyFreiStatus = [note, shadow].filter { !$0.isEmpty }.joined(separator: " ")
-                self.handyFreiPhase2 = handyFrei["phase2"] as? Bool ?? false
-                if let snapshot = handyFrei["snapshot"] as? [String: Any] {
-                    self.handyFreiReadyToConfirm = true
-                    self.handyFreiBleAddress = snapshot["bleAddress"] as? String ?? ""
-                    self.handyFreiBlePIN = snapshot["blePIN"] as? String ?? ""
-                    self.handyFreiPhase5 = snapshot["phase5RawKey"] as? String ?? ""
-                    self.handyFreiPumpSerial = snapshot["pumpSerial"] as? String ?? ""
-                    self.handyFreiSessionToken = snapshot["sessionToken"] as? String ?? ""
-                    self.handyFreiFiles = snapshot["loopFiles"] as? [String: String] ?? [:]
-                    self.handyFreiBasal = (snapshot["rheosBasal"] as? [NSNumber])?.map(\.doubleValue) ?? []
-                    self.handyFreiISF = (snapshot["rheosISF"] as? [NSNumber])?.map(\.doubleValue) ?? []
-                    self.handyFreiCarbRatio = (snapshot["rheosCarbRatio"] as? [NSNumber])?.map(\.doubleValue) ?? []
-                }
-            }
-            return
+        Task {
+            await WatchLogger.shared.log("⌚️ Watch received data: \(message)")
         }
 
         // Ack at top level — no `watchState` wrapper, no staleness check.
@@ -269,8 +254,38 @@ import WatchConnectivity
     }
 
     func session(_: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
+        if userInfo["handyFrei"] != nil {
+            absorbHandyFrei(userInfo)
+            return
+        }
         if absorbRheosUpdate(userInfo) { return }
         handleIncomingWatchStatePayload(userInfo)
+    }
+
+    /// Snapshot from the iPhone. Secrets stay in memory for the reconnect and are not written to the log.
+    private func absorbHandyFrei(_ message: [String: Any]) {
+        guard let handyFrei = message["handyFrei"] as? [String: Any] else { return }
+        let note = handyFrei["note"] as? String ?? "Handy-frei."
+        let shadow = handyFrei["shadow"] as? String ?? ""
+        let kind = handyFrei["kind"] as? String
+        DispatchQueue.main.async {
+            self.handyFreiStatus = [note, shadow].filter { !$0.isEmpty }.joined(separator: " ")
+            if let snapshot = handyFrei["snapshot"] as? [String: Any] {
+                self.handyFreiReadyToConfirm = true
+                self.handyFreiBleAddress = snapshot["bleAddress"] as? String ?? ""
+                self.handyFreiBlePIN = snapshot["blePIN"] as? String ?? ""
+                self.handyFreiPhase5 = snapshot["phase5RawKey"] as? String ?? ""
+                self.handyFreiPumpSerial = snapshot["pumpSerial"] as? String ?? ""
+                self.handyFreiSessionToken = snapshot["sessionToken"] as? String ?? ""
+                self.handyFreiFiles = snapshot["loopFiles"] as? [String: String] ?? [:]
+                self.handyFreiBasal = (snapshot["rheosBasal"] as? [NSNumber])?.map(\.doubleValue) ?? []
+                self.handyFreiISF = (snapshot["rheosISF"] as? [NSNumber])?.map(\.doubleValue) ?? []
+                self.handyFreiCarbRatio = (snapshot["rheosCarbRatio"] as? [NSNumber])?.map(\.doubleValue) ?? []
+            }
+            if kind == "watch-owns" {
+                self.startHandyFrei()
+            }
+        }
     }
 
     /// A Rheos snapshot sent on its own, without the glucose `watchState` wrapper.

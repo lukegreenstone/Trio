@@ -1,3 +1,4 @@
+import Foundation
 public enum AlarmSettings: UInt8 {
     case LightVibrateAndBeep = 0
     case LightAndVibrate = 1

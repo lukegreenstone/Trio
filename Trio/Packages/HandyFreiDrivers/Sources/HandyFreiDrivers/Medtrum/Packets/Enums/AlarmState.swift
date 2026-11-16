@@ -1,3 +1,4 @@
+import Foundation
 enum AlarmState: UInt16, Codable {
     case None = 0
     case PumpLowBattery = 1 // Mapped from error flag 1

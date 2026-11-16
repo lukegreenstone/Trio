@@ -1,3 +1,4 @@
+import Foundation
 enum ClearAlarmType: UInt8 {
     // More might be possible, but unknown at this moment
 

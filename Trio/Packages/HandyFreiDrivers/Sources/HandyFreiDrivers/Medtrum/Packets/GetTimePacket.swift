@@ -1,3 +1,4 @@
+import Foundation
 struct GetTimePacketResponse {
     let time: Date
 }

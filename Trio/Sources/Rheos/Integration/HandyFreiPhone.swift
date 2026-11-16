@@ -11,6 +11,7 @@ enum HandyFreiPhone {
     private static let logKey = "handyfrei.log"
     private static let lock = NSLock()
     private static var pending: HandyFrei.Session?
+    private static var lastSnapshot: HandyFrei.Snapshot?
     private static var logImported = false
 
     static var status: String {
@@ -18,10 +19,12 @@ enum HandyFreiPhone {
     }
 
     static func prepare(fingerprint: HandyFrei.Fingerprint, snapshot: HandyFrei.Snapshot) -> HandyFrei.Session {
+        HandyFrei.setEnabled(HandyFrei.isEnabled())
         let session = HandyFrei.prepare(enabled: HandyFrei.isEnabled(), fingerprint: fingerprint)
         lock.lock()
         pending = session
         logImported = false
+        lastSnapshot = snapshot
         lock.unlock()
         if session.step != .offered {
             HandyFreiGate.setPhoneLoopPaused(false)
@@ -38,6 +41,7 @@ enum HandyFreiPhone {
     static func bluetoothIsOff() {
         lock.lock()
         let current = pending
+        let snapshot = lastSnapshot
         lock.unlock()
         guard let current else { return }
         let session = HandyFrei.bluetoothIsOff(current)
@@ -50,14 +54,19 @@ enum HandyFreiPhone {
         pending = session
         lock.unlock()
         store(session)
-        send(session, snapshot: nil, kind: "watch-owns")
+        send(session, snapshot: snapshot, kind: "watch-owns")
     }
 
     static func watchSaysPhoneIsOff() {
         guard HandyFreiBluetoothWatch.shared.isPoweredOff else {
+            lock.lock()
             var note = pending
+            lock.unlock()
             note?.note = "Bluetooth am iPhone ist noch an. Bitte in den Einstellungen ausschalten."
-            if let note { store(note) }
+            if let note {
+                store(note)
+                send(note, snapshot: nil, kind: "prepare")
+            }
             return
         }
         bluetoothIsOff()
@@ -173,6 +182,21 @@ enum HandyFreiPhone {
                 let request = PumpEventStored.fetchRequest()
                 request.predicate = NSPredicate(format: "syncIdentifier == %@", sync)
                 if let found = try? context.fetch(request), !found.isEmpty { continue }
+                if kind == "temp" {
+                    let near = PumpEventStored.fetchRequest()
+                    let windowStart = date.addingTimeInterval(-30)
+                    let windowEnd = date.addingTimeInterval(30)
+                    near.predicate = NSPredicate(
+                        format: "type == %@ AND timestamp >= %@ AND timestamp <= %@",
+                        PumpEventStored.EventType.tempBasal.rawValue,
+                        windowStart as NSDate,
+                        windowEnd as NSDate
+                    )
+                    let sameRate = (try? context.fetch(near))?.contains { row in
+                        abs((row.tempBasal?.rate?.doubleValue ?? -999) - units) < 0.001
+                    } ?? false
+                    if sameRate { continue }
+                }
                 let row = PumpEventStored(context: context)
                 row.id = UUID().uuidString
                 row.timestamp = date
@@ -194,7 +218,7 @@ enum HandyFreiPhone {
                     let temp = TempBasalStored(context: context)
                     temp.pumpEvent = row
                     temp.rate = NSDecimalNumber(value: units)
-                    temp.duration = NSDecimalNumber(value: minutes)
+                    temp.duration = Int16(min(max(minutes, 0), Int(Int16.max)))
                     temp.startDate = date
                     temp.endDate = date.addingTimeInterval(TimeInterval(minutes * 60))
                     temp.tempType = TempType.absolute.rawValue
@@ -216,7 +240,6 @@ enum HandyFreiPhone {
         var payload: [String: Any] = [
             "kind": kind,
             "note": session.note,
-            "phase2": HandyFrei.phase2Enabled(),
             "ownsRadio": session.watchOwnsRadio
         ]
         if let snapshot {

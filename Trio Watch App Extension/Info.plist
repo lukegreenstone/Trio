@@ -4,6 +4,12 @@
 <dict>
 	<key>AppGroupID</key>
 	<string>$(APP_GROUP_ID)</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Die Uhr verbindet sich mit dem bestehenden Libre-Sensor und der bestehenden Medtrum-Pumpe, solange Handy-frei läuft.</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>Eine Workout-Sitzung hält die Uhr wach, während Handy-frei Sensor und Pumpe steuert.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>Eine Workout-Sitzung hält die Uhr wach, während Handy-frei Sensor und Pumpe steuert.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>workout-processing</string>

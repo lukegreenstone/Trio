@@ -1,3 +1,4 @@
+import Foundation
 public enum PatchState: UInt8, Codable {
     case none = 0
     case idle = 1

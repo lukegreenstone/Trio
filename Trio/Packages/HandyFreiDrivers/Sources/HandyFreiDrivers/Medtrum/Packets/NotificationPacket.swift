@@ -1,3 +1,4 @@
+import Foundation
 struct SynchronizePacketResponse: Codable {
     let state: PatchState
     var suspendTime: Date?
