@@ -323,6 +323,7 @@
 		5E12FE112EBC0000000000A2 /* LoopAlgorithm in Frameworks */ = {isa = PBXBuildFile; productRef = 5E12FE112EBC0000000000A1 /* LoopAlgorithm */; };
 		5E12FE112EBC0000000000B2 /* RoundWhiteDiscKit in Frameworks */ = {isa = PBXBuildFile; productRef = 5E12FE112EBC0000000000B1 /* RoundWhiteDiscKit */; };
 		H4ND7F0200000000000000C2 /* HandyFreiDrivers in Frameworks */ = {isa = PBXBuildFile; productRef = H4ND7F0200000000000000C1 /* HandyFreiDrivers */; };
+		H4ND7F0300000000000000D2 /* Trio in Frameworks */ = {isa = PBXBuildFile; productRef = H4ND7F0300000000000000D1 /* Trio */; };
 		3BD9687F2D8DDD8800899469 /* CryptoSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 3BD9687E2D8DDD8800899469 /* CryptoSwift */; };
 		3BE2F1E82E030E2F009E2900 /* MealCobTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BE2F1E72E030E2F009E2900 /* MealCobTests.swift */; };
 		3BE2F1EA2E031951009E2900 /* MealCobBucketingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BE2F1E92E031951009E2900 /* MealCobBucketingTests.swift */; };
@@ -1035,6 +1036,7 @@
 		A11C0DE2E10A0000000000B8 /* WatchFaceReading.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000B5 /* WatchFaceReading.swift */; };
 		A11C0DE2E10A0000000000B9 /* WatchFacePublisher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000BA /* WatchFacePublisher.swift */; };
 		B1E05A7C0000000000000E12 /* RheosWatchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1E05A7C0000000000000E11 /* RheosWatchView.swift */; };
+		H4ND7F0400000000000000E2 /* HandyFreiWatchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = H4ND7F0400000000000000E1 /* HandyFreiWatchView.swift */; };
 		A11C0DE2E10A0000000000C6 /* RheosCareNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0DE2E10A0000000000C5 /* RheosCareNotifier.swift */; };
 /* End PBXBuildFile section */
 
@@ -2162,6 +2164,7 @@
 		C0E05A7C0000000000000F22 /* Complication.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Complication.entitlements; sourceTree = "<group>"; };
 		C0E05A7C0000000000000F23 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B1E05A7C0000000000000E11 /* RheosWatchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosWatchView.swift; sourceTree = "<group>"; };
+		H4ND7F0400000000000000E1 /* HandyFreiWatchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HandyFreiWatchView.swift; sourceTree = "<group>"; };
 		A11C0DE2E10A0000000000C5 /* RheosCareNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RheosCareNotifier.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -2251,6 +2254,7 @@
 			files = (
 				C0E05A7C0000000000000F24 /* WidgetKit.framework in Frameworks */,
 				H4ND7F0200000000000000C2 /* HandyFreiDrivers in Frameworks */,
+				H4ND7F0300000000000000D2 /* Trio in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -4030,6 +4034,7 @@
 				BDA25F1B2D26BD0300035F34 /* TrendShape.swift */,
 				BDFF7A842D25F97D0016C40C /* TrioMainWatchView.swift */,
 				B1E05A7C0000000000000E11 /* RheosWatchView.swift */,
+				H4ND7F0400000000000000E1 /* HandyFreiWatchView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -5085,6 +5090,7 @@
 			name = "Trio Watch App";
 			packageProductDependencies = (
 				H4ND7F0200000000000000C1 /* HandyFreiDrivers */,
+				H4ND7F0300000000000000D1 /* Trio */,
 			);
 			productName = "TrioWatch Watch App";
 			productReference = BDFF797C2D25AA870016C40C /* Trio Watch App.app */;
@@ -5184,6 +5190,7 @@
 				5E12FE112EBC0000000000A0 /* XCLocalSwiftPackageReference "LoopAlgorithm" */,
 				5E12FE112EBC0000000000B0 /* XCLocalSwiftPackageReference "RoundWhiteDiscKit" */,
 				H4ND7F0200000000000000C0 /* XCLocalSwiftPackageReference "HandyFreiDrivers" */,
+				H4ND7F0300000000000000D0 /* XCLocalSwiftPackageReference "AlgorithmPackage" */,
 			);
 			productRefGroup = 388E595925AD948C0019842D /* Products */;
 			projectDirPath = "";
@@ -6287,6 +6294,7 @@
 				BDFF7A882D25F97D0016C40C /* TrioMainWatchView.swift in Sources */,
 				H4ND7F0100000000000000A3 /* HandyFrei.swift in Sources */,
 				B1E05A7C0000000000000E12 /* RheosWatchView.swift in Sources */,
+				H4ND7F0400000000000000E2 /* HandyFreiWatchView.swift in Sources */,
 				A11C0DE2E10A0000000000B7 /* WatchFaceReading.swift in Sources */,
 				A11C0DE2E10A0000000000B9 /* WatchFacePublisher.swift in Sources */,
 				BDA25F202D26D5FE00035F34 /* CarbsInputView.swift in Sources */,
@@ -7055,6 +7063,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Trio/Packages/HandyFreiDrivers;
 		};
+		H4ND7F0300000000000000D0 /* XCLocalSwiftPackageReference "AlgorithmPackage" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = AlgorithmPackage;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -7122,6 +7134,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = H4ND7F0200000000000000C0 /* XCLocalSwiftPackageReference "HandyFreiDrivers" */;
 			productName = HandyFreiDrivers;
+		};
+		H4ND7F0300000000000000D1 /* Trio */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = H4ND7F0300000000000000D0 /* XCLocalSwiftPackageReference "AlgorithmPackage" */;
+			productName = Trio;
 		};
 /* End XCSwiftPackageProductDependency section */
 

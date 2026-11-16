@@ -1,4 +1,5 @@
 import CoreBluetooth
+import CoreData
 import Foundation
 import LibreLoop
 import MedtrumKit
@@ -68,6 +69,7 @@ enum HandyFreiPhone {
         if let data {
             UserDefaults.standard.set(data, forKey: logKey)
         }
+        storeDeliveries(entries)
         lock.lock()
         logImported = true
         let current = pending ?? HandyFrei.idle(fingerprint: HandyFrei.Fingerprint(
@@ -92,9 +94,23 @@ enum HandyFreiPhone {
         return session
     }
 
-    static func collectSnapshot(pump: Any?, cgm: Any?, iob: Double, cob: Double, maxBolus: Double, maxIOB: Double, rheosBasal: [Double], glucose: Double?) -> HandyFrei.Snapshot {
+    static func collectSnapshot(
+        pump: Any?,
+        cgm: Any?,
+        iob: Double,
+        cob: Double,
+        maxBolus: Double,
+        maxIOB: Double,
+        rheosBasal: [Double],
+        rheosISF: [Double],
+        rheosCarbRatio: [Double],
+        loopFiles: [String: String],
+        glucose: Double?
+    ) -> HandyFrei.Snapshot {
         var snapshot = HandyFrei.Snapshot(
-            iob: iob, cob: cob, maxBolus: maxBolus, maxIOB: maxIOB, rheosBasal: rheosBasal, glucose: glucose
+            iob: iob, cob: cob, maxBolus: maxBolus, maxIOB: maxIOB,
+            rheosBasal: rheosBasal, rheosISF: rheosISF, rheosCarbRatio: rheosCarbRatio,
+            loopFiles: loopFiles, glucose: glucose
         )
         if let medtrum = pump as? MedtrumPumpManager {
             let state = medtrum.state
@@ -142,6 +158,51 @@ enum HandyFreiPhone {
             }
         }
         return nil
+    }
+
+    private static func storeDeliveries(_ entries: [[String: Any]]) {
+        let context = CoreDataStack.shared.newTaskContext()
+        context.performAndWait {
+            for entry in entries {
+                let kind = entry["kind"] as? String ?? ""
+                guard kind == "temp" || kind == "bolus" else { continue }
+                let date = Date(timeIntervalSince1970: entry["date"] as? TimeInterval ?? Date().timeIntervalSince1970)
+                let units = entry["units"] as? Double ?? 0
+                let minutes = entry["minutes"] as? Int ?? 0
+                let sync = "handyfrei-\(Int(date.timeIntervalSince1970))-\(kind)"
+                let request = PumpEventStored.fetchRequest()
+                request.predicate = NSPredicate(format: "syncIdentifier == %@", sync)
+                if let found = try? context.fetch(request), !found.isEmpty { continue }
+                let row = PumpEventStored(context: context)
+                row.id = UUID().uuidString
+                row.timestamp = date
+                row.syncIdentifier = sync
+                row.isMutable = false
+                row.isUploadedToNS = false
+                row.isUploadedToHealth = false
+                row.isUploadedToTidepool = false
+                if kind == "bolus" {
+                    row.type = PumpEventStored.EventType.smb.rawValue
+                    let bolus = BolusStored(context: context)
+                    bolus.pumpEvent = row
+                    bolus.amount = NSDecimalNumber(value: units)
+                    bolus.programmedAmount = NSDecimalNumber(value: units)
+                    bolus.isSMB = true
+                    bolus.isExternal = false
+                } else {
+                    row.type = PumpEventStored.EventType.tempBasal.rawValue
+                    let temp = TempBasalStored(context: context)
+                    temp.pumpEvent = row
+                    temp.rate = NSDecimalNumber(value: units)
+                    temp.duration = NSDecimalNumber(value: minutes)
+                    temp.startDate = date
+                    temp.endDate = date.addingTimeInterval(TimeInterval(minutes * 60))
+                    temp.tempType = TempType.absolute.rawValue
+                    temp.isScheduledBasal = false
+                }
+            }
+            try? context.save()
+        }
     }
 
     private static func store(_ session: HandyFrei.Session) {

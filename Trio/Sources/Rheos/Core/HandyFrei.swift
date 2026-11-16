@@ -71,6 +71,9 @@ enum HandyFrei {
         var maxBolus: Double
         var maxIOB: Double
         var rheosBasal: [Double]
+        var rheosISF: [Double]
+        var rheosCarbRatio: [Double]
+        var loopFiles: [String: String]
         var glucose: Double?
 
         var plist: [String: Any] {
@@ -79,7 +82,10 @@ enum HandyFrei {
                 "cob": cob,
                 "maxBolus": maxBolus,
                 "maxIOB": maxIOB,
-                "rheosBasal": rheosBasal
+                "rheosBasal": rheosBasal,
+                "rheosISF": rheosISF,
+                "rheosCarbRatio": rheosCarbRatio,
+                "loopFiles": loopFiles
             ]
             if let pumpSerial { raw["pumpSerial"] = pumpSerial }
             if let sessionToken { raw["sessionToken"] = sessionToken }

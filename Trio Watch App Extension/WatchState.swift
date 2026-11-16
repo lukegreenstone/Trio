@@ -45,6 +45,10 @@ import WatchConnectivity
     var handyFreiPumpSerial = ""
     var handyFreiSessionToken = ""
     var handyFreiGlucose: Int?
+    var handyFreiFiles: [String: String] = [:]
+    var handyFreiBasal: [Double] = []
+    var handyFreiISF: [Double] = []
+    var handyFreiCarbRatio: [Double] = []
 
     // Safety limits
     var maxBolus: Decimal = 10
@@ -222,6 +226,10 @@ import WatchConnectivity
                     self.handyFreiPhase5 = snapshot["phase5RawKey"] as? String ?? ""
                     self.handyFreiPumpSerial = snapshot["pumpSerial"] as? String ?? ""
                     self.handyFreiSessionToken = snapshot["sessionToken"] as? String ?? ""
+                    self.handyFreiFiles = snapshot["loopFiles"] as? [String: String] ?? [:]
+                    self.handyFreiBasal = (snapshot["rheosBasal"] as? [NSNumber])?.map(\.doubleValue) ?? []
+                    self.handyFreiISF = (snapshot["rheosISF"] as? [NSNumber])?.map(\.doubleValue) ?? []
+                    self.handyFreiCarbRatio = (snapshot["rheosCarbRatio"] as? [NSNumber])?.map(\.doubleValue) ?? []
                 }
             }
             return

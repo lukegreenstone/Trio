@@ -79,7 +79,23 @@ struct WatchConfigAppleWatchView: BaseView {
                     .font(.footnote)
                 Button("Handy-frei vorbereiten") {
                     let document = RheosStore.shared.loadDocument()
-                    let basal = document.decision?.learnedFactors.basal ?? document.applied?.factors.basal ?? []
+                    let learned = document.decision?.learnedFactors ?? document.applied?.factors
+                    let storage = resolver.resolve(FileStorage.self)
+                    let names = [
+                        "preferences": OpenAPS.Settings.preferences,
+                        "settings": OpenAPS.Settings.settings,
+                        "basal": OpenAPS.Settings.basalProfile,
+                        "targets": OpenAPS.Settings.bgTargets,
+                        "isf": OpenAPS.Settings.insulinSensitivities,
+                        "carbRatios": OpenAPS.Settings.carbRatios,
+                        "pumpHistory": OpenAPS.Monitor.pumpHistory,
+                        "carbHistory": OpenAPS.Monitor.carbHistory,
+                        "autosens": OpenAPS.Settings.autosense
+                    ]
+                    var files: [String: String] = [:]
+                    for (key, name) in names {
+                        files[key] = storage?.retrieveRaw(name) ?? ""
+                    }
                     let session = HandyFreiPhone.prepare(
                         fingerprint: HandyFrei.Fingerprint(
                             pumpPeripheralID: nil,
@@ -94,7 +110,10 @@ struct WatchConfigAppleWatchView: BaseView {
                             cob: 0,
                             maxBolus: 0,
                             maxIOB: 0,
-                            rheosBasal: basal,
+                            rheosBasal: learned?.basal ?? [],
+                            rheosISF: learned?.isf ?? [],
+                            rheosCarbRatio: learned?.carbRatio ?? [],
+                            loopFiles: files,
                             glucose: nil
                         )
                     )

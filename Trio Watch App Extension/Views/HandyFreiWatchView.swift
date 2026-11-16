@@ -1,6 +1,7 @@
 import HandyFreiDrivers
 import HealthKit
 import SwiftUI
+import Trio
 import WatchKit
 
 /// Handy-frei on the watch. It scans and may connect. It does not write a patch-stop or a sensor activation.
@@ -8,6 +9,8 @@ struct HandyFreiWatchView: View {
     @Bindable var state: WatchState
     @State private var alarm = ""
     @State private var log: [[String: Any]] = []
+    @State private var deliveries: [HandyFreiLoop.Delivery] = []
+    @State private var readings: [(date: Date, mgdl: Int)] = []
 
     var body: some View {
         ScrollView {
@@ -55,8 +58,7 @@ struct HandyFreiWatchView: View {
             do {
                 try await HandyFreiLibreLink.reconnect(bleAddress: address, blePIN: pin, phase5RawKey: phase5) { mgdl in
                     DispatchQueue.main.async {
-                        self.state.handyFreiGlucose = mgdl
-                        self.state.handyFreiStatus = HandyFrei.shadowLine(glucose: Double(mgdl), iob: 0)
+                        self.absorb(mgdl)
                     }
                 }
                 guard phase2 else { return }
@@ -67,6 +69,53 @@ struct HandyFreiWatchView: View {
                 await MainActor.run {
                     fail("Verbindung fehlgeschlagen. Bluetooth am iPhone wieder einschalten.")
                 }
+            }
+        }
+    }
+
+    private func absorb(_ mgdl: Int) {
+        let device = WKInterfaceDevice.current()
+        device.isBatteryMonitoringEnabled = true
+        if device.batteryLevel >= 0, device.batteryLevel < 0.2 {
+            fail("Akku unter 20 Prozent. Bluetooth am iPhone wieder einschalten.")
+            return
+        }
+        readings.append((Date(), mgdl))
+        if readings.count > 36 { readings.removeFirst(readings.count - 36) }
+        let outcome = HandyFreiLoop.tick(
+            files: state.handyFreiFiles,
+            rheosBasal: state.handyFreiBasal,
+            rheosISF: state.handyFreiISF,
+            rheosCarbRatio: state.handyFreiCarbRatio,
+            glucose: readings,
+            deliveries: deliveries,
+            now: Date()
+        )
+        state.handyFreiGlucose = mgdl
+        state.handyFreiStatus = outcome.reason
+        log.append([
+            "date": Date().timeIntervalSince1970,
+            "kind": "determination",
+            "text": outcome.reason
+        ])
+        guard state.handyFreiPhase2, outcome.deliver || outcome.cancelTemp else { return }
+        Task {
+            do {
+                if outcome.cancelTemp || outcome.rate <= 0 {
+                    try await HandyFreiMedtrumLink.shared.send(.cancelTempBasal)
+                } else if outcome.minutes > 0 {
+                    let rate = min(outcome.rate, outcome.maxBasal)
+                    try await HandyFreiMedtrumLink.shared.send(.setTempBasal(rate: rate, minutes: outcome.minutes))
+                    deliveries.append(HandyFreiLoop.Delivery(kind: "temp", units: rate, minutes: outcome.minutes, date: Date()))
+                    log.append(["date": Date().timeIntervalSince1970, "kind": "temp", "units": rate, "minutes": outcome.minutes])
+                }
+                if outcome.smb > 0, outcome.iob + outcome.smb <= outcome.maxIOB {
+                    try await HandyFreiMedtrumLink.shared.send(.bolus(units: outcome.smb))
+                    deliveries.append(HandyFreiLoop.Delivery(kind: "bolus", units: outcome.smb, minutes: 0, date: Date()))
+                    log.append(["date": Date().timeIntervalSince1970, "kind": "bolus", "units": outcome.smb, "minutes": 0])
+                }
+            } catch {
+                fail("Pumpenbefehl fehlgeschlagen. Bluetooth am iPhone wieder einschalten.")
             }
         }
     }
