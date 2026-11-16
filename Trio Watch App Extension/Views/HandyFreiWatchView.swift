@@ -67,10 +67,14 @@ final class HandyFreiSession {
     private var log: [[String: Any]] = []
     private var deliveries: [HandyFreiLoop.Delivery] = []
     private var readings: [(date: Date, mgdl: Int)] = []
+    /// Bumped when the stretch ends so a glucose task already in flight cannot dose afterwards.
+    private var doseEpoch = 0
 
     func start(_ state: WatchState) {
         guard !state.handyFreiRunning else { return }
         state.handyFreiRunning = true
+        doseEpoch += 1
+        let epoch = doseEpoch
         state.handyFreiAlarm = ""
         log = []
         deliveries = []
@@ -93,16 +97,16 @@ final class HandyFreiSession {
             }
         }
         Task {
-            guard state.handyFreiRunning else { return }
+            guard state.handyFreiRunning, epoch == self.doseEpoch else { return }
             do {
                 try await HandyFreiMedtrumLink.shared.connect(pumpSerialBase64: pump, sessionTokenBase64: token)
-                guard state.handyFreiRunning else {
+                guard state.handyFreiRunning, epoch == self.doseEpoch else {
                     HandyFreiMedtrumLink.shared.stop()
                     return
                 }
                 try await HandyFreiMedtrumLink.shared.send(.readStatus)
                 try await HandyFreiMedtrumLink.shared.send(.readHistory)
-                guard state.handyFreiRunning else {
+                guard state.handyFreiRunning, epoch == self.doseEpoch else {
                     HandyFreiMedtrumLink.shared.stop()
                     return
                 }
@@ -167,7 +171,9 @@ final class HandyFreiSession {
             return
         }
         guard outcome.deliver || outcome.cancelTemp else { return }
+        let epoch = doseEpoch
         Task {
+            guard state.handyFreiRunning, epoch == self.doseEpoch else { return }
             do {
                 if outcome.cancelTemp || outcome.rate <= 0 {
                     try await HandyFreiMedtrumLink.shared.send(.cancelTempBasal)
@@ -198,6 +204,7 @@ final class HandyFreiSession {
             "text": "Temporäres Basal abbrechen, falls eines gesetzt wurde. Verbindung zu."
         ])
         sendLog(state)
+        doseEpoch += 1
         state.handyFreiRunning = false
         HandyFreiWorkout.shared.stop()
         HandyFreiLibreLink.stop()
@@ -210,6 +217,7 @@ final class HandyFreiSession {
 
     private func fail(_ state: WatchState, _ text: String) {
         guard state.handyFreiRunning else { return }
+        doseEpoch += 1
         state.handyFreiRunning = false
         state.handyFreiAlarm = text
         WKInterfaceDevice.current().play(.notification)

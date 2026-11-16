@@ -55,7 +55,14 @@ public struct SensorScannerConfiguration: @unchecked Sendable {
 
     var centralOptions: [String: Any]? {
         guard let restorationIdentifier else { return nil }
+        // State restoration is an iOS/macOS central feature. watchOS has no
+        // CBCentralManagerOptionRestoreIdentifierKey.
+        #if os(watchOS)
+        _ = restorationIdentifier
+        return nil
+        #else
         return [CBCentralManagerOptionRestoreIdentifierKey: restorationIdentifier]
+        #endif
     }
 
     var connectOptions: [String: Any]? {
@@ -540,6 +547,7 @@ extension SensorScanner: CBCentralManagerDelegate {
     }
 #endif
 
+    #if !os(watchOS)
     public func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
         let peripherals = (dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral]) ?? []
         let scanServices = (dict[CBCentralManagerRestoredStateScanServicesKey] as? [CBUUID]) ?? []
@@ -557,6 +565,7 @@ extension SensorScanner: CBCentralManagerDelegate {
             for cont in restorationContinuations { cont.yield(event) }
         }
     }
+    #endif
 }
 
 #endif

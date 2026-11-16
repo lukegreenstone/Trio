@@ -3,6 +3,7 @@ import CoreData
 import Foundation
 import LibreLoop
 import MedtrumKit
+import Security
 import WatchConnectivity
 
 /// Prepares Handy-frei. It never asks a driver to disconnect and never deletes a key.

@@ -293,6 +293,7 @@ extension SensorScannerNG: CBCentralManagerDelegate {
     }
     #endif
 
+    #if !os(watchOS)
     public func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
         let peripherals = (dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral]) ?? []
         // Retain the restored peripherals immediately (this delegate call is on
@@ -320,4 +321,5 @@ extension SensorScannerNG: CBCentralManagerDelegate {
             emit(.willRestoreState(event))
         }
     }
+    #endif
 }
