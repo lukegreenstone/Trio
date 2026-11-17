@@ -79,6 +79,9 @@ final class HandyFreiSession {
     private var sensorRetries = 0
     private var workoutRestarts = 0
     private var replacingSensor = false
+    private var lastPacketAt: Date?
+    private var lastStallAttempt = Date.distantPast
+    private var stallAttempts = 0
     private var address = ""
     private var pin = Data()
     private var phase5 = Data()
@@ -97,6 +100,9 @@ final class HandyFreiSession {
         sensorRetries = 0
         workoutRestarts = 0
         replacingSensor = false
+        lastPacketAt = nil
+        lastStallAttempt = .distantPast
+        stallAttempts = 0
         let epoch = doseEpoch
         state.handyFreiAlarm = ""
         log = []
@@ -155,7 +161,16 @@ final class HandyFreiSession {
         while state.handyFreiRunning, epoch == doseEpoch {
             try? await Task.sleep(nanoseconds: 60_000_000_000)
             guard state.handyFreiRunning, epoch == doseEpoch else { return }
-            let newest = await MainActor.run { self.readings.map(\.date).max() ?? started }
+            let snapshot = await MainActor.run { () -> (date: Date, hasReading: Bool) in
+                (self.readings.map(\.date).max() ?? started, !self.readings.isEmpty)
+            }
+            let newest = snapshot.date
+            if snapshot.hasReading {
+                let quiet = Date().timeIntervalSince(newest)
+                if quiet > 6 * 60, Date().timeIntervalSince(lastStallAttempt) > 6 * 60 {
+                    await reconnectStalledSensor(state, quietMinutes: Int(quiet / 60))
+                }
+            }
             guard Date().timeIntervalSince(newest) > 12 * 60 else { continue }
             await mark(state, "Glukose älter als 12 Minuten. Kein Insulin.")
             let busy = await MainActor.run { () -> Bool in
@@ -219,10 +234,31 @@ final class HandyFreiSession {
         }
     }
 
-    private func openSensor(_ state: WatchState) async throws {
+    /// The BLE link can stay "connected" while notifications stop. A new cached
+    /// handshake uses the same phase-5 key. It does not re-pair or deactivate.
+    private func reconnectStalledSensor(_ state: WatchState, quietMinutes: Int) async {
+        guard state.handyFreiRunning, !replacingSensor else { return }
+        lastStallAttempt = Date()
+        stallAttempts += 1
+        guard stallAttempts <= 3 else {
+            await MainActor.run {
+                self.fail(state, "Sensor steht seit \(quietMinutes) min. Bluetooth am iPhone wieder einschalten.")
+            }
+            return
+        }
+        let stamp = lastPacketAt.map { Self.clock($0) } ?? "--"
+        let line = "Sensor: steht seit \(quietMinutes) min, letztes Paket \(stamp). Verbindung neu (\(stallAttempts))"
+        do {
+            try await openSensor(state, announce: line)
+        } catch {
+            await mark(state, "Sensor: Verbindung neu (\(stallAttempts)) fehlgeschlagen. \(error.localizedDescription)")
+        }
+    }
+
+    private func openSensor(_ state: WatchState, announce: String? = nil) async throws {
         replacingSensor = true
         HandyFreiLibreLink.stop()
-        await mark(state, sensorRetries == 0 ? "Sensor: suche" : "Sensor: erneut \(sensorRetries)")
+        await mark(state, announce ?? (sensorRetries == 0 ? "Sensor: suche" : "Sensor: erneut \(sensorRetries)"))
         do {
             try await HandyFreiLibreLink.reconnect(
             bleAddress: address,
@@ -241,7 +277,7 @@ final class HandyFreiSession {
                 }
             },
             onStatus: { text in
-                Task { await self.mark(state, text) }
+                Task { await self.noteSensor(state, text) }
             }
             )
         } catch {
@@ -285,6 +321,13 @@ final class HandyFreiSession {
         } catch {
             await restoreSensor(state)
         }
+    }
+
+    private func noteSensor(_ state: WatchState, _ text: String) async {
+        if text.hasPrefix("Sensor: Paket") || text.contains("mg/dL") {
+            await MainActor.run { self.lastPacketAt = Date() }
+        }
+        await mark(state, text)
     }
 
     private func mark(_ state: WatchState, _ text: String) async {
@@ -344,6 +387,7 @@ final class HandyFreiSession {
             return
         }
         readings.append((Date(), mgdl))
+        stallAttempts = 0
         if readings.count > 36 { readings.removeFirst(readings.count - 36) }
         let outcome = HandyFreiLoop.tick(
             files: state.handyFreiFiles,
@@ -513,10 +557,9 @@ final class HandyFreiSession {
         await mark(state, text)
     }
 
-    private static func clock() -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        return formatter.string(from: Date())
+    private static func clock(_ date: Date = Date()) -> String {
+        let parts = Calendar.current.dateComponents([.hour, .minute, .second], from: date)
+        return String(format: "%02d:%02d:%02d", parts.hour ?? 0, parts.minute ?? 0, parts.second ?? 0)
     }
 
     private static func medtrumStep(_ value: Double) -> Double {

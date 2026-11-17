@@ -612,12 +612,18 @@ public final class LibreLoopSensorMonitor: @unchecked Sendable {
 
     /// Latest decode, not a bare packet count. A later fragment keeps the last mg/dL visible.
     private func report(_ count: Int, _ detail: String) {
+        let stamp = Self.packetClock(Date())
         if detail.hasPrefix("Echtzeit "), detail.contains("mg/dL"), !detail.contains("ohne Wert") {
-            emitStatus("Sensor: Paket \(count) \(detail)")
+            emitStatus("Sensor: Paket \(count) \(detail) · \(stamp)")
             return
         }
         let value = lastGlucoseText.isEmpty ? "" : " · letzter Wert \(lastGlucoseText)"
-        emitStatus("Sensor: Paket \(count) \(detail)\(value)")
+        emitStatus("Sensor: Paket \(count) \(detail) · \(stamp)\(value)")
+    }
+
+    private static func packetClock(_ date: Date) -> String {
+        let parts = Calendar.current.dateComponents([.hour, .minute, .second], from: date)
+        return String(format: "%02d:%02d:%02d", parts.hour ?? 0, parts.minute ?? 0, parts.second ?? 0)
     }
 
     /// Make a sample whenever we get a numeric mg/dL value, regardless of

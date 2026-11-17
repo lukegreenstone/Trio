@@ -198,7 +198,9 @@ public enum HandyFreiLibreLink {
                             return
                         }
                         let mgdl = Int(sample.valueMgDL.rounded())
-                        onStatus("Sensor: \(mgdl) mg/dL")
+                        let parts = Calendar.current.dateComponents([.hour, .minute, .second], from: Date())
+                        let stamp = String(format: "%02d:%02d:%02d", parts.hour ?? 0, parts.minute ?? 0, parts.second ?? 0)
+                        onStatus("Sensor: \(mgdl) mg/dL · \(stamp)")
                         onGlucose(mgdl)
                     },
                     onDisconnect: onDisconnect,
