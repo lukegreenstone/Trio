@@ -533,7 +533,7 @@ final class HandyFreiWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutB
     func stop() {
         let collected = builder
         builder = nil
-        collected?.endCollection(at: Date()) { _, _ in }
+        collected?.endCollection(withEnd: Date()) { _, _ in }
         session?.end()
         session = nil
     }
