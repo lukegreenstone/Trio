@@ -60,6 +60,9 @@ enum HandyFrei {
         var receiverID: String?
         var sensorSerial: String?
         var bleAddress: String?
+        /// iPhone CoreBluetooth id. The watch tries it, then scans, because
+        /// watchOS mints a different id for the same sensor.
+        var sensorPeripheralID: String?
         var sensorActivatedAt: Date?
         var wearDurationMinutes: Int?
         var warmupDurationMinutes: Int?
@@ -98,6 +101,7 @@ enum HandyFrei {
             if let ivEnc { raw["ivEnc"] = ivEnc }
             if let receiverID { raw["receiverID"] = receiverID }
             if let bleAddress { raw["bleAddress"] = bleAddress }
+            if let sensorPeripheralID { raw["sensorPeripheralID"] = sensorPeripheralID }
             if let sensorSerial { raw["sensorSerial"] = sensorSerial }
             if let sensorActivatedAt { raw["sensorActivatedAt"] = sensorActivatedAt.timeIntervalSince1970 }
             if let wearDurationMinutes { raw["wearDurationMinutes"] = wearDurationMinutes }

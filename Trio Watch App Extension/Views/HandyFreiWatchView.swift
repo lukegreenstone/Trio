@@ -138,6 +138,7 @@ final class HandyFreiSession {
                     bleAddress: address,
                     blePIN: pin,
                     phase5RawKey: phase5,
+                    peripheralID: UUID(uuidString: state.handyFreiSensorPeripheralID),
                     onGlucose: { mgdl in
                         DispatchQueue.main.async {
                             self.absorb(state, mgdl)
@@ -180,6 +181,9 @@ final class HandyFreiSession {
     private static func failureText(stage: String, error: Error) -> String {
         let headline: String
         if let link = error as? HandyFreiLinkError {
+            if case let .sensorNotSeen(detail) = link {
+                return "\(detail). Bluetooth am iPhone wieder einschalten."
+            }
             switch link {
             case .bluetoothOff:
                 headline = "Uhr-Bluetooth aus"

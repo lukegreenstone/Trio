@@ -161,6 +161,7 @@ enum HandyFreiPhone {
             let state = libre.state
             snapshot.sensorSerial = state.sensorSerial
             snapshot.bleAddress = state.bleAddress
+            snapshot.sensorPeripheralID = state.peripheralID?.uuidString
             snapshot.blePIN = state.blePIN?.base64EncodedString()
             snapshot.sensorActivatedAt = state.activatedAt
             snapshot.wearDurationMinutes = state.wearDurationMinutes

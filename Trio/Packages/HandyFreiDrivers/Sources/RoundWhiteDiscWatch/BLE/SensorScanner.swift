@@ -499,9 +499,7 @@ extension SensorScanner: CBCentralManagerDelegate {
         advertisementData: [String: Any],
         rssi RSSI: NSNumber
     ) {
-        let advSummary = advertisementData.reduce(into: [String: String]()) { acc, kv in
-            acc[kv.key] = String(describing: kv.value)
-        }
+        let advSummary = SensorScannerNG.advertisementSummary(advertisementData)
         let advertisedServices = (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]) ?? []
         let found = DiscoveredSensor(
             id: peripheral.identifier,

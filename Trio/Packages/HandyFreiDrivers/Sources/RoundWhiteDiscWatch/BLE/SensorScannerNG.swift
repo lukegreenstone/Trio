@@ -130,13 +130,23 @@ public final class SensorScannerNG: NSObject, @unchecked Sendable {
 
     // MARK: - Scan (fire-and-forget)
 
-    public func startScan(services: [CBUUID]? = [LibreSensorGATT.serviceUUID]) {
+    public func startScan(services: [CBUUID]? = [LibreSensorGATT.serviceUUID], allowDuplicates: Bool = false) {
         centralQueue.async { [weak self] in
             guard let self else { return }
             self.central.scanForPeripherals(
                 withServices: services,
-                options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
+                options: [CBCentralManagerScanOptionAllowDuplicatesKey: allowDuplicates]
             )
+        }
+    }
+
+    /// Yields the current radio state again. A scan that sees nothing otherwise
+    /// sits inside `events()` until the next advertisement, so a caller cannot
+    /// notice its own deadline.
+    public func reemitState() {
+        centralQueue.async { [weak self] in
+            guard let self else { return }
+            self.emit(.stateChanged(self.central.state))
         }
     }
 
@@ -223,6 +233,21 @@ public final class SensorScannerNG: NSObject, @unchecked Sendable {
 
     // MARK: - Internal: emit
 
+    /// Local name stays the raw string. Manufacturer bytes are hex, because
+    /// `String(describing:)` on `Data` is only a byte count.
+    static func advertisementSummary(_ advertisementData: [String: Any]) -> [String: String] {
+        var summary = advertisementData.reduce(into: [String: String]()) { acc, kv in
+            acc[kv.key] = String(describing: kv.value)
+        }
+        if let local = advertisementData[CBAdvertisementDataLocalNameKey] as? String {
+            summary[CBAdvertisementDataLocalNameKey] = local
+        }
+        if let manufacturer = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data {
+            summary["manufacturerHex"] = manufacturer.map { String(format: "%02X", $0) }.joined()
+        }
+        return summary
+    }
+
     /// Yield an event to every subscriber. Must be called on centralQueue.
     private func emit(_ event: Event) {
         for continuation in eventContinuations.values {
@@ -244,9 +269,7 @@ extension SensorScannerNG: CBCentralManagerDelegate {
         advertisementData: [String: Any],
         rssi RSSI: NSNumber
     ) {
-        let advSummary = advertisementData.reduce(into: [String: String]()) { acc, kv in
-            acc[kv.key] = String(describing: kv.value)
-        }
+        let advSummary = Self.advertisementSummary(advertisementData)
         let advertisedServices = (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]) ?? []
         let discovered = DiscoveredSensor(
             id: peripheral.identifier,

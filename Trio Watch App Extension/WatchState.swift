@@ -41,6 +41,7 @@ import WatchConnectivity
     var handyFreiRunning = false
     var handyFreiAlarm = ""
     var handyFreiBleAddress = ""
+    var handyFreiSensorPeripheralID = ""
     var handyFreiBlePIN = ""
     var handyFreiPhase5 = ""
     var handyFreiPumpSerial = ""
@@ -274,6 +275,7 @@ import WatchConnectivity
             if let snapshot = handyFrei["snapshot"] as? [String: Any] {
                 self.handyFreiReadyToConfirm = true
                 self.handyFreiBleAddress = snapshot["bleAddress"] as? String ?? ""
+                self.handyFreiSensorPeripheralID = snapshot["sensorPeripheralID"] as? String ?? ""
                 self.handyFreiBlePIN = snapshot["blePIN"] as? String ?? ""
                 self.handyFreiPhase5 = snapshot["phase5RawKey"] as? String ?? ""
                 self.handyFreiPumpSerial = snapshot["pumpSerial"] as? String ?? ""
