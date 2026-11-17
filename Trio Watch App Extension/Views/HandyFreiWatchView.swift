@@ -403,13 +403,22 @@ final class HandyFreiSession {
                     }
                 }
             }
-            guard sent, outcome.smb > 0, units > 0, outcome.iob + units <= outcome.maxIOB else { return }
+            // A failed temp cancel or set must not swallow the SMB from the same determination.
+            let underStep = outcome.smb > 0 && units <= 0
+            let overCap = units > 0 && outcome.iob + units > outcome.maxIOB
+            if underStep || overCap {
+                await MainActor.run {
+                    let why = underStep ? "SMB unter 0,05 U nicht gesendet" : "SMB über Max IOB nicht gesendet"
+                    state.handyFreiLoopLine = "\(state.handyFreiLoopLine) · \(why)"
+                }
+            }
+            guard units > 0, !overCap else { return }
             let bolusSent = await self.deliverBolus(state, units: units)
             if bolusSent {
                 await MainActor.run {
                     self.deliveries.append(HandyFreiLoop.Delivery(kind: "bolus", units: units, minutes: 0, date: Date()))
                     self.log.append(["date": Date().timeIntervalSince1970, "kind": "bolus", "units": units, "minutes": 0])
-                    state.handyFreiLoopLine = "\(Self.clock()) SMB \(String(format: "%.2f", units)) U · Pumpe ok · IOB \(state.iob ?? "--")"
+                    state.handyFreiLoopLine = "\(state.handyFreiLoopLine) · SMB \(String(format: "%.2f", units)) U · Pumpe ok"
                 }
             }
         }
@@ -464,14 +473,14 @@ final class HandyFreiSession {
                 return true
             } catch {
                 await noteUncertain(error)
-                guard attempt == 1, state.handyFreiRunning else { break }
+                guard attempt == 1, state.handyFreiRunning else {
+                    await self.showPumpFailure(state, command: label, error: error)
+                    break
+                }
                 await mark(state, "Pumpe: Sync, dann erneut")
                 try? await HandyFreiMedtrumLink.shared.send(.readHistory)
             }
         }
-        let skipped = "\(Self.clock()) \(label) übersprungen. Loop läuft weiter."
-        await MainActor.run { state.handyFreiLoopLine = skipped }
-        await mark(state, skipped)
         return false
     }
 
@@ -483,15 +492,25 @@ final class HandyFreiSession {
                 return true
             } catch {
                 await noteUncertain(error)
-                guard attempt == 1, state.handyFreiRunning else { break }
+                guard attempt == 1, state.handyFreiRunning else {
+                    await self.showPumpFailure(state, command: "bolus", error: error)
+                    break
+                }
                 await mark(state, "Pumpe: Sync, dann Bolus erneut")
                 try? await HandyFreiMedtrumLink.shared.send(.readHistory)
             }
         }
-        let skipped = "\(Self.clock()) bolus übersprungen. Loop läuft weiter."
-        await MainActor.run { state.handyFreiLoopLine = skipped }
-        await mark(state, skipped)
         return false
+    }
+
+    /// Shown on the watch. A missing session is not queued to the iPhone.
+    private func showPumpFailure(_ state: WatchState, command: String, error: Error) async {
+        let detail = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        let text = detail == "nicht gefunden"
+            ? "\(Self.clock()) \(command): Pumpe nicht verbunden"
+            : "\(Self.clock()) \(command) fehlgeschlagen. \(detail)"
+        await MainActor.run { state.handyFreiLoopLine = text }
+        await mark(state, text)
     }
 
     private static func clock() -> String {
