@@ -14,6 +14,7 @@ public enum HandyFreiLoop {
         public var maxIOB: Double
         public var maxBolus: Double
         public var maxBasal: Double
+        public var cob: Double
     }
 
     public struct Delivery: Equatable {
@@ -41,7 +42,7 @@ public enum HandyFreiLoop {
     ) -> Outcome {
         let empty = Outcome(
             deliver: false, cancelTemp: false, rate: 0, minutes: 0, smb: 0,
-            reason: "Schatten. Eingaben fehlen.", iob: 0, maxIOB: 0, maxBolus: 0, maxBasal: 0
+            reason: "Schatten. Eingaben fehlen.", iob: 0, maxIOB: 0, maxBolus: 0, maxBasal: 0, cob: 0
         )
         guard let newest = glucose.max(by: { $0.date < $1.date }) else { return empty }
         if now.timeIntervalSince(newest.date) > 12 * 60 {
@@ -147,7 +148,8 @@ public enum HandyFreiLoop {
                 iob: currentIOB,
                 maxIOB: maxIOB,
                 maxBolus: maxBolus,
-                maxBasal: NSDecimalNumber(decimal: settings.maxBasal).doubleValue
+                maxBasal: NSDecimalNumber(decimal: settings.maxBasal).doubleValue,
+                cob: NSDecimalNumber(decimal: meal?.mealCOB ?? 0).doubleValue
             )
         } catch {
             var failed = empty

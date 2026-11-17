@@ -157,6 +157,13 @@ struct GlucoseTrendView: View {
             .font(.system(size: minutesAgoFontSize))
             .fontWidth(isWatchStateDated ? .expanded : .standard)
 
+            if state.handyFreiRunning, !state.handyFreiLoopLine.isEmpty {
+                Text(state.handyFreiLoopLine)
+                    .font(.system(size: 9))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(4)
+            }
+
             Spacer()
 
         }.frame(maxWidth: .infinity, maxHeight: .infinity)

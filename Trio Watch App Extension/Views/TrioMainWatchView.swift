@@ -22,6 +22,7 @@ struct TrioMainWatchView: View {
     @State private var selectedTreatment: TreatmentOption?
 
     var isWatchStateDated: Bool {
+        if state.handyFreiRunning { return false }
         // If `lastWatchStateUpdate` is nil, treat as "dated"
         guard let lastUpdateTimestamp = state.lastWatchStateUpdate else {
             return true
@@ -33,6 +34,7 @@ struct TrioMainWatchView: View {
     }
 
     var isSessionUnreachable: Bool {
+        if state.handyFreiRunning { return false }
         guard let session = state.session else {
             return true // No session at all => unreachable
         }

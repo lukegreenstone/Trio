@@ -48,6 +48,9 @@ import WatchConnectivity
     var handyFreiSessionToken = ""
     var handyFreiBackupToken = ""
     var handyFreiGlucose: Int?
+    var handyFreiGlucoseDate: Date?
+    /// Last loop time, determination, and pump result. Sensor packets do not overwrite this.
+    var handyFreiLoopLine = ""
     var handyFreiFiles: [String: String] = [:]
     var handyFreiBasal: [Double] = []
     var handyFreiISF: [Double] = []
@@ -670,6 +673,44 @@ import WatchConnectivity
 
         applyRheosFields(message)
         publishWatchFace()
+    }
+
+    /// The main bubble reads these fields. During Handy-frei they come from the watch, not the phone.
+    func applyHandyFreiDisplay(mgdl: Int, iob: Double, cob: Double, loopLine: String, loopAgeMinutes: Int) {
+        let now = Date()
+        handyFreiGlucose = mgdl
+        handyFreiGlucoseDate = now
+        handyFreiLoopLine = loopLine
+        currentGlucose = "\(mgdl)"
+        let previous = glucoseValues.last
+        if let previous {
+            let minutes = max(now.timeIntervalSince(previous.date) / 60, 0.1)
+            let deltaValue = Double(mgdl) - previous.glucose
+            let perFive = deltaValue / minutes * 5
+            delta = String(format: "%+.0f", deltaValue)
+            trend = Self.handyFreiTrend(perFive)
+        }
+        glucoseValues.append((date: now, glucose: Double(mgdl), color: currentGlucoseColorString.toColor()))
+        if glucoseValues.count > 36 {
+            glucoseValues.removeFirst(glucoseValues.count - 36)
+        }
+        self.iob = String(format: "%.1f", iob)
+        self.cob = String(format: "%.0f", cob)
+        lastLoopTime = "\(max(0, loopAgeMinutes)) min"
+        lastWatchStateUpdate = now.timeIntervalSince1970
+        publishWatchFace()
+    }
+
+    private static func handyFreiTrend(_ perFive: Double) -> String {
+        switch perFive {
+        case 15...: return "DoubleUp"
+        case 10 ..< 15: return "SingleUp"
+        case 5 ..< 10: return "FortyFiveUp"
+        case -5 ..< 5: return "Flat"
+        case -10 ..< -5: return "FortyFiveDown"
+        case -15 ..< -10: return "SingleDown"
+        default: return "DoubleDown"
+        }
     }
 
     private func publishWatchFace() {

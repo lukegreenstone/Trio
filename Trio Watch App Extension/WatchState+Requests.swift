@@ -8,6 +8,12 @@ extension WatchState {
     /// - Parameters:
     ///   - amount: The insulin amount to be delivered
     func sendBolusRequest(_ amount: Decimal) {
+        if handyFreiRunning {
+            showCommsAnimation = true
+            acknowledgementStatus = .pending
+            Task { await HandyFreiSession.shared.manualBolus(self, units: Double(truncating: amount as NSNumber)) }
+            return
+        }
         guard let session = session, session.isReachable else {
             Task {
                 await WatchLogger.shared.log("⌚️ Bolus request aborted: session unreachable")
@@ -74,6 +80,10 @@ extension WatchState {
 
     /// Sends a request to cancel the current override preset to the paired iPhone
     func sendCancelOverrideRequest() {
+        if handyFreiRunning {
+            handleAcknowledgment(success: false, message: "Override bleibt auf dem iPhone. Der Loop nutzt das Profil aus dem Schnappschuss.")
+            return
+        }
         guard let session = session, session.isReachable else {
             Task {
                 await WatchLogger.shared.log("⌚️ Cancel override request aborted: session unreachable")
@@ -107,6 +117,10 @@ extension WatchState {
     /// Sends a request to activate an override preset to the paired iPhone
     /// - Parameter presetName: The name of the override preset to activate
     func sendActivateOverrideRequest(presetName: String) {
+        if handyFreiRunning {
+            handleAcknowledgment(success: false, message: "Override \(presetName) bleibt auf dem iPhone. Der Loop nutzt das Profil aus dem Schnappschuss.")
+            return
+        }
         guard let session = session, session.isReachable else {
             Task {
                 await WatchLogger.shared.log("⌚️ Activate override request aborted: session unreachable")
@@ -139,6 +153,10 @@ extension WatchState {
 
     /// Sends a request to cancel the current temporary target to the paired iPhone
     func sendCancelTempTargetRequest() {
+        if handyFreiRunning {
+            handleAcknowledgment(success: false, message: "Temp-Ziel bleibt auf dem iPhone. Der Loop nutzt das Profil aus dem Schnappschuss.")
+            return
+        }
         guard let session = session, session.isReachable else {
             Task {
                 await WatchLogger.shared.log("⌚️ Cancel temp target request aborted: session unreachable")
@@ -172,6 +190,10 @@ extension WatchState {
     /// Sends a request to activate a temporary target preset to the paired iPhone
     /// - Parameter presetName: The name of the temporary target preset to activate
     func sendActivateTempTargetRequest(presetName: String) {
+        if handyFreiRunning {
+            handleAcknowledgment(success: false, message: "Temp-Ziel \(presetName) bleibt auf dem iPhone. Der Loop nutzt das Profil aus dem Schnappschuss.")
+            return
+        }
         guard let session = session, session.isReachable else {
             Task {
                 await WatchLogger.shared.log("⌚️ Activate temp target request aborted: session unreachable")
