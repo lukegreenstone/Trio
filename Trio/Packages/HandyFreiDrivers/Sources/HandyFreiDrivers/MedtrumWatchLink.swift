@@ -67,7 +67,7 @@ public final class HandyFreiMedtrumLink: NSObject, CBCentralManagerDelegate, CBP
             queue.asyncAfter(deadline: .now() + 10) { [weak self] in
                 self?.failPowerIfStillWaiting()
             }
-            queue.asyncAfter(deadline: .now() + 90) { [weak self] in
+            queue.asyncAfter(deadline: .now() + 180) { [weak self] in
                 self?.finishConnect(.failure(HandyFreiLinkError.notFound))
             }
         }
@@ -154,6 +154,7 @@ public final class HandyFreiMedtrumLink: NSObject, CBCentralManagerDelegate, CBP
     }
 
     public func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        guard central === self.central else { return }
         lastPower = central.state
         switch central.state {
         case .poweredOn:
@@ -175,6 +176,7 @@ public final class HandyFreiMedtrumLink: NSObject, CBCentralManagerDelegate, CBP
         advertisementData: [String: Any],
         rssi: NSNumber
     ) {
+        guard central === self.central else { return }
         guard let name = advertisementData[CBAdvertisementDataLocalNameKey] as? String, !name.isEmpty, name == "MT",
               let manufacturer = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
               manufacturer.count >= 7,
@@ -187,6 +189,7 @@ public final class HandyFreiMedtrumLink: NSObject, CBCentralManagerDelegate, CBP
     }
 
     public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        guard central === self.central else { return }
         peripheral.discoverServices([CBUUID.SERVICE_UUID])
     }
 
@@ -285,8 +288,8 @@ public final class HandyFreiMedtrumLink: NSObject, CBCentralManagerDelegate, CBP
         }
     }
 
-    public func centralManager(_: CBCentralManager, didDisconnectPeripheral _: CBPeripheral, error _: Error?) {
-        guard !stopping else { return }
+    public func centralManager(_ central: CBCentralManager, didDisconnectPeripheral _: CBPeripheral, error _: Error?) {
+        guard central === self.central, !stopping else { return }
         fail(HandyFreiLinkError.notFound)
         if ready { onConnectionLost?() }
     }
@@ -320,7 +323,7 @@ public final class HandyFreiMedtrumLink: NSObject, CBCentralManagerDelegate, CBP
                 for package in packages {
                     peripheral.writeValue(package, for: writeCharacteristic, type: .withResponse)
                 }
-                self.queue.asyncAfter(deadline: .now() + 30) {
+                self.queue.asyncAfter(deadline: .now() + 45) {
                     self.finishWrite(
                         .failure(HandyFreiLinkError.pumpRefused("\(name) gesendet. Zeitüberschreitung")),
                         generation: generation
