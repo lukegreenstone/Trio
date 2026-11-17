@@ -167,7 +167,7 @@ final class HandyFreiSession {
             let newest = snapshot.date
             if snapshot.hasReading {
                 let quiet = Date().timeIntervalSince(newest)
-                if quiet > 6 * 60, Date().timeIntervalSince(lastStallAttempt) > 6 * 60 {
+                if quiet > 5 * 60, Date().timeIntervalSince(lastStallAttempt) > 5 * 60 {
                     await reconnectStalledSensor(state, quietMinutes: Int(quiet / 60))
                 }
             }
