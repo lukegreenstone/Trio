@@ -25,14 +25,28 @@ public enum HandyFreiLibreLink {
         heldScanner = scanner
         let expected = bleAddress.replacingOccurrences(of: ":", with: "").uppercased()
         let events = scanner.events()
+        let powerDeadline = Date().addingTimeInterval(10)
         let deadline = Date().addingTimeInterval(120)
+        var poweredOn = false
         var peripheral: CBPeripheral?
         for await event in events {
-            if Date() > deadline { throw HandyFreiLinkError.notFound }
+            if !poweredOn, Date() > powerDeadline { throw HandyFreiLinkError.bluetoothOff }
+            if poweredOn, Date() > deadline { throw HandyFreiLinkError.notFound }
             switch event {
             case let .stateChanged(state):
-                if state == .poweredOn { scanner.startScan() }
-                if state == .poweredOff || state == .unauthorized { throw HandyFreiLinkError.bluetoothOff }
+                switch state {
+                case .poweredOn:
+                    poweredOn = true
+                    scanner.startScan()
+                case .poweredOff:
+                    throw HandyFreiLinkError.bluetoothOff
+                case .unauthorized:
+                    throw HandyFreiLinkError.bluetoothDenied
+                case .unsupported:
+                    throw HandyFreiLinkError.bluetoothUnsupported
+                default:
+                    break
+                }
             case let .didDiscover(found):
                 let name = found.advertisementData[CBAdvertisementDataLocalNameKey] ?? found.name
                 if name?.uppercased() == expected {
@@ -45,17 +59,24 @@ public enum HandyFreiLibreLink {
                 try await session.discoverAndSubscribe()
                 let transport = SensorSessionTransport(session: session)
                 let flow = PairingFlow(transport: transport, eventLogger: { _ in })
-                let cached = try await flow.runCachedReconnectHandshake(
-                    tail4: blePIN,
-                    phase5RawKey: phase5RawKey,
-                    r2Provider: {
-                        var bytes = [UInt8](repeating: 0, count: 16)
-                        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
-                            throw HandyFreiLinkError.badKey
+                let cached: CachedReconnectHandshakeResult
+                do {
+                    cached = try await flow.runCachedReconnectHandshake(
+                        tail4: blePIN,
+                        phase5RawKey: phase5RawKey,
+                        r2Provider: {
+                            var bytes = [UInt8](repeating: 0, count: 16)
+                            guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+                                throw HandyFreiLinkError.badKey
+                            }
+                            return Data(bytes)
                         }
-                        return Data(bytes)
-                    }
-                )
+                    )
+                } catch let error as HandyFreiLinkError {
+                    throw error
+                } catch {
+                    throw HandyFreiLinkError.handshake(error.localizedDescription)
+                }
                 let material = cached.sessionMaterial
                 let monitor = try LibreLoopSensorMonitor.make(
                     scanner: scanner,
@@ -83,9 +104,31 @@ public enum HandyFreiLibreLink {
     }
 }
 
-public enum HandyFreiLinkError: Error {
+public enum HandyFreiLinkError: LocalizedError {
     case badKey
     case bluetoothOff
+    case bluetoothDenied
+    case bluetoothUnsupported
     case notFound
-    case pumpRefused
+    case pumpRefused(String)
+    case handshake(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .badKey:
+            return "Schlüssel unvollständig"
+        case .bluetoothOff:
+            return "Bluetooth aus"
+        case .bluetoothDenied:
+            return "Bluetooth nicht erlaubt"
+        case .bluetoothUnsupported:
+            return "Bluetooth nicht unterstützt"
+        case .notFound:
+            return "nicht gefunden"
+        case let .pumpRefused(detail):
+            return detail.isEmpty ? "Anmeldung abgelehnt" : detail
+        case let .handshake(detail):
+            return detail.isEmpty ? "Handshake" : detail
+        }
+    }
 }

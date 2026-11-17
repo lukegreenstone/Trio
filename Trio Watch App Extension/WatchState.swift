@@ -45,6 +45,7 @@ import WatchConnectivity
     var handyFreiPhase5 = ""
     var handyFreiPumpSerial = ""
     var handyFreiSessionToken = ""
+    var handyFreiBackupToken = ""
     var handyFreiGlucose: Int?
     var handyFreiFiles: [String: String] = [:]
     var handyFreiBasal: [Double] = []
@@ -276,7 +277,8 @@ import WatchConnectivity
                 self.handyFreiBlePIN = snapshot["blePIN"] as? String ?? ""
                 self.handyFreiPhase5 = snapshot["phase5RawKey"] as? String ?? ""
                 self.handyFreiPumpSerial = snapshot["pumpSerial"] as? String ?? ""
-                self.handyFreiSessionToken = snapshot["sessionToken"] as? String ?? ""
+                    self.handyFreiSessionToken = snapshot["sessionToken"] as? String ?? ""
+                    self.handyFreiBackupToken = snapshot["backupSessionToken"] as? String ?? ""
                 self.handyFreiFiles = snapshot["loopFiles"] as? [String: String] ?? [:]
                 self.handyFreiBasal = (snapshot["rheosBasal"] as? [NSNumber])?.map(\.doubleValue) ?? []
                 self.handyFreiISF = (snapshot["rheosISF"] as? [NSNumber])?.map(\.doubleValue) ?? []

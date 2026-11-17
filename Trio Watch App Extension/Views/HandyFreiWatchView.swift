@@ -79,17 +79,12 @@ final class HandyFreiSession {
         log = []
         deliveries = []
         readings = []
-        HandyFreiWorkout.shared.start { ended in
-            DispatchQueue.main.async {
-                guard state.handyFreiRunning, ended else { return }
-                self.fail(state, "Die Workout-Sitzung ist zu Ende. Bluetooth am iPhone wieder einschalten.")
-            }
-        }
         let address = state.handyFreiBleAddress
         let pin = Data(base64Encoded: state.handyFreiBlePIN) ?? Data()
         let phase5 = Data(base64Encoded: state.handyFreiPhase5) ?? Data()
         let pump = state.handyFreiPumpSerial
         let token = state.handyFreiSessionToken
+        let backup = state.handyFreiBackupToken
         HandyFreiMedtrumLink.shared.onConnectionLost = {
             DispatchQueue.main.async {
                 guard state.handyFreiRunning else { return }
@@ -98,18 +93,47 @@ final class HandyFreiSession {
         }
         Task {
             guard state.handyFreiRunning, epoch == self.doseEpoch else { return }
+            let allowed = await HandyFreiWorkout.shared.prepare { ended in
+                DispatchQueue.main.async {
+                    guard state.handyFreiRunning, ended else { return }
+                    self.fail(state, "Die Workout-Sitzung ist zu Ende. Bluetooth am iPhone wieder einschalten.")
+                }
+            }
+            guard allowed else {
+                await MainActor.run {
+                    self.fail(state, "HealthKit nicht erlaubt. Bluetooth am iPhone wieder einschalten.")
+                }
+                return
+            }
+            guard state.handyFreiRunning, epoch == self.doseEpoch else { return }
+            var stage = "Pumpe"
             do {
-                try await HandyFreiMedtrumLink.shared.connect(pumpSerialBase64: pump, sessionTokenBase64: token)
+                stage = "Pumpe"
+                await self.mark(state, "Pumpe: suche")
+                try await HandyFreiMedtrumLink.shared.connect(
+                    pumpSerialBase64: pump,
+                    sessionTokenBase64: token,
+                    backupTokenBase64: backup
+                )
+                await self.mark(state, "Pumpe: verbunden")
                 guard state.handyFreiRunning, epoch == self.doseEpoch else {
                     HandyFreiMedtrumLink.shared.stop()
                     return
                 }
+                stage = "Pumpe: Status"
+                await self.mark(state, "Pumpe: Status lesen")
                 try await HandyFreiMedtrumLink.shared.send(.readStatus)
+                await self.mark(state, "Pumpe: Status gelesen")
+                stage = "Pumpe: Verlauf"
+                await self.mark(state, "Pumpe: Verlauf lesen")
                 try await HandyFreiMedtrumLink.shared.send(.readHistory)
+                await self.mark(state, "Pumpe: Verlauf gelesen")
                 guard state.handyFreiRunning, epoch == self.doseEpoch else {
                     HandyFreiMedtrumLink.shared.stop()
                     return
                 }
+                stage = "Sensor"
+                await self.mark(state, "Sensor: suche")
                 try await HandyFreiLibreLink.reconnect(
                     bleAddress: address,
                     blePIN: pin,
@@ -126,13 +150,54 @@ final class HandyFreiSession {
                         }
                     }
                 )
+                await self.mark(state, "Sensor: verbunden")
             } catch {
+                let text = Self.failureText(stage: stage, error: error)
+                await self.mark(state, text)
                 await MainActor.run {
                     guard state.handyFreiRunning else { return }
-                    self.fail(state, "Verbindung fehlgeschlagen. Bluetooth am iPhone wieder einschalten.")
+                    self.fail(state, text)
                 }
             }
         }
+    }
+
+    private func mark(_ state: WatchState, _ text: String) async {
+        await MainActor.run { state.handyFreiStatus = text }
+        await WatchLogger.shared.log("Handy-frei \(text)")
+    }
+
+    private static func failureText(stage: String, error: Error) -> String {
+        let headline: String
+        if let link = error as? HandyFreiLinkError {
+            switch link {
+            case .bluetoothOff:
+                headline = "Uhr-Bluetooth aus"
+            case .bluetoothDenied:
+                headline = "Uhr-Bluetooth nicht erlaubt"
+            case .bluetoothUnsupported:
+                headline = "Uhr-Bluetooth nicht unterstützt"
+            case .notFound where stage == "Pumpe":
+                headline = "Pumpe: nicht gefunden (Scan 90 s)"
+            case .pumpRefused(_) where stage == "Pumpe":
+                headline = "Pumpe: Anmeldung abgelehnt"
+            case .pumpRefused(_) where stage == "Pumpe: Status":
+                headline = "Pumpe: Status lesen Zeitüberschreitung"
+            case .badKey where stage == "Sensor":
+                headline = "Sensor: Schlüssel unvollständig"
+            case .notFound where stage == "Sensor":
+                headline = "Sensor: nicht gefunden"
+            case .handshake(_) where stage == "Sensor":
+                headline = "Sensor: Handshake"
+            default:
+                headline = stage == "Pumpe: Verlauf" ? "Pumpe: Verlauf lesen" : "\(stage): \(error.localizedDescription)"
+            }
+        } else if stage == "Pumpe: Verlauf" {
+            headline = "Pumpe: Verlauf lesen"
+        } else {
+            headline = "\(stage): \(error.localizedDescription)"
+        }
+        return "\(headline). \(error.localizedDescription). Bluetooth am iPhone wieder einschalten."
     }
 
     private func absorb(_ state: WatchState, _ mgdl: Int) {
@@ -254,8 +319,15 @@ final class HandyFreiWorkout: NSObject, HKWorkoutSessionDelegate {
     private var session: HKWorkoutSession?
     private var onEnd: ((Bool) -> Void)?
 
-    func start(onEnd: @escaping (Bool) -> Void) {
+    func prepare(onEnd: @escaping (Bool) -> Void) async -> Bool {
         self.onEnd = onEnd
+        let workout = HKObjectType.workoutType()
+        do {
+            try await store.requestAuthorization(toShare: [workout], read: [workout])
+        } catch {
+            return false
+        }
+        guard store.authorizationStatus(for: workout) == .sharingAuthorized else { return false }
         let configuration = HKWorkoutConfiguration()
         configuration.activityType = .other
         configuration.locationType = .unknown
@@ -264,8 +336,9 @@ final class HandyFreiWorkout: NSObject, HKWorkoutSessionDelegate {
             session.delegate = self
             self.session = session
             session.startActivity(with: Date())
+            return true
         } catch {
-            onEnd(true)
+            return false
         }
     }
 

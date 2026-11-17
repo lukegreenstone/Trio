@@ -12,6 +12,7 @@ struct WatchConfigAppleWatchView: BaseView {
     @State private var decimalPlaceholder: Decimal = 0.0
     @State private var booleanPlaceholder: Bool = false
     @State private var handyFreiNote = ""
+    @State private var handyFreiReport = HandyFreiPhone.lastReport
 
     @Environment(\.colorScheme) var colorScheme
     @Environment(AppState.self) var appState
@@ -118,6 +119,9 @@ struct WatchConfigAppleWatchView: BaseView {
                 if !handyFreiNote.isEmpty {
                     Text(handyFreiNote).font(.footnote)
                 }
+                if !handyFreiReport.isEmpty {
+                    Text(handyFreiReport).font(.footnote)
+                }
             } header: {
                 Text("Handy-frei")
             }
@@ -135,6 +139,7 @@ struct WatchConfigAppleWatchView: BaseView {
                 }
             ).listRowBackground(Color.chart)
         }
+        .onAppear { handyFreiReport = HandyFreiPhone.lastReport }
         .listSectionSpacing(sectionSpacing)
         .sheet(isPresented: $shouldDisplayHint) {
             SettingInputHintView(

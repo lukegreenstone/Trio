@@ -49,6 +49,7 @@ enum HandyFrei {
     struct Snapshot: Equatable {
         var pumpSerial: String?
         var sessionToken: String?
+        var backupSessionToken: String?
         var patchId: String?
         var patchActivatedAt: Date?
         var patchExpiresAt: Date?
@@ -84,6 +85,7 @@ enum HandyFrei {
             ]
             if let pumpSerial { raw["pumpSerial"] = pumpSerial }
             if let sessionToken { raw["sessionToken"] = sessionToken }
+            if let backupSessionToken { raw["backupSessionToken"] = backupSessionToken }
             if let patchId { raw["patchId"] = patchId }
             if let patchActivatedAt { raw["patchActivatedAt"] = patchActivatedAt.timeIntervalSince1970 }
             if let patchExpiresAt { raw["patchExpiresAt"] = patchExpiresAt.timeIntervalSince1970 }

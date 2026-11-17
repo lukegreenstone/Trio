@@ -10,6 +10,7 @@ import WatchConnectivity
 enum HandyFreiPhone {
     private static let statusKey = "handyfrei.status"
     private static let logKey = "handyfrei.log"
+    private static let reportKey = "handyfrei.report"
     private static let lock = NSLock()
     private static var pending: HandyFrei.Session?
     private static var lastSnapshot: HandyFrei.Snapshot?
@@ -17,6 +18,10 @@ enum HandyFreiPhone {
 
     static var status: String {
         UserDefaults.standard.string(forKey: statusKey) ?? "Handy-frei ist aus."
+    }
+
+    static var lastReport: String {
+        UserDefaults.standard.string(forKey: reportKey) ?? ""
     }
 
     static func prepare(fingerprint: HandyFrei.Fingerprint, snapshot: HandyFrei.Snapshot) -> HandyFrei.Session {
@@ -97,6 +102,9 @@ enum HandyFreiPhone {
         if let data {
             UserDefaults.standard.set(data, forKey: logKey)
         }
+        if let text = entries.reversed().compactMap({ $0["text"] as? String }).first(where: { !$0.isEmpty }) {
+            UserDefaults.standard.set(text, forKey: reportKey)
+        }
         storeDeliveries(entries)
         lock.lock()
         logImported = true
@@ -144,6 +152,7 @@ enum HandyFreiPhone {
             let state = medtrum.state
             snapshot.pumpSerial = state.pumpSN.base64EncodedString()
             snapshot.sessionToken = state.sessionToken.base64EncodedString()
+            snapshot.backupSessionToken = state.backupSessionToken.base64EncodedString()
             snapshot.patchId = state.patchId.base64EncodedString()
             snapshot.patchActivatedAt = state.patchActivatedAt
             snapshot.patchExpiresAt = state.patchExpiresAt

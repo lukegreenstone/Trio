@@ -11,11 +11,17 @@ public final class HandyFreiMedtrumLink: NSObject, CBCentralManagerDelegate, CBP
     private var writeCharacteristic: CBCharacteristic?
     private var sequence: UInt8 = 0
     private var pumpSN = Data()
+    /// Advertisement serial is the stored serial reversed, same as MedtrumKit BluetoothManager.
+    private var advertisedSN = Data()
     private var sessionToken = Data()
+    private var backupToken = Data()
+    private var lastPower: CBManagerState = .unknown
     private var connectWaiter: CheckedContinuation<Void, Error>?
     private var writeWaiter: CheckedContinuation<Void, Error>?
-    private var expected: UInt8 = 0
+    private var pendingPacket: (any MedtrumBasePacketProtocol)?
+    private var pendingSequence: UInt8 = 0
     private var writeGeneration = 0
+    private var ready = false
     private var stopping = false
     private let queue = DispatchQueue(label: "handyfrei.medtrum")
     /// Fired once when the pump link drops on its own. Not fired when `stop()` closes it.
@@ -29,22 +35,60 @@ public final class HandyFreiMedtrumLink: NSObject, CBCentralManagerDelegate, CBP
         central = nil
         peripheral = nil
         writeCharacteristic = nil
+        ready = false
     }
 
-    public func connect(pumpSerialBase64: String, sessionTokenBase64: String) async throws {
+    public func connect(pumpSerialBase64: String, sessionTokenBase64: String, backupTokenBase64: String = "") async throws {
         guard let serial = Data(base64Encoded: pumpSerialBase64), !serial.isEmpty,
               let token = Data(base64Encoded: sessionTokenBase64), !token.isEmpty
         else { throw HandyFreiLinkError.badKey }
         stopping = false
+        ready = false
+        lastPower = .unknown
         pumpSN = serial
+        advertisedSN = Data(serial.reversed())
         sessionToken = token
+        backupToken = Data(base64Encoded: backupTokenBase64) ?? Data()
         central = CBCentralManager(delegate: self, queue: queue)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             queue.async {
                 self.connectWaiter = continuation
+                self.failPowerIfTerminal()
             }
-            queue.asyncAfter(deadline: .now() + 45) { [weak self] in
+            queue.asyncAfter(deadline: .now() + 10) { [weak self] in
+                self?.failPowerIfStillWaiting()
+            }
+            queue.asyncAfter(deadline: .now() + 90) { [weak self] in
                 self?.finishConnect(.failure(HandyFreiLinkError.notFound))
+            }
+        }
+    }
+
+    private func failPowerIfTerminal() {
+        switch lastPower {
+        case .poweredOff:
+            finishConnect(.failure(HandyFreiLinkError.bluetoothOff))
+        case .unauthorized:
+            finishConnect(.failure(HandyFreiLinkError.bluetoothDenied))
+        case .unsupported:
+            finishConnect(.failure(HandyFreiLinkError.bluetoothUnsupported))
+        case .poweredOn:
+            central?.scanForPeripherals(withServices: nil)
+        default:
+            break
+        }
+    }
+
+    private func failPowerIfStillWaiting() {
+        queue.async {
+            guard self.connectWaiter != nil, self.peripheral == nil, self.lastPower != .poweredOn else { return }
+            switch self.lastPower {
+            case .unauthorized:
+                self.finishConnect(.failure(HandyFreiLinkError.bluetoothDenied))
+            case .unsupported:
+                self.finishConnect(.failure(HandyFreiLinkError.bluetoothUnsupported))
+            default:
+                self.finishConnect(.failure(HandyFreiLinkError.bluetoothOff))
             }
         }
     }
@@ -65,13 +109,26 @@ public final class HandyFreiMedtrumLink: NSObject, CBCentralManagerDelegate, CBP
             packet = SetBolusPacket(bolusAmount: units)
         }
         let code = packet.commandType
-        guard !HandyFreiMedtrumCommand.forbidden.contains(code) else { throw HandyFreiLinkError.pumpRefused }
+        guard !HandyFreiMedtrumCommand.forbidden.contains(code) else {
+            throw HandyFreiLinkError.pumpRefused("Befehl nicht erlaubt")
+        }
         try await write(packet)
     }
 
     public func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        guard central.state == .poweredOn else { return }
-        central.scanForPeripherals(withServices: nil)
+        lastPower = central.state
+        switch central.state {
+        case .poweredOn:
+            central.scanForPeripherals(withServices: nil)
+        case .poweredOff:
+            finishConnect(.failure(HandyFreiLinkError.bluetoothOff))
+        case .unauthorized:
+            finishConnect(.failure(HandyFreiLinkError.bluetoothDenied))
+        case .unsupported:
+            finishConnect(.failure(HandyFreiLinkError.bluetoothUnsupported))
+        default:
+            break
+        }
     }
 
     public func centralManager(
@@ -80,10 +137,10 @@ public final class HandyFreiMedtrumLink: NSObject, CBCentralManagerDelegate, CBP
         advertisementData: [String: Any],
         rssi: NSNumber
     ) {
-        guard let name = advertisementData[CBAdvertisementDataLocalNameKey] as? String, name == "MT",
+        guard let name = advertisementData[CBAdvertisementDataLocalNameKey] as? String, !name.isEmpty, name == "MT",
               let manufacturer = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
-              manufacturer.count >= 6,
-              manufacturer.subdata(in: 2 ..< 6) == pumpSN
+              manufacturer.count >= 7,
+              manufacturer.subdata(in: 2 ..< 6) == advertisedSN
         else { return }
         central.stopScan()
         self.peripheral = peripheral
@@ -112,13 +169,19 @@ public final class HandyFreiMedtrumLink: NSObject, CBCentralManagerDelegate, CBP
             return
         }
         writeCharacteristic = write
-        peripheral.setNotifyValue(true, for: read)
+        for characteristic in service.characteristics ?? [] {
+            if characteristic.properties.contains(.notify) || characteristic.properties.contains(.indicate) {
+                peripheral.setNotifyValue(true, for: characteristic)
+            }
+        }
+        _ = read
         Task { [weak self] in
             guard let self else { return }
             do {
-                try await self.write(AuthorizePacket(pumpSN: self.pumpSN, sessionToken: self.sessionToken))
+                try await self.authorize()
                 try await self.write(SynchronizePacket())
                 try await self.write(SubscribePacket())
+                self.ready = true
                 self.finishConnect(.success(()))
             } catch {
                 self.finishConnect(.failure(error))
@@ -126,32 +189,60 @@ public final class HandyFreiMedtrumLink: NSObject, CBCentralManagerDelegate, CBP
         }
     }
 
-    public func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
-        guard error == nil, let data = characteristic.value, data.count > 2, data[1] == expected else { return }
-        finishWrite(.success(()))
+    /// Same reply path as MedtrumKit PeripheralManager: sequence is byte 2, fragments use decode().
+    public func peripheral(_: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+        if error != nil {
+            finishWrite(.failure(HandyFreiLinkError.pumpRefused(error?.localizedDescription ?? "Notify")))
+            return
+        }
+        guard let data = characteristic.value, !data.isEmpty else { return }
+        if characteristic.uuid == CBUUID.READ_UUID { return }
+        guard data.count > 2, data[2] == pendingSequence, var packet = pendingPacket else { return }
+        packet.decode(data)
+        pendingPacket = packet
+        guard packet.isComplete else { return }
+        if packet.responseCode == 16384 { return }
+        if packet.responseCode != 0 {
+            finishWrite(.failure(HandyFreiLinkError.pumpRefused("Code \(packet.responseCode)")))
+        } else if packet.failed || !packet.hasEnoughData {
+            finishWrite(.failure(HandyFreiLinkError.pumpRefused("Antwort ungültig")))
+        } else {
+            finishWrite(.success(()))
+        }
+    }
+
+    private func authorize() async throws {
+        do {
+            try await write(AuthorizePacket(pumpSN: pumpSN, sessionToken: sessionToken))
+        } catch {
+            guard !backupToken.isEmpty else { throw error }
+            try await write(AuthorizePacket(pumpSN: pumpSN, sessionToken: backupToken))
+        }
     }
 
     public func centralManager(_: CBCentralManager, didDisconnectPeripheral _: CBPeripheral, error _: Error?) {
         guard !stopping else { return }
         fail(HandyFreiLinkError.notFound)
-        onConnectionLost?()
+        if ready { onConnectionLost?() }
     }
 
     private func write(_ packet: any MedtrumBasePacketProtocol) async throws {
         guard let peripheral, let writeCharacteristic else { throw HandyFreiLinkError.notFound }
-        let packages = packet.encode(sequenceNumber: sequence)
-        sequence = sequence &+ 1
-        expected = packet.commandType
+        let seq = sequence
+        sequence = sequence >= 253 ? 0 : sequence &+ 1
+        let packages = packet.encode(sequenceNumber: seq)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             queue.async {
                 self.writeGeneration += 1
                 let generation = self.writeGeneration
+                self.pendingSequence = seq
+                self.pendingPacket = packet
                 self.writeWaiter = continuation
                 for package in packages {
                     peripheral.writeValue(package, for: writeCharacteristic, type: .withResponse)
                 }
                 self.queue.asyncAfter(deadline: .now() + 30) {
-                    self.finishWrite(.failure(HandyFreiLinkError.pumpRefused), generation: generation)
+                    self.finishWrite(.failure(HandyFreiLinkError.pumpRefused("Zeitüberschreitung")), generation: generation)
                 }
             }
         }
