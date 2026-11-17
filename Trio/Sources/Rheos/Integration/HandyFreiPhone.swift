@@ -162,6 +162,9 @@ enum HandyFreiPhone {
             snapshot.sensorSerial = state.sensorSerial
             snapshot.bleAddress = state.bleAddress
             snapshot.blePIN = state.blePIN?.base64EncodedString()
+            snapshot.sensorActivatedAt = state.activatedAt
+            snapshot.wearDurationMinutes = state.wearDurationMinutes
+            snapshot.warmupDurationMinutes = state.warmupDurationMinutes
             if let serial = state.sensorSerial, !serial.isEmpty,
                let keys = HandyFreiKeyCopy.read(serial: serial),
                let phase5 = keys.phase5, !phase5.isEmpty

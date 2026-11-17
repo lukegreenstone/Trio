@@ -90,6 +90,7 @@ public final class LibreLoopSensorMonitor: @unchecked Sendable {
     private var rawReadHandler: RawReadHandler?
     /// Monotonic id for captured read records (debug inspector).
     private var readSequence = 0
+    private var packetCount = 0
     /// Per-session outbound write sequence counter, used for AES-CCM nonce
     /// construction on PatchControl writes.
     private var outboundSequence: UInt16 = 0
@@ -439,6 +440,11 @@ public final class LibreLoopSensorMonitor: @unchecked Sendable {
     }
 
     private func handle(_ event: NotifyEvent) {
+        lock.lock()
+        packetCount += 1
+        let count = packetCount
+        lock.unlock()
+        emitStatus("Sensor: Paket empfangen \(count)")
         guard let channel = DataPlaneChannel(uuidString: event.characteristic.uuidString) else {
             llog("notify on unmapped char \(event.characteristic.uuidString)")
             return
@@ -588,6 +594,7 @@ public final class LibreLoopSensorMonitor: @unchecked Sendable {
             }
         } catch {
             llog("\(channel.rawValue) decode failed: \(String(describing: error))")
+            emitStatus("Sensor: Entschlüsselung fehlgeschlagen. \(error.localizedDescription)")
         }
     }
 

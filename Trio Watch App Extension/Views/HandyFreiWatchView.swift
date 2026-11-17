@@ -148,9 +148,12 @@ final class HandyFreiSession {
                             guard state.handyFreiRunning else { return }
                             self.fail(state, "Sensor weg. Bluetooth am iPhone wieder einschalten.")
                         }
+                    },
+                    onStatus: { text in
+                        Task { await self.mark(state, text) }
                     }
                 )
-                await self.mark(state, "Sensor: verbunden")
+                await self.mark(state, "Sensor: verbunden, warte auf Werte")
             } catch {
                 let text = Self.failureText(stage: stage, error: error)
                 await self.mark(state, text)
@@ -163,7 +166,14 @@ final class HandyFreiSession {
     }
 
     private func mark(_ state: WatchState, _ text: String) async {
-        await MainActor.run { state.handyFreiStatus = text }
+        await MainActor.run {
+            state.handyFreiStatus = text
+            log.append([
+                "date": Date().timeIntervalSince1970,
+                "kind": "stage",
+                "text": text
+            ])
+        }
         await WatchLogger.shared.log("Handy-frei \(text)")
     }
 

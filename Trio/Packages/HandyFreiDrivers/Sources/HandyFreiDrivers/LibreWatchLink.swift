@@ -18,7 +18,8 @@ public enum HandyFreiLibreLink {
         blePIN: Data,
         phase5RawKey: Data,
         onGlucose: @escaping @Sendable (Int) -> Void,
-        onDisconnect: @escaping @Sendable () -> Void = {}
+        onDisconnect: @escaping @Sendable () -> Void = {},
+        onStatus: @escaping @Sendable (String) -> Void = { _ in }
     ) async throws {
         guard blePIN.count == 4, phase5RawKey.count == 16 else { throw HandyFreiLinkError.badKey }
         let scanner = SensorScannerNG()
@@ -85,12 +86,21 @@ public enum HandyFreiLibreLink {
                     ivEnc: material.ivEnc
                 )
                 monitor.setHandlers(
-            onReading: { sample in
-                guard sample.isActionable, !sample.hasBlockingIssue else { return }
-                onGlucose(Int(sample.valueMgDL.rounded()))
-            },
-            onDisconnect: onDisconnect
-        )
+                    onReading: { sample in
+                        // Same rule as the iPhone: a "not actionable" flag still
+                        // carries a glucose number. Only a real sensor fault is dropped.
+                        guard !sample.hasBlockingIssue else {
+                            onStatus("Sensor: Wert blockiert. \(sample.qualityIssue ?? "Fehler")")
+                            return
+                        }
+                        let mgdl = Int(sample.valueMgDL.rounded())
+                        onStatus("Sensor: \(mgdl) mg/dL")
+                        onGlucose(mgdl)
+                    },
+                    onDisconnect: onDisconnect,
+                    onStatus: onStatus
+                )
+                onStatus("Sensor: verbunden, warte auf Werte")
                 monitor.start()
                 heldMonitor = monitor
                 return

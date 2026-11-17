@@ -60,6 +60,9 @@ enum HandyFrei {
         var receiverID: String?
         var sensorSerial: String?
         var bleAddress: String?
+        var sensorActivatedAt: Date?
+        var wearDurationMinutes: Int?
+        var warmupDurationMinutes: Int?
         var iob: Double
         var cob: Double
         var maxBolus: Double
@@ -96,6 +99,9 @@ enum HandyFrei {
             if let receiverID { raw["receiverID"] = receiverID }
             if let bleAddress { raw["bleAddress"] = bleAddress }
             if let sensorSerial { raw["sensorSerial"] = sensorSerial }
+            if let sensorActivatedAt { raw["sensorActivatedAt"] = sensorActivatedAt.timeIntervalSince1970 }
+            if let wearDurationMinutes { raw["wearDurationMinutes"] = wearDurationMinutes }
+            if let warmupDurationMinutes { raw["warmupDurationMinutes"] = warmupDurationMinutes }
             if let glucose { raw["glucose"] = glucose }
             return raw
         }
