@@ -91,6 +91,7 @@ public final class LibreLoopSensorMonitor: @unchecked Sendable {
     /// Monotonic id for captured read records (debug inspector).
     private var readSequence = 0
     private var packetCount = 0
+    private var lastGlucoseText = ""
     /// Per-session outbound write sequence counter, used for AES-CCM nonce
     /// construction on PatchControl writes.
     private var outboundSequence: UInt16 = 0
@@ -444,13 +445,14 @@ public final class LibreLoopSensorMonitor: @unchecked Sendable {
         packetCount += 1
         let count = packetCount
         lock.unlock()
-        emitStatus("Sensor: Paket empfangen \(count)")
         guard let channel = DataPlaneChannel(uuidString: event.characteristic.uuidString) else {
             llog("notify on unmapped char \(event.characteristic.uuidString)")
+            report(count, "unbekannt")
             return
         }
         guard let fullFrame = assembler.feed(fragment: event.fragment, channel: channel) else {
             llog("\(channel.rawValue) partial fragment buffered, waiting for completion")
+            report(count, "Fragment, warte auf Rest")
             return
         }
         do {
@@ -463,6 +465,7 @@ public final class LibreLoopSensorMonitor: @unchecked Sendable {
                 // during initial warmup, where the realtime glucose stream
                 // is silent for ~60 min after activation -- without this
                 // path activatedAt stays nil for the entire warmup window.
+                report(count, "Status \(status.patchStateKind) LC \(status.currentLifeCount)")
                 llog("patch status currentLC=\(status.currentLifeCount) lifeCount=\(status.lifeCount) state=\(status.patchStateKind)")
                 lock.lock()
                 let handler = patchStatusHandler
@@ -480,6 +483,7 @@ public final class LibreLoopSensorMonitor: @unchecked Sendable {
                     ("appDisconnectReason", "\(status.appDisconnectReason)"),
                 ])
             case .historicalReadingPage(let page):
+                report(count, "Historie \(page.samples.count)")
                 llog("historical page startLC=\(page.startLifeCount) endLC=\(page.endLifeCount) samples=\(page.samples.count)")
                 lock.lock()
                 let handler = historicalPageHandler
@@ -497,6 +501,7 @@ public final class LibreLoopSensorMonitor: @unchecked Sendable {
             case .clinicalReadingRecord(let record):
                 let cur = record.currentGlucoseMgDL.map(String.init) ?? "nil"
                 let hist = record.historicGlucoseMgDL.map(String.init) ?? "nil"
+                report(count, "Klinisch \(cur) mg/dL LC \(record.lifeCount)")
                 llog("clinical record lifeCount=\(record.lifeCount) current=\(cur) mg/dL historicRaw=\(hist) mg/dL")
                 lock.lock()
                 let handler = clinicalRecordHandler
@@ -527,6 +532,12 @@ public final class LibreLoopSensorMonitor: @unchecked Sendable {
                 let mgdlStr = reading.currentGlucoseMgDL.map(String.init) ?? "nil"
                 let word = String(format: "0x%04x", reading.currentWord)
                 let dqInfo = "word=\(word) dq=\(reading.dqError) cond=\(reading.sensorCondition) act=\(reading.actionability)"
+                if let mgdl = reading.currentGlucoseMgDL {
+                    lastGlucoseText = "\(mgdl) mg/dL"
+                    report(count, "Echtzeit \(mgdl) mg/dL LC \(reading.lifeCount)")
+                } else {
+                    report(count, "Echtzeit ohne Wert. LC \(reading.lifeCount) \(dqInfo)")
+                }
                 if assessment.issues.isEmpty {
                     llog("glucose mgdl=\(mgdlStr) lifeCount=\(reading.lifeCount) trend=\(String(describing: reading.trendKind)) byte14=\(byte14) rest=\(reading.rest) \(dqInfo) plaintext=\(plaintextHex)")
                 } else {
@@ -586,6 +597,7 @@ public final class LibreLoopSensorMonitor: @unchecked Sendable {
                     ("plaintext", plaintextHex),
                 ])
             default:
+                report(count, "\(channel.rawValue) Art \(packet.kind.rawValue)")
                 llog("\(channel.rawValue) packet kind=\(packet.kind.rawValue) (no sample)")
                 emitRead(channel.rawValue, summary: "kind \(packet.kind.rawValue) (no sample)", at: event.receivedAt, [
                     ("kind", "\(packet.kind.rawValue)"),
@@ -594,8 +606,18 @@ public final class LibreLoopSensorMonitor: @unchecked Sendable {
             }
         } catch {
             llog("\(channel.rawValue) decode failed: \(String(describing: error))")
-            emitStatus("Sensor: Entschlüsselung fehlgeschlagen. \(error.localizedDescription)")
+            report(count, "Entschlüsselung fehlgeschlagen. \(error.localizedDescription)")
         }
+    }
+
+    /// Latest decode, not a bare packet count. A later fragment keeps the last mg/dL visible.
+    private func report(_ count: Int, _ detail: String) {
+        if detail.hasPrefix("Echtzeit "), detail.contains("mg/dL"), !detail.contains("ohne Wert") {
+            emitStatus("Sensor: Paket \(count) \(detail)")
+            return
+        }
+        let value = lastGlucoseText.isEmpty ? "" : " · letzter Wert \(lastGlucoseText)"
+        emitStatus("Sensor: Paket \(count) \(detail)\(value)")
     }
 
     /// Make a sample whenever we get a numeric mg/dL value, regardless of

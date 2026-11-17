@@ -69,11 +69,13 @@ final class HandyFreiSession {
     private var readings: [(date: Date, mgdl: Int)] = []
     /// Bumped when the stretch ends so a glucose task already in flight cannot dose afterwards.
     private var doseEpoch = 0
+    private var dosing = false
 
     func start(_ state: WatchState) {
         guard !state.handyFreiRunning else { return }
         state.handyFreiRunning = true
         doseEpoch += 1
+        dosing = false
         let epoch = doseEpoch
         state.handyFreiAlarm = ""
         log = []
@@ -234,15 +236,22 @@ final class HandyFreiSession {
             now: Date()
         )
         state.handyFreiGlucose = mgdl
-        state.handyFreiStatus = outcome.reason
+        state.handyFreiStatus = "\(mgdl) mg/dL. \(outcome.reason)"
         log.append([
             "date": Date().timeIntervalSince1970,
             "kind": "determination",
-            "text": outcome.reason
+            "text": "\(mgdl) mg/dL. \(outcome.reason)"
         ])
         if !outcome.deliver, outcome.cancelTemp {
+            guard !dosing else { return }
+            dosing = true
             Task {
-                try? await HandyFreiMedtrumLink.shared.send(.cancelTempBasal)
+                defer { Task { @MainActor in self.dosing = false } }
+                do {
+                    try await HandyFreiMedtrumLink.shared.enactTemp(rate: 0, minutes: 0)
+                } catch {
+                    await self.noteUncertain(error)
+                }
                 await MainActor.run {
                     self.fail(state, outcome.reason)
                 }
@@ -250,29 +259,53 @@ final class HandyFreiSession {
             return
         }
         guard outcome.deliver || outcome.cancelTemp else { return }
+        guard !dosing else { return }
+        dosing = true
         let epoch = doseEpoch
         Task {
+            defer { Task { @MainActor in self.dosing = false } }
             guard state.handyFreiRunning, epoch == self.doseEpoch else { return }
             do {
-                if outcome.cancelTemp || outcome.rate <= 0 {
-                    try await HandyFreiMedtrumLink.shared.send(.cancelTempBasal)
-                } else if outcome.minutes > 0 {
+                if outcome.cancelTemp || outcome.rate <= 0 || outcome.minutes <= 0 {
+                    await MainActor.run { state.handyFreiStatus = "Pumpe: cancelTempBasal" }
+                    try await HandyFreiMedtrumLink.shared.enactTemp(rate: 0, minutes: 0)
+                } else {
                     let rate = min(outcome.rate, outcome.maxBasal)
-                    try await HandyFreiMedtrumLink.shared.send(.setTempBasal(rate: rate, minutes: outcome.minutes))
-                    deliveries.append(HandyFreiLoop.Delivery(kind: "temp", units: rate, minutes: outcome.minutes, date: Date()))
-                    log.append(["date": Date().timeIntervalSince1970, "kind": "temp", "units": rate, "minutes": outcome.minutes])
+                    await MainActor.run { state.handyFreiStatus = "Pumpe: setTempBasal \(rate)" }
+                    try await HandyFreiMedtrumLink.shared.enactTemp(rate: rate, minutes: outcome.minutes)
+                    await MainActor.run {
+                        self.deliveries.append(HandyFreiLoop.Delivery(kind: "temp", units: rate, minutes: outcome.minutes, date: Date()))
+                        self.log.append(["date": Date().timeIntervalSince1970, "kind": "temp", "units": rate, "minutes": outcome.minutes])
+                    }
                 }
                 if outcome.smb > 0, outcome.iob + outcome.smb <= outcome.maxIOB {
                     let units = min(outcome.smb, outcome.maxBolus)
+                    await MainActor.run { state.handyFreiStatus = "Pumpe: bolus \(units)" }
                     try await HandyFreiMedtrumLink.shared.send(.bolus(units: units))
-                    deliveries.append(HandyFreiLoop.Delivery(kind: "bolus", units: units, minutes: 0, date: Date()))
-                    log.append(["date": Date().timeIntervalSince1970, "kind": "bolus", "units": units, "minutes": 0])
+                    await MainActor.run {
+                        self.deliveries.append(HandyFreiLoop.Delivery(kind: "bolus", units: units, minutes: 0, date: Date()))
+                        self.log.append(["date": Date().timeIntervalSince1970, "kind": "bolus", "units": units, "minutes": 0])
+                    }
                 }
             } catch {
+                await self.noteUncertain(error)
+                let detail = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
                 await MainActor.run {
-                    self.fail(state, "Pumpenbefehl fehlgeschlagen. Bluetooth am iPhone wieder einschalten.")
+                    self.fail(state, "Pumpe: \(detail). Bluetooth am iPhone wieder einschalten.")
                 }
             }
+        }
+    }
+
+    /// The command may already be on the pump. The iPhone reads the pump history after it reconnects.
+    private func noteUncertain(_ error: Error) async {
+        let detail = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        await MainActor.run {
+            log.append([
+                "date": Date().timeIntervalSince1970,
+                "kind": "uncertain",
+                "text": "Pumpenbefehl unsicher. \(detail). iPhone soll den Pumpenverlauf lesen."
+            ])
         }
     }
 
