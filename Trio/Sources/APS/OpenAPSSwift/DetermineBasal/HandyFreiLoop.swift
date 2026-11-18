@@ -63,14 +63,9 @@ public enum HandyFreiLoop {
             deliver: false, cancelTemp: false, rate: 0, minutes: 0, smb: 0,
             reason: "Schatten. Eingaben fehlen.", iob: 0, maxIOB: 0, maxBolus: 0, maxBasal: 0, cob: 0, failed: false
         )
-        guard let newest = glucose.max(by: { $0.date < $1.date }) else { return empty }
-        if now.timeIntervalSince(newest.date) > 12 * 60 {
-            var stale = empty
-            stale.cancelTemp = true
-            stale.reason = "Glukose älter als 12 Minuten. Kein Insulin."
-            return stale
-        }
-        let samples = fiveMinuteSamples(glucose)
+        let points = combinedGlucose(files: files, watch: glucose)
+        guard let newest = points.max(by: { $0.dateString < $1.dateString }) else { return empty }
+        let glucoseIsStale = now.timeIntervalSince(newest.dateString) > 12 * 60
         do {
             let preferences: Preferences = try decode(files, "preferences", "Einstellungen")
             let settings: PumpSettings = try decode(files, "settings", "Pumpeneinstellungen")
@@ -78,20 +73,33 @@ public enum HandyFreiLoop {
             let targets: BGTargets = try decode(files, "targets", "Zielwerte")
             var isf: InsulinSensitivities = try decode(files, "isf", "ISF")
             var carbRatios: CarbRatios = try decode(files, "carbRatios", "KE-Faktor")
-            basal = scaleBasal(basal, rheosBasal, ceiling: settings.maxBasal)
-            isf = scaleISF(isf, rheosISF)
-            carbRatios = scaleCarb(carbRatios, rheosCarbRatio)
-            let profile = try ProfileGenerator.generate(
-                pumpSettings: settings,
-                bgTargets: targets,
-                basalProfile: basal,
-                isf: isf,
-                preferences: preferences,
-                carbRatios: carbRatios,
-                tempTargets: [],
-                clock: now
-            )
-            var history = try pumpHistory(files)
+            let savedProfile: Profile? = {
+                guard let raw = files["profile"]?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return nil }
+                return try? JSONBridge.from(string: raw)
+            }()
+            let profile: Profile
+            if let saved = savedProfile, let scaled = saved.basalprofile, !scaled.isEmpty {
+                // The phone already applied Rheos and the temp target when it wrote this profile.
+                // The watch does not run Rheos again.
+                profile = saved
+                basal = scaled
+            } else {
+                basal = scaleBasal(basal, rheosBasal, ceiling: settings.maxBasal)
+                isf = scaleISF(isf, rheosISF)
+                carbRatios = scaleCarb(carbRatios, rheosCarbRatio)
+                let tempTargets: [TempTarget] = (try? JSONBridge.from(string: files["tempTargets"] ?? "")) ?? []
+                profile = try ProfileGenerator.generate(
+                    pumpSettings: settings,
+                    bgTargets: targets,
+                    basalProfile: basal,
+                    isf: isf,
+                    preferences: preferences,
+                    carbRatios: carbRatios,
+                    tempTargets: tempTargets,
+                    clock: now
+                )
+            }
+            var history = try pumpHistory(files).removingDuplicateSuspendResumeEvents()
             let known = Set(history.map(\.id))
             let fresh = deliveries.filter { !alreadyRecorded($0, history) }
             history.append(contentsOf: fresh.flatMap(events).filter { !known.contains($0.id) })
@@ -119,19 +127,6 @@ public enum HandyFreiLoop {
                     fpuID: nil
                 )
             })
-            let points = samples.map { item in
-                BloodGlucose(
-                    id: UUID().uuidString,
-                    sgv: item.mgdl,
-                    direction: nil,
-                    date: Decimal(item.date.timeIntervalSince1970 * 1000),
-                    dateString: item.date,
-                    unfiltered: nil,
-                    filtered: nil,
-                    noise: nil,
-                    glucose: item.mgdl
-                )
-            }
             let autosens: Autosens
             if files["autosens"]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
                 autosens = try decode(files, "autosens", "Autosens")
@@ -146,6 +141,7 @@ public enum HandyFreiLoop {
                 )
             }
             let iob = try IobGenerator.generate(history: history, profile: profile, clock: now, autosens: autosens)
+            let currentIOB = NSDecimalNumber(decimal: iob.first?.iob ?? 0).doubleValue
             let meal = try MealGenerator.generate(
                 pumpHistory: history,
                 profile: profile,
@@ -154,7 +150,19 @@ public enum HandyFreiLoop {
                 carbHistory: carbs,
                 glucoseHistory: points
             )
-            let custom = TrioCustomOrefVariables(
+            let currentCOB = NSDecimalNumber(decimal: meal?.mealCOB ?? 0).doubleValue
+            if glucoseIsStale {
+                var stale = empty
+                stale.cancelTemp = true
+                stale.iob = currentIOB
+                stale.cob = currentCOB
+                stale.maxIOB = NSDecimalNumber(decimal: preferences.maxIOB).doubleValue
+                stale.maxBolus = NSDecimalNumber(decimal: settings.maxBolus).doubleValue
+                stale.maxBasal = NSDecimalNumber(decimal: settings.maxBasal).doubleValue
+                stale.reason = "Glukose älter als 12 Minuten. Kein Insulin." + autosensAge(autosens, now: now)
+                return stale
+            }
+            let custom = trioVariables(files) ?? TrioCustomOrefVariables(
                 average_total_data: 0, weightedAverage: 0, currentTDD: 0, past2hoursAverage: 0,
                 date: now, overridePercentage: 100, useOverride: false, duration: 0, unlimited: false,
                 overrideTarget: 0, smbIsOff: false, advancedSettings: false, isfAndCr: false,
@@ -177,7 +185,7 @@ public enum HandyFreiLoop {
                     slopeFromMaxDeviation: 0, slopeFromMinDeviation: 0, allDeviations: [], lastCarbTime: 0
                 ),
                 autosensData: autosens,
-                reservoirData: 50,
+                reservoirData: reservoir(files),
                 glucose: points,
                 microBolusAllowed: true,
                 trioCustomOrefVariables: custom,
@@ -188,7 +196,6 @@ public enum HandyFreiLoop {
             var smb = NSDecimalNumber(decimal: determination?.units ?? 0).doubleValue
             let maxBolus = NSDecimalNumber(decimal: settings.maxBolus).doubleValue
             let maxIOB = NSDecimalNumber(decimal: preferences.maxIOB).doubleValue
-            let currentIOB = NSDecimalNumber(decimal: iob.first?.iob ?? 0).doubleValue
             smb = min(smb, maxBolus)
             if currentIOB + smb > maxIOB { smb = 0 }
             let cancel = (determination?.rate ?? 0) == 0
@@ -198,7 +205,7 @@ public enum HandyFreiLoop {
                 rate: max(0, rate),
                 minutes: max(0, minutes),
                 smb: max(0, smb),
-                reason: determination?.reason ?? "Keine Bestimmung.",
+                reason: (determination?.reason ?? "Keine Bestimmung.") + autosensAge(autosens, now: now),
                 iob: currentIOB,
                 maxIOB: maxIOB,
                 maxBolus: maxBolus,
@@ -215,14 +222,161 @@ public enum HandyFreiLoop {
         }
     }
 
-    /// Libre sends about one value a minute. determine-basal expects roughly one value per 5 minutes.
-    private static func fiveMinuteSamples(_ glucose: [(date: Date, mgdl: Int)]) -> [(date: Date, mgdl: Int)] {
-        var buckets: [Int: (date: Date, mgdl: Int)] = [:]
-        for sample in glucose.sorted(by: { $0.date < $1.date }) {
-            let slot = Int(sample.date.timeIntervalSince1970 / 300)
-            buckets[slot] = sample
+    public static func snapshotReadings(_ files: [String: String]) -> [(date: Date, mgdl: Int)] {
+        combinedGlucose(files: files, watch: []).compactMap { point in
+            guard let mgdl = point.sgv ?? point.glucose else { return nil }
+            return (date: point.dateString, mgdl: mgdl)
         }
-        return buckets.keys.sorted().compactMap { buckets[$0] }
+    }
+
+    /// Phone glucose is already the series the iPhone algorithm stored. A new watch
+    /// value is added only when it is at least 3.5 minutes from every stored point,
+    /// the same gap the iPhone uses when it backfills.
+    private static func combinedGlucose(
+        files: [String: String],
+        watch: [(date: Date, mgdl: Int)]
+    ) -> [BloodGlucose] {
+        var points: [BloodGlucose] = []
+        if let raw = files["glucoseHistory"]?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
+            points = (try? JSONBridge.from(string: raw)) ?? []
+        }
+        for sample in watch.sorted(by: { $0.date < $1.date }) {
+            if points.contains(where: { abs($0.dateString.timeIntervalSince(sample.date)) < 3.5 * 60 }) { continue }
+            points.append(BloodGlucose(
+                id: "watch-\(Int(sample.date.timeIntervalSince1970))",
+                sgv: sample.mgdl,
+                direction: nil,
+                date: Decimal(Int64(sample.date.timeIntervalSince1970 * 1000)),
+                dateString: sample.date,
+                unfiltered: nil,
+                filtered: nil,
+                noise: nil,
+                glucose: sample.mgdl,
+                type: "sgv"
+            ))
+        }
+        return points.sorted { $0.dateString < $1.dateString }
+    }
+
+    private static func trioVariables(_ files: [String: String]) -> TrioCustomOrefVariables? {
+        guard let raw = files["trioVariables"]?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return nil }
+        return try? JSONBridge.from(string: raw)
+    }
+
+    private static func reservoir(_ files: [String: String]) -> Decimal {
+        let raw = files["reservoir"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let number = raw.replacingOccurrences(of: "\"", with: "")
+        return Decimal(string: number) ?? 50
+    }
+
+    private static func autosensAge(_ autosens: Autosens, now: Date) -> String {
+        guard let timestamp = autosens.timestamp else { return " Autosens ohne Zeitstempel." }
+        let minutes = max(0, Int(now.timeIntervalSince(timestamp) / 60))
+        return " Autosens vor \(minutes) min."
+    }
+
+    /// Settings the meal screen needs. Missing keys keep the iPhone defaults.
+    public static func mealSettings(_ files: [String: String]) -> (
+        fpu: Bool, adjustment: Decimal, delay: Decimal, interval: Decimal,
+        fatty: Bool, fattyFactor: Decimal, sweet: Bool, sweetFactor: Decimal, fraction: Decimal
+    ) {
+        struct Raw: Decodable {
+            var useFPUconversion: Bool?
+            var individualAdjustmentFactor: Decimal?
+            var delay: Decimal?
+            var minuteInterval: Decimal?
+            var fattyMeals: Bool?
+            var fattyMealFactor: Decimal?
+            var sweetMeals: Bool?
+            var sweetMealFactor: Decimal?
+            var overrideFactor: Decimal?
+        }
+        let parsed: Raw? = {
+            guard let raw = files["trioSettings"]?.data(using: .utf8) else { return nil }
+            return try? JSONDecoder().decode(Raw.self, from: raw)
+        }()
+        return (
+            parsed?.useFPUconversion ?? false,
+            parsed?.individualAdjustmentFactor ?? Decimal(string: "0.5")!,
+            parsed?.delay ?? 60,
+            parsed?.minuteInterval ?? 30,
+            parsed?.fattyMeals ?? false,
+            parsed?.fattyMealFactor ?? Decimal(string: "0.7")!,
+            parsed?.sweetMeals ?? false,
+            parsed?.sweetMealFactor ?? 1,
+            parsed?.overrideFactor ?? Decimal(string: "0.8")!
+        )
+    }
+
+    public static func bolusContext(_ files: [String: String]) -> (
+        isf: Double, carbRatio: Double, target: Double, basal: Double, maxIOB: Double, maxCOB: Double
+    ) {
+        let profile: Profile? = {
+            guard let raw = files["profile"]?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return nil }
+            return try? JSONBridge.from(string: raw)
+        }()
+        let preferences: Preferences? = {
+            guard let raw = files["preferences"]?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return nil }
+            return try? JSONBridge.from(string: raw)
+        }()
+        let settings: PumpSettings? = {
+            guard let raw = files["settings"]?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return nil }
+            return try? JSONBridge.from(string: raw)
+        }()
+        func number(_ value: Decimal?) -> Double {
+            NSDecimalNumber(decimal: value ?? 0).doubleValue
+        }
+        return (
+            number(profile?.sens),
+            number(profile?.carbRatio),
+            max(number(profile?.minBg), 0),
+            number(profile?.currentBasal),
+            number(preferences?.maxIOB),
+            number(preferences?.maxCOB ?? 120)
+        )
+    }
+
+    /// Same bolus sum as the iPhone calculator. Immediate carbs only; FPU stays in future COB.
+    public static func recommendBolus(
+        carbs: Double,
+        glucose: Double,
+        delta: Double,
+        iob: Double,
+        cob: Double,
+        isf: Double,
+        carbRatio: Double,
+        target: Double,
+        basal: Double,
+        fraction: Double,
+        fatty: Bool,
+        fattyFactor: Double,
+        sweet: Bool,
+        sweetFactor: Double,
+        maxBolus: Double,
+        maxIOB: Double,
+        maxCOB: Double,
+        increment: Double,
+        minPredBG: Double,
+        lastLoop: Date,
+        now: Date
+    ) -> Double {
+        guard isf > 0, carbRatio > 0, target > 0 else { return 0 }
+        if glucose < 54 || minPredBG < 54 || now.timeIntervalSince(lastLoop) > 15 * 60 { return 0 }
+        let targetInsulin = (glucose - target) / isf
+        let trendInsulin = delta == 0 ? 0 : delta / isf
+        let wholeCob = min(cob + carbs, maxCOB)
+        let cobInsulin = wholeCob / carbRatio
+        var total = targetInsulin - iob + cobInsulin + trendInsulin
+        if total > 0 {
+            total *= fraction
+            if fatty { total *= fattyFactor }
+        }
+        if sweet { total += sweetFactor * basal }
+        total = max(total, 0)
+        total = min(total, maxBolus)
+        total = min(total, max(0, maxIOB - iob))
+        let step = increment > 0 ? increment : 0.05
+        return (total / step).rounded(.down) * step
     }
 
     private static func decode<T: Decodable>(_ files: [String: String], _ key: String, _ name: String) throws -> T {

@@ -250,6 +250,36 @@ extension WatchState {
 
     /// Sends a request to calculate a bolus recommendation based on the current carbs amount
     func requestBolusRecommendation() {
+        if handyFreiRunning {
+            let settings = HandyFreiLoop.mealSettings(handyFreiFiles)
+            let context = HandyFreiLoop.bolusContext(handyFreiFiles)
+            let glucose = Double(handyFreiGlucose ?? 0)
+            let units = HandyFreiLoop.recommendBolus(
+                carbs: Double(carbsAmount),
+                glucose: glucose,
+                delta: 0,
+                iob: Double(iob ?? "") ?? 0,
+                cob: Double(cob ?? "") ?? 0,
+                isf: context.isf,
+                carbRatio: context.carbRatio,
+                target: context.target,
+                basal: context.basal,
+                fraction: NSDecimalNumber(decimal: bolusFraction).doubleValue,
+                fatty: useReducedBolus && settings.fatty,
+                fattyFactor: NSDecimalNumber(decimal: fattyMealFactor).doubleValue,
+                sweet: useSuperBolus && settings.sweet,
+                sweetFactor: NSDecimalNumber(decimal: sweetMealFactor).doubleValue,
+                maxBolus: NSDecimalNumber(decimal: maxBolus).doubleValue,
+                maxIOB: context.maxIOB,
+                maxCOB: context.maxCOB,
+                increment: NSDecimalNumber(decimal: bolusIncrement).doubleValue,
+                minPredBG: glucose,
+                lastLoop: Date(),
+                now: Date()
+            )
+            recommendedBolus = NSDecimalNumber(value: units).decimalValue
+            return
+        }
         guard let session = session, session.isReachable else {
             Task {
                 await WatchLogger.shared.log("⌚️ Bolus recommendation request aborted: session unreachable")
@@ -278,7 +308,9 @@ extension WatchState {
 
         let message: [String: Any] = [
             WatchMessageKeys.requestBolusRecommendation: true,
-            WatchMessageKeys.carbs: carbsAmount
+            WatchMessageKeys.carbs: carbsAmount,
+            "useFattyMeal": useReducedBolus && fattyMeals,
+            "useSuperBolus": useSuperBolus && sweetMeals
         ]
 
         session.sendMessage(message, replyHandler: nil) { error in

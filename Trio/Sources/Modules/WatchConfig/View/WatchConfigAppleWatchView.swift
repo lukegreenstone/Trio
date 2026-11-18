@@ -77,21 +77,7 @@ struct WatchConfigAppleWatchView: BaseView {
                     let document = RheosStore.shared.loadDocument()
                     let learned = document.decision?.learnedFactors ?? document.applied?.factors
                     let storage = resolver.resolve(FileStorage.self)
-                    let names = [
-                        "preferences": OpenAPS.Settings.preferences,
-                        "settings": OpenAPS.Settings.settings,
-                        "basal": OpenAPS.Settings.basalProfile,
-                        "targets": OpenAPS.Settings.bgTargets,
-                        "isf": OpenAPS.Settings.insulinSensitivities,
-                        "carbRatios": OpenAPS.Settings.carbRatios,
-                        "pumpHistory": OpenAPS.Monitor.pumpHistory,
-                        "carbHistory": OpenAPS.Monitor.carbHistory,
-                        "autosens": OpenAPS.Settings.autosense
-                    ]
-                    var files: [String: String] = [:]
-                    for (key, name) in names {
-                        files[key] = storage?.retrieveRaw(name) ?? ""
-                    }
+                    let files = HandyFreiPhone.loopFiles(storage: storage)
                     let session = HandyFreiPhone.prepare(
                         fingerprint: HandyFrei.Fingerprint(
                             pumpPeripheralID: nil,

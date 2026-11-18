@@ -201,6 +201,8 @@ final class HandyFreiSession {
         lastDose = .distantPast
         lastReason = "Loop wartet auf den ersten Wert."
         HandyFreiDisk.restore(into: state, session: self)
+        self.seedSnapshotGlucose(state)
+        self.showSnapshotTotals(state)
         lastLoopAt = lastSuccess == .distantPast ? Date() : lastSuccess
         address = state.handyFreiBleAddress
         pin = Data(base64Encoded: state.handyFreiBlePIN) ?? Data()
@@ -298,6 +300,32 @@ final class HandyFreiSession {
         }
     }
 
+    private func seedSnapshotGlucose(_ state: WatchState) {
+        guard readings.isEmpty else { return }
+        readings = HandyFreiLoop.snapshotReadings(state.handyFreiFiles)
+        if readings.count > 36 { readings.removeFirst(readings.count - 36) }
+    }
+
+    private func showSnapshotTotals(_ state: WatchState) {
+        guard let mgdl = readings.max(by: { $0.date < $1.date })?.mgdl else { return }
+        let outcome = HandyFreiLoop.tick(
+            files: state.handyFreiFiles,
+            rheosBasal: state.handyFreiBasal,
+            rheosISF: state.handyFreiISF,
+            rheosCarbRatio: state.handyFreiCarbRatio,
+            glucose: readings,
+            deliveries: deliveries,
+            watchCarbs: loopCarbs(),
+            now: Date()
+        )
+        guard !outcome.failed else { return }
+        lastIOB = outcome.iob
+        lastCOB = outcome.cob
+        state.iob = String(format: "%.1f", outcome.iob)
+        state.cob = String(format: "%.0f", outcome.cob)
+        state.handyFreiGlucose = mgdl
+    }
+
     func recordCarbs(grams: Int, fat: Int = 0, protein: Int = 0, name: String = "", id: String = UUID().uuidString, date: Date, state: WatchState) {
         let entry = HandyFreiDisk.Carb(
             id: id,
@@ -316,8 +344,44 @@ final class HandyFreiSession {
             "fat": Double(fat),
             "protein": Double(protein),
             "name": name,
-            "text": "\(name.isEmpty ? "Mahlzeit" : name) \(grams) g"
+            "text": "\(name.isEmpty ? "Mahlzeit" : name) \(grams) g F \(fat) E \(protein)"
         ])
+        let settings = HandyFreiLoop.mealSettings(state.handyFreiFiles)
+        if settings.fpu, fat > 0 || protein > 0 {
+            let future = FatProteinConversion.futureEntries(
+                fat: Decimal(fat),
+                protein: Decimal(protein),
+                createdAt: date,
+                actualDate: date,
+                fpuID: id,
+                adjustment: settings.adjustment,
+                delayMinutes: settings.delay,
+                intervalMinutes: settings.interval
+            )
+            for item in future {
+                let when = item.actualDate ?? date
+                let child = HandyFreiDisk.Carb(
+                    id: item.id ?? UUID().uuidString,
+                    date: when.timeIntervalSince1970,
+                    grams: NSDecimalNumber(decimal: item.carbs).doubleValue,
+                    fat: 0,
+                    protein: 0,
+                    name: "FPU"
+                )
+                carbs.append(child)
+                log.append([
+                    "date": when.timeIntervalSince1970,
+                    "kind": "fpu",
+                    "id": child.id,
+                    "grams": child.grams,
+                    "fat": 0.0,
+                    "protein": 0.0,
+                    "name": "FPU",
+                    "fpuID": id,
+                    "text": "FPU \(Int(child.grams)) g"
+                ])
+            }
+        }
         HandyFreiDisk.save(session: self)
         guard !determining, !dosing, let mgdl = readings.max(by: { $0.date < $1.date })?.mgdl else { return }
         let outcome = HandyFreiLoop.tick(
@@ -614,6 +678,7 @@ final class HandyFreiSession {
             readings.append((Date(), mgdl))
             stallAttempts = 0
             if readings.count > 36 { readings.removeFirst(readings.count - 36) }
+            log.append(["date": Date().timeIntervalSince1970, "kind": "glucose", "mgdl": mgdl])
             HandyFreiDisk.save(session: self)
         }
         let remain = secondsUntilLoop()
@@ -684,7 +749,10 @@ final class HandyFreiSession {
         log.append([
             "date": Date().timeIntervalSince1970,
             "kind": "determination",
-            "text": preview
+            "text": preview,
+            "iob": outcome.iob,
+            "cob": outcome.cob,
+            "mgdl": mgdl
         ])
         HandyFreiDisk.save(session: self)
         guard outcome.deliver || outcome.cancelTemp else { return }

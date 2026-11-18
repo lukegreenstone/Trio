@@ -6,13 +6,37 @@ import SwiftUI
 struct CarbsInputView: View {
     @Binding var navigationPath: NavigationPath
     @State private var carbsAmount: Double = 0.0 // Needs to be Double due to .digitalCrownRotation() stride
+    @State private var fatAmount: Double = 0
+    @State private var proteinAmount: Double = 0
+    @State private var field = 0
     @FocusState private var isCrownFocused: Bool // Manage crown focus
 
     let state: WatchState
     let continueToBolus: Bool
 
-    private var effectiveCarbsLimit: Double {
-        Double(truncating: state.maxCarbs as NSNumber)
+    private var effectiveCarbsLimit: Double { Double(truncating: state.maxCarbs as NSNumber) }
+    private var effectiveFatLimit: Double { Double(truncating: state.maxFat as NSNumber) }
+    private var effectiveProteinLimit: Double { Double(truncating: state.maxProtein as NSNumber) }
+    private var activeAmount: Binding<Double> {
+        switch field {
+        case 1: return $fatAmount
+        case 2: return $proteinAmount
+        default: return $carbsAmount
+        }
+    }
+    private var activeLimit: Double {
+        switch field {
+        case 1: return effectiveFatLimit
+        case 2: return effectiveProteinLimit
+        default: return effectiveCarbsLimit
+        }
+    }
+    private var activeTitle: String {
+        switch field {
+        case 1: return "Fett"
+        case 2: return "Eiweiß"
+        default: return "Kohlenhydrate"
+        }
     }
 
     var trioBackgroundColor = LinearGradient(
@@ -32,8 +56,8 @@ struct CarbsInputView: View {
             HStack {
                 // "-" Button
                 Button(action: {
-                    if carbsAmount > 0 {
-                        carbsAmount < 5 ? carbsAmount = 0 : (carbsAmount -= 5)
+                    if activeAmount.wrappedValue > 0 {
+                        activeAmount.wrappedValue = max(0, activeAmount.wrappedValue - 5)
                     }
                 }) {
                     Image(systemName: "minus.circle.fill")
@@ -41,21 +65,22 @@ struct CarbsInputView: View {
                         .tint(.orange)
                 }
                 .buttonStyle(.borderless)
-                .disabled(carbsAmount <= 0)
+                .disabled(activeAmount.wrappedValue <= 0)
 
                 Spacer()
 
                 // Display the current carb amount
-                Text(String(format: "%.0f \(String(localized: "g", comment: "gram of carbs"))", carbsAmount))
+                Text(String(format: "%.0f \(String(localized: "g", comment: "gram of carbs"))", activeAmount.wrappedValue))
                     .fontWeight(.bold)
                     .font(.system(.title2, design: .rounded))
-                    .foregroundColor(carbsAmount > 0.0 && carbsAmount >= effectiveCarbsLimit ? .loopRed : .primary)
+                    .foregroundColor(activeAmount.wrappedValue > 0 && activeAmount.wrappedValue >= activeLimit ? .loopRed : .primary)
                     .focusable(true)
                     .focused($isCrownFocused)
+                    .id(field)
                     .digitalCrownRotation(
-                        $carbsAmount,
+                        activeAmount,
                         from: 0,
-                        through: effectiveCarbsLimit,
+                        through: max(activeLimit, 1),
                         by: 1,
                         sensitivity: .medium,
                         isContinuous: false,
@@ -66,20 +91,25 @@ struct CarbsInputView: View {
 
                 // "+" Button
                 Button(action: {
-                    carbsAmount = min(effectiveCarbsLimit, carbsAmount + 5)
+                    activeAmount.wrappedValue = min(activeLimit, activeAmount.wrappedValue + 5)
                 }) {
                     Image(systemName: "plus.circle.fill")
                         .font(.title3)
                         .tint(.orange)
                 }
                 .buttonStyle(.borderless)
-                .disabled(carbsAmount >= effectiveCarbsLimit)
+                .disabled(activeAmount.wrappedValue >= activeLimit)
             }.padding(.horizontal)
 
-            Text("Carbohydrates")
+            Text(activeTitle)
                 .font(.subheadline)
                 .foregroundColor(.secondary)
-                .padding(.bottom)
+            HStack {
+                Button("KH \(Int(carbsAmount))") { field = 0 }.buttonStyle(.bordered).tint(field == 0 ? .orange : .gray)
+                Button("F \(Int(fatAmount))") { field = 1 }.buttonStyle(.bordered).tint(field == 1 ? .orange : .gray)
+                Button("E \(Int(proteinAmount))") { field = 2 }.buttonStyle(.bordered).tint(field == 2 ? .orange : .gray)
+            }
+            .font(.footnote)
 
             Spacer()
 
@@ -90,17 +120,19 @@ struct CarbsInputView: View {
             }
 
             Button(buttonLabel) {
+                state.carbsAmount = Int(min(carbsAmount, effectiveCarbsLimit))
+                state.fatAmount = Int(min(fatAmount, effectiveFatLimit))
+                state.proteinAmount = Int(min(proteinAmount, effectiveProteinLimit))
                 if continueToBolus {
-                    state.carbsAmount = Int(min(carbsAmount, effectiveCarbsLimit))
                     navigationPath.append(NavigationDestinations.bolusInput)
                 } else {
-                    state.sendCarbsRequest(Int(min(carbsAmount, effectiveCarbsLimit)))
+                    state.sendCarbsRequest(state.carbsAmount)
                     navigationPath.append(NavigationDestinations.acknowledgmentPending)
                 }
             }
             .buttonStyle(.bordered)
             .tint(.orange)
-            .disabled(!(carbsAmount > 0.0) || carbsAmount > effectiveCarbsLimit)
+            .disabled(carbsAmount <= 0 && fatAmount <= 0 && proteinAmount <= 0)
         }
         .background(trioBackgroundColor)
         .toolbar {

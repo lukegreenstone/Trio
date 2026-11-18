@@ -159,109 +159,22 @@ final class BaseCarbsStorage: CarbsStorage, Injectable {
 
         let adjustment = trioSettings.individualAdjustmentFactor
             .clamp(to: providerSettings.individualAdjustmentFactor)
-
         let delayMinutes = trioSettings.delay
             .clamp(to: providerSettings.delay)
-
         let spreadInterval = trioSettings.minuteInterval
             .clamp(to: providerSettings.minuteInterval)
-
-        // Constraints
-        let maxTotalGrams = 99
-        let maxEntries = 3
-        let maxPerEntry = 33
-        let minPerEntry = 10
-        let spacing = TimeInterval(spreadInterval * 60)
-
-        // kcal -> carb equivalents (kcal/10 * adjustment), rounded down to whole grams
-        let kcal = protein * 4 + fat * 9
-        let rawEquivalents = Int((kcal / 10) * adjustment)
-        let totalGrams = min(maxTotalGrams, max(0, rawEquivalents))
-
-        guard totalGrams >= minPerEntry else {
-            return ([], Decimal(totalGrams))
-        }
-
-        let amounts = splitIntoCarbEquivalents(
-            total: totalGrams,
-            maxEntries: maxEntries,
-            maxPerEntry: maxPerEntry,
-            minPerEntry: minPerEntry
+        let futureEntries = FatProteinConversion.futureEntries(
+            fat: fat,
+            protein: protein,
+            createdAt: createdAt,
+            actualDate: actualDate,
+            fpuID: entries.first?.fpuID,
+            adjustment: adjustment,
+            delayMinutes: delayMinutes,
+            intervalMinutes: spreadInterval
         )
-
-        let baseDate = actualDate ?? createdAt
-        let start = baseDate.addingTimeInterval(TimeInterval(delayMinutes * 60))
-        let fpuID = entries.first?.fpuID ?? UUID().uuidString
-
-        let futureEntries: [CarbsEntry] = amounts.enumerated().map { idx, grams in
-            CarbsEntry(
-                id: UUID().uuidString,
-                createdAt: createdAt,
-                actualDate: start.addingTimeInterval(TimeInterval(idx) * spacing),
-                carbs: Decimal(grams),
-                fat: 0,
-                protein: 0,
-                note: nil,
-                enteredBy: CarbsEntry.local,
-                isFPU: true,
-                fpuID: fpuID
-            )
-        }
-
         let totalScheduled = futureEntries.reduce(into: Decimal(0)) { $0 += $1.carbs }
         return (futureEntries, totalScheduled)
-    }
-
-    /**
-     Splits a total carb-equivalent value into multiple integer entries.
-
-     - Returns no entries if `total` is below `minPerEntry`.
-     - Limits output to `maxEntries`.
-     - Caps each entry at `maxPerEntry`.
-     - Distributes grams evenly (difference ≤ 1 g).
-     - Merges or removes entries below `minPerEntry`.
-
-     - Returns:
-       Integer gram values representing the split carb equivalents.
-     */
-    private func splitIntoCarbEquivalents(
-        total: Int,
-        maxEntries: Int,
-        maxPerEntry: Int,
-        minPerEntry: Int
-    ) -> [Int] {
-        guard total >= minPerEntry else { return [] }
-
-        // Choose an entry count that *guarantees* each entry can be <= maxPerEntry
-        let needed = (total + maxPerEntry - 1) / maxPerEntry
-        let count = min(maxEntries, max(1, needed))
-
-        // Even split (difference between buckets is at most 1)
-        func evenSplit(_ total: Int, count: Int) -> [Int] {
-            let base = total / count
-            let rem = total % count
-            return (0 ..< count).map { base + ($0 < rem ? 1 : 0) }
-        }
-
-        var buckets = evenSplit(total, count: count)
-
-        // Enforce minPerEntry by merging any too-small tail bucket into the previous one
-        // This should be rare, but it keeps the invariant
-        if buckets.count > 1 {
-            for i in stride(from: buckets.count - 1, through: 1, by: -1) {
-                let v = buckets[i]
-                guard v > 0, v < minPerEntry else { continue }
-                buckets[i - 1] += v
-                buckets[i] = 0
-            }
-            buckets = buckets.filter { $0 > 0 }
-        }
-
-        // Guarantee not to exceed maxPerEntry if merging a reduced count
-        // Clamp as final guard here
-        buckets = buckets.map { min(maxPerEntry, $0) }.filter { $0 >= minPerEntry }
-
-        return buckets
     }
 
     private func saveCarbEquivalents(entries: [CarbsEntry], areFetchedFromRemote: Bool) async {

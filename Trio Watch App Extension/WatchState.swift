@@ -61,6 +61,13 @@ import WatchConnectivity
     var showingMealPresets = false
     var mealNeedsBolus = false
     var pendingMealName = ""
+    var fattyMeals = false
+    var fattyMealFactor: Decimal = 0.7
+    var sweetMeals = false
+    var sweetMealFactor: Decimal = 1
+    var bolusFraction: Decimal = 0.8
+    var useReducedBolus = false
+    var useSuperBolus = false
 
     // Safety limits
     var maxBolus: Decimal = 10
@@ -304,6 +311,12 @@ import WatchConnectivity
                 if let maxBolus = snapshot["maxBolus"] as? NSNumber, maxBolus.doubleValue > 0 {
                     self.maxBolus = maxBolus.decimalValue
                 }
+                let meal = HandyFreiLoop.mealSettings(self.handyFreiFiles)
+                self.fattyMeals = meal.fatty
+                self.fattyMealFactor = meal.fattyFactor
+                self.sweetMeals = meal.sweet
+                self.sweetMealFactor = meal.sweetFactor
+                self.bolusFraction = meal.fraction
                 HandyFreiSession.HandyFreiDisk.saveSnapshot(self)
             }
             if kind == "watch-owns" {
@@ -645,6 +658,12 @@ import WatchConnectivity
                 return TempTargetPresetWatch(name: name, isEnabled: isEnabled)
             }
         }
+
+        if let fatty = message["fattyMeals"] as? Bool { fattyMeals = fatty }
+        if let factor = message["fattyMealFactor"] as? NSNumber { fattyMealFactor = factor.decimalValue }
+        if let sweet = message["sweetMeals"] as? Bool { sweetMeals = sweet }
+        if let factor = message["sweetMealFactor"] as? NSNumber { sweetMealFactor = factor.decimalValue }
+        if let fraction = message["bolusFraction"] as? NSNumber { bolusFraction = fraction.decimalValue }
 
         if let maxBolusValue = message[WatchMessageKeys.maxBolus] {
             if let decimalValue = (maxBolusValue as? NSNumber)?.decimalValue {

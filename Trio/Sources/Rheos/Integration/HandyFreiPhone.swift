@@ -66,21 +66,7 @@ enum HandyFreiPhone {
     static func activateFromWatch(pump: Any?, cgm: Any?, storage: FileStorage?) {
         let document = RheosStore.shared.loadDocument()
         let learned = document.decision?.learnedFactors ?? document.applied?.factors
-        let names = [
-            "preferences": OpenAPS.Settings.preferences,
-            "settings": OpenAPS.Settings.settings,
-            "basal": OpenAPS.Settings.basalProfile,
-            "targets": OpenAPS.Settings.bgTargets,
-            "isf": OpenAPS.Settings.insulinSensitivities,
-            "carbRatios": OpenAPS.Settings.carbRatios,
-            "pumpHistory": OpenAPS.Monitor.pumpHistory,
-            "carbHistory": OpenAPS.Monitor.carbHistory,
-            "autosens": OpenAPS.Settings.autosense
-        ]
-        var files: [String: String] = [:]
-        for (key, name) in names {
-            files[key] = storage?.retrieveRaw(name) ?? ""
-        }
+        let files = loopFiles(storage: storage)
         let snapshot = collectSnapshot(
             pump: pump,
             cgm: cgm,
@@ -160,6 +146,8 @@ enum HandyFreiPhone {
         }
         storeDeliveries(entries)
         storeCarbs(entries)
+        storeGlucose(entries)
+        storeLoopStates(entries)
         lock.lock()
         logImported = true
         let current = pending ?? HandyFrei.idle(fingerprint: HandyFrei.Fingerprint(
@@ -182,6 +170,104 @@ enum HandyFreiPhone {
         lock.unlock()
         store(session)
         return session
+    }
+
+    /// The files the watch loop reads. Pump history, carbs and glucose come from the
+    /// same Core Data the iPhone loop uses. The JSON copies of those are not kept up to date.
+    static func loopFiles(storage: FileStorage?) -> [String: String] {
+        let names = [
+            "preferences": OpenAPS.Settings.preferences,
+            "settings": OpenAPS.Settings.settings,
+            "basal": OpenAPS.Settings.basalProfile,
+            "targets": OpenAPS.Settings.bgTargets,
+            "isf": OpenAPS.Settings.insulinSensitivities,
+            "carbRatios": OpenAPS.Settings.carbRatios,
+            "autosens": OpenAPS.Settings.autosense,
+            "tempTargets": OpenAPS.Settings.tempTargets,
+            "profile": OpenAPS.Settings.profile,
+            "reservoir": OpenAPS.Monitor.reservoir,
+            "trioVariables": OpenAPS.Monitor.trio_custom_oref_variables,
+            "trioSettings": OpenAPS.Trio.settings
+        ]
+        var files: [String: String] = [:]
+        for (key, name) in names {
+            files[key] = storage?.retrieveRaw(name) ?? ""
+        }
+        let live = liveAlgorithmInputs(smoothGlucose: files["trioSettings"]?.contains("\"smoothGlucose\" : true") == true
+            || files["trioSettings"]?.contains("\"smoothGlucose\":true") == true)
+        if !live.pump.isEmpty { files["pumpHistory"] = live.pump }
+        if !live.carbs.isEmpty { files["carbHistory"] = live.carbs }
+        if !live.glucose.isEmpty { files["glucoseHistory"] = live.glucose }
+        return files
+    }
+
+    private static func liveAlgorithmInputs(smoothGlucose: Bool) -> (pump: String, carbs: String, glucose: String) {
+        let context = CoreDataStack.shared.newTaskContext()
+        var pump = ""
+        var carbs = ""
+        var glucose = ""
+        context.performAndWait {
+            let pumpRequest = PumpEventStored.fetchRequest()
+            pumpRequest.predicate = NSPredicate.pumpHistoryLast1440Minutes
+            let pumpRows = (try? context.fetch(pumpRequest)) ?? []
+            let orphaned = orphanedResumeIDs(in: context)
+            let events = OpenAPS.nativePumpHistory(
+                pumpRows.map(\.objectID),
+                orphanedResumes: orphaned,
+                from: context
+            )
+            pump = encodeJSON(events)
+
+            let carbRequest = CarbEntryStored.fetchRequest()
+            carbRequest.predicate = NSPredicate.predicateForOneDayAgo
+            let carbRows = (try? context.fetch(carbRequest)) ?? []
+            carbs = encodeJSON(carbRows.map { BaseCarbsStorage.mapToCarbsEntry($0) })
+
+            let cutoff = Date().addingTimeInterval(-24 * 3600)
+            let glucoseRequest = GlucoseStored.fetchRequest()
+            glucoseRequest.predicate = NSPredicate(format: "date >= %@", cutoff as NSDate)
+            let glucoseRows = (try? context.fetch(glucoseRequest)) ?? []
+            let rounding = NSDecimalNumberHandler(
+                roundingMode: .plain, scale: 0, raiseOnExactness: false,
+                raiseOnOverflow: false, raiseOnUnderflow: false, raiseOnDivideByZero: false
+            )
+            glucose = encodeJSON(glucoseRows.map {
+                BaseGlucoseStorage.mapToBloodGlucose($0, shouldSmoothGlucose: smoothGlucose, roundingBehavior: rounding)
+            })
+        }
+        return (pump, carbs, glucose)
+    }
+
+    private static func orphanedResumeIDs(in context: NSManagedObjectContext) -> [NSManagedObjectID] {
+        let request = PumpEventStored.fetchRequest()
+        request.predicate = NSPredicate.pumpHistoryLast48h
+        request.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: true)]
+        let rows = ((try? context.fetch(request)) ?? []).filter {
+            $0.type == PumpEventStored.EventType.pumpSuspend.rawValue
+                || $0.type == PumpEventStored.EventType.pumpResume.rawValue
+        }
+        var orphaned: [PumpEventStored] = []
+        if rows.first?.type == PumpEventStored.EventType.pumpResume.rawValue, let first = rows.first {
+            orphaned.append(first)
+        }
+        for pair in zip(rows, rows.dropFirst()) {
+            guard let previous = pair.0.timestamp, let current = pair.1.timestamp else { continue }
+            let gap = current.timeIntervalSince(previous)
+            if pair.1.type == PumpEventStored.EventType.pumpResume.rawValue,
+               pair.0.type != PumpEventStored.EventType.pumpSuspend.rawValue || gap > 24 * 3600
+            {
+                orphaned.append(pair.1)
+            }
+        }
+        return orphaned.map(\.objectID)
+    }
+
+    private static func encodeJSON<T: Encodable>(_ value: T) -> String {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .customISO8601
+        encoder.outputFormatting = [.withoutEscapingSlashes]
+        guard let data = try? encoder.encode(value), let text = String(data: data, encoding: .utf8) else { return "" }
+        return text
     }
 
     static func collectSnapshot(
@@ -260,11 +346,11 @@ enum HandyFreiPhone {
     private static func storeCarbs(_ entries: [[String: Any]]) {
         let context = CoreDataStack.shared.newTaskContext()
         context.performAndWait {
-            for entry in entries where (entry["kind"] as? String) == "carb" {
+            for entry in entries where (entry["kind"] as? String) == "carb" || (entry["kind"] as? String) == "fpu" {
                 let grams = (entry["grams"] as? NSNumber)?.doubleValue ?? (entry["units"] as? NSNumber)?.doubleValue ?? 0
-                guard grams > 0 else { continue }
                 let fat = (entry["fat"] as? NSNumber)?.doubleValue ?? 0
                 let protein = (entry["protein"] as? NSNumber)?.doubleValue ?? 0
+                guard grams > 0 || fat > 0 || protein > 0 else { continue }
                 let date = Date(timeIntervalSince1970: (entry["date"] as? NSNumber)?.doubleValue ?? Date().timeIntervalSince1970)
                 let idString = entry["id"] as? String ?? ""
                 let uuid = UUID(uuidString: idString) ?? UUID()
@@ -286,10 +372,65 @@ enum HandyFreiPhone {
                 row.protein = protein
                 row.date = date
                 row.note = entry["name"] as? String ?? "Via Watch"
-                row.isFPU = false
+                row.isFPU = (entry["kind"] as? String) == "fpu"
+                if let parent = entry["fpuID"] as? String, let fpu = UUID(uuidString: parent) {
+                    row.fpuID = fpu
+                }
                 row.isUploadedToNS = false
                 row.isUploadedToHealth = false
                 row.isUploadedToTidepool = false
+            }
+            try? context.save()
+        }
+    }
+
+    private static func storeGlucose(_ entries: [[String: Any]]) {
+        let context = CoreDataStack.shared.newTaskContext()
+        context.performAndWait {
+            for entry in entries where (entry["kind"] as? String) == "glucose" {
+                let mgdl = (entry["mgdl"] as? NSNumber)?.intValue ?? 0
+                guard mgdl > 0 else { continue }
+                let date = Date(timeIntervalSince1970: (entry["date"] as? NSNumber)?.doubleValue ?? 0)
+                let near = GlucoseStored.fetchRequest()
+                near.predicate = NSPredicate(
+                    format: "date >= %@ AND date <= %@",
+                    date.addingTimeInterval(-3.5 * 60) as NSDate,
+                    date.addingTimeInterval(3.5 * 60) as NSDate
+                )
+                if let found = try? context.fetch(near), !found.isEmpty { continue }
+                let row = GlucoseStored(context: context)
+                row.id = UUID()
+                row.date = date
+                row.glucose = Int16(mgdl)
+                row.isManual = false
+                row.isUploadedToNS = false
+                row.isUploadedToHealth = false
+                row.isUploadedToTidepool = false
+            }
+            try? context.save()
+        }
+    }
+
+    private static func storeLoopStates(_ entries: [[String: Any]]) {
+        let context = CoreDataStack.shared.newTaskContext()
+        context.performAndWait {
+            for entry in entries where (entry["kind"] as? String) == "determination" {
+                guard let iob = entry["iob"] as? NSNumber, let cob = entry["cob"] as? NSNumber else { continue }
+                let date = Date(timeIntervalSince1970: (entry["date"] as? NSNumber)?.doubleValue ?? 0)
+                let existing = OrefDetermination.fetchRequest()
+                existing.predicate = NSPredicate(format: "deliverAt == %@", date as NSDate)
+                if let found = try? context.fetch(existing), !found.isEmpty { continue }
+                let row = OrefDetermination(context: context)
+                row.id = UUID()
+                row.deliverAt = date
+                row.timestamp = date
+                row.iob = NSDecimalNumber(value: iob.doubleValue)
+                row.cob = Int16(min(max(cob.intValue, 0), Int(Int16.max)))
+                row.glucose = NSDecimalNumber(value: (entry["mgdl"] as? NSNumber)?.intValue ?? 0)
+                row.reason = entry["text"] as? String
+                row.enacted = true
+                row.received = true
+                row.isUploadedToNS = false
             }
             try? context.save()
         }
