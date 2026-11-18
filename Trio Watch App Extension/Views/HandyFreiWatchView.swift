@@ -278,12 +278,21 @@ final class HandyFreiSession {
             }
             await MainActor.run {
                 let remain = self.secondsUntilLoop()
-                if let last = self.readings.max(by: { $0.date < $1.date }) {
-                    if remain > 0 {
-                        self.showWaiting(state, mgdl: last.mgdl, remain: remain)
-                    } else if Date().timeIntervalSince(last.date) <= 12 * 60 {
-                        self.evaluate(state, mgdl: last.mgdl, appendReading: false)
+                let quiet = Date().timeIntervalSince(self.lastLoopAt)
+                let watchdog = quiet > 7 * 60 && !self.determining && !self.dosing
+                guard let last = self.readings.max(by: { $0.date < $1.date }) else {
+                    if watchdog {
+                        state.handyFreiStatus = "\(Self.clock()) Loop-Wächter: letzter Lauf vor \(Int(quiet / 60)) min. Noch kein Glukosewert."
                     }
+                    return
+                }
+                if watchdog {
+                    state.handyFreiStatus = "\(Self.clock()) Loop-Wächter: letzter Lauf vor \(Int(quiet / 60)) min, starte neu."
+                    self.evaluate(state, mgdl: last.mgdl, appendReading: false, force: true)
+                } else if remain > 0 {
+                    self.showWaiting(state, mgdl: last.mgdl, remain: remain)
+                } else {
+                    self.evaluate(state, mgdl: last.mgdl, appendReading: false, force: false)
                 }
             }
         }
@@ -600,7 +609,7 @@ final class HandyFreiSession {
     }
 
     /// One loop pass. A minute that arrives while a run is in progress, or before five minutes are up, does not start another determination.
-    private func evaluate(_ state: WatchState, mgdl: Int, appendReading: Bool) {
+    private func evaluate(_ state: WatchState, mgdl: Int, appendReading: Bool, force: Bool = false) {
         if appendReading {
             readings.append((Date(), mgdl))
             stallAttempts = 0
@@ -608,7 +617,7 @@ final class HandyFreiSession {
             HandyFreiDisk.save(session: self)
         }
         let remain = secondsUntilLoop()
-        if determining || dosing || remain > 0 {
+        if determining || dosing || (!force && remain > 0) {
             if appendReading {
                 let age = lastSuccess == .distantPast ? 0 : Int(Date().timeIntervalSince(lastSuccess) / 60)
                 state.applyHandyFreiDisplay(
@@ -639,9 +648,12 @@ final class HandyFreiSession {
         )
         determining = false
         lastLoopAt = Date()
+        let watched = force ? "Loop-Wächter. " : ""
         if outcome.failed {
+            lastSuccess = Date()
+            lastLoopAt = lastSuccess
             lastReason = outcome.reason
-            let line = "\(Self.clockMinute()) \(mgdl) mg/dL · \(outcome.reason)"
+            let line = "\(watched)\(Self.clockMinute()) \(mgdl) mg/dL · \(outcome.reason)"
             state.handyFreiGlucose = mgdl
             state.handyFreiStatus = line
             state.handyFreiLoopLine = line
@@ -654,7 +666,7 @@ final class HandyFreiSession {
         lastReason = outcome.reason
         lastIOB = outcome.iob
         lastCOB = outcome.cob
-        let preview = "\(Self.clockMinute()) \(mgdl) mg/dL · Temp \(String(format: "%.2f", outcome.rate)) U/h \(outcome.minutes) min · SMB \(String(format: "%.2f", outcome.smb)) U · \(outcome.reason)"
+        let preview = "\(watched)\(Self.clockMinute()) \(mgdl) mg/dL · Temp \(String(format: "%.2f", outcome.rate)) U/h \(outcome.minutes) min · SMB \(String(format: "%.2f", outcome.smb)) U · \(outcome.reason)"
         state.handyFreiGlucose = mgdl
         state.handyFreiStatus = preview
         state.handyFreiLoopLine = preview
@@ -726,10 +738,10 @@ final class HandyFreiSession {
             }
             if uncertain {
                 let cleared = await self.confirmBolusState(state)
-                guard cleared else {
-                    finished += " · SMB nicht gesendet, vorheriger Bolus unsicher"
-                    return
-                }
+                finished += cleared
+                    ? " · SMB wartet. Verlauf gelesen, der unsichere Bolus zählt weiter."
+                    : " · SMB nicht gesendet, vorheriger Bolus unsicher"
+                return
             }
             let bolusSent = await self.deliverBolus(state, units: units)
             if bolusSent {
@@ -742,7 +754,12 @@ final class HandyFreiSession {
                 finished += " · SMB \(String(format: "%.2f", units)) U ok"
                 await self.refreshTotals(state, mgdl: mgdl, line: finished)
             } else {
-                await MainActor.run { self.bolusUncertain = true }
+                await MainActor.run {
+                    self.bolusUncertain = true
+                    self.deliveries.append(HandyFreiLoop.Delivery(kind: "bolus", units: units, minutes: 0, date: Date()))
+                    self.log.append(["date": Date().timeIntervalSince1970, "kind": "bolus", "units": units, "minutes": 0, "text": "SMB unsicher"])
+                    HandyFreiDisk.save(session: self)
+                }
                 finished += " · SMB unsicher, kein zweiter Bolus"
             }
         }
@@ -775,15 +792,14 @@ final class HandyFreiSession {
             watchCarbs: loopCarbs(),
             now: Date()
         )
+        guard !outcome.failed else { return }
         await MainActor.run {
-            state.applyHandyFreiDisplay(
-                mgdl: mgdl,
-                iob: outcome.iob,
-                cob: outcome.cob,
-                loopLine: line,
-                loopAgeMinutes: 0
-            )
+            self.lastIOB = outcome.iob
+            self.lastCOB = outcome.cob
+            state.iob = String(format: "%.1f", outcome.iob)
+            state.cob = String(format: "%.0f", outcome.cob)
             state.handyFreiStatus = line
+            state.handyFreiLoopLine = line
         }
     }
 
@@ -822,7 +838,17 @@ final class HandyFreiSession {
                 state.handyFreiLoopLine = "\(Self.clock()) Bolus \(String(format: "%.2f", amount)) U · Pumpe ok"
                 state.handleAcknowledgment(success: true, message: "Bolus \(String(format: "%.2f", amount)) U")
             } else {
-                state.handleAcknowledgment(success: false, message: "Bolus nicht bestätigt. \(state.handyFreiLoopLine)")
+                self.bolusUncertain = true
+                self.deliveries.append(HandyFreiLoop.Delivery(kind: "bolus", units: amount, minutes: 0, date: Date()))
+                self.log.append([
+                    "date": Date().timeIntervalSince1970,
+                    "kind": "bolus",
+                    "units": amount,
+                    "minutes": 0,
+                    "text": "Bolus unsicher"
+                ])
+                HandyFreiDisk.save(session: self)
+                state.handleAcknowledgment(success: false, message: "Bolus nicht bestätigt. Er zählt vorsorglich, bis der Verlauf ihn zeigt.")
             }
         }
     }
@@ -1061,6 +1087,82 @@ final class HandyFreiSession {
             var backupToken = ""
             var snapshotAt: TimeInterval = 0
             var logJSON: Data = Data()
+
+            private enum CodingKeys: String, CodingKey {
+                case files
+                case basal
+                case isf
+                case carbRatio
+                case presets
+                case deliveries
+                case carbs
+                case readings
+                case lastSuccess
+                case lastReason
+                case lastIOB
+                case lastCOB
+                case bleAddress
+                case sensorPeripheralID
+                case blePIN
+                case phase5
+                case pumpSerial
+                case sessionToken
+                case backupToken
+                case snapshotAt
+                case logJSON
+            }
+
+            init() {}
+
+            init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                files = try container.decodeIfPresent([String: String].self, forKey: .files) ?? [:]
+                basal = try container.decodeIfPresent([Double].self, forKey: .basal) ?? []
+                isf = try container.decodeIfPresent([Double].self, forKey: .isf) ?? []
+                carbRatio = try container.decodeIfPresent([Double].self, forKey: .carbRatio) ?? []
+                presets = (try? container.decode([MealPresetWatch].self, forKey: .presets)) ?? []
+                deliveries = try container.decodeIfPresent([StoredDelivery].self, forKey: .deliveries) ?? []
+                carbs = try container.decodeIfPresent([Carb].self, forKey: .carbs) ?? []
+                readings = try container.decodeIfPresent([Reading].self, forKey: .readings) ?? []
+                lastSuccess = try container.decodeIfPresent(TimeInterval.self, forKey: .lastSuccess) ?? 0
+                lastReason = try container.decodeIfPresent(String.self, forKey: .lastReason) ?? ""
+                lastIOB = try container.decodeIfPresent(Double.self, forKey: .lastIOB) ?? 0
+                lastCOB = try container.decodeIfPresent(Double.self, forKey: .lastCOB) ?? 0
+                bleAddress = try container.decodeIfPresent(String.self, forKey: .bleAddress) ?? ""
+                sensorPeripheralID = try container.decodeIfPresent(String.self, forKey: .sensorPeripheralID) ?? ""
+                blePIN = try container.decodeIfPresent(String.self, forKey: .blePIN) ?? ""
+                phase5 = try container.decodeIfPresent(String.self, forKey: .phase5) ?? ""
+                pumpSerial = try container.decodeIfPresent(String.self, forKey: .pumpSerial) ?? ""
+                sessionToken = try container.decodeIfPresent(String.self, forKey: .sessionToken) ?? ""
+                backupToken = try container.decodeIfPresent(String.self, forKey: .backupToken) ?? ""
+                snapshotAt = try container.decodeIfPresent(TimeInterval.self, forKey: .snapshotAt) ?? 0
+                logJSON = try container.decodeIfPresent(Data.self, forKey: .logJSON) ?? Data()
+            }
+
+            func encode(to encoder: Encoder) throws {
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                try container.encode(files, forKey: .files)
+                try container.encode(basal, forKey: .basal)
+                try container.encode(isf, forKey: .isf)
+                try container.encode(carbRatio, forKey: .carbRatio)
+                try container.encode(presets, forKey: .presets)
+                try container.encode(deliveries, forKey: .deliveries)
+                try container.encode(carbs, forKey: .carbs)
+                try container.encode(readings, forKey: .readings)
+                try container.encode(lastSuccess, forKey: .lastSuccess)
+                try container.encode(lastReason, forKey: .lastReason)
+                try container.encode(lastIOB, forKey: .lastIOB)
+                try container.encode(lastCOB, forKey: .lastCOB)
+                try container.encode(bleAddress, forKey: .bleAddress)
+                try container.encode(sensorPeripheralID, forKey: .sensorPeripheralID)
+                try container.encode(blePIN, forKey: .blePIN)
+                try container.encode(phase5, forKey: .phase5)
+                try container.encode(pumpSerial, forKey: .pumpSerial)
+                try container.encode(sessionToken, forKey: .sessionToken)
+                try container.encode(backupToken, forKey: .backupToken)
+                try container.encode(snapshotAt, forKey: .snapshotAt)
+                try container.encode(logJSON, forKey: .logJSON)
+            }
         }
 
         static func save(session: HandyFreiSession) {

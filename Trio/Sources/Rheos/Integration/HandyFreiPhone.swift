@@ -301,9 +301,9 @@ enum HandyFreiPhone {
             for entry in entries {
                 let kind = entry["kind"] as? String ?? ""
                 guard kind == "temp" || kind == "bolus" else { continue }
-                let date = Date(timeIntervalSince1970: entry["date"] as? TimeInterval ?? Date().timeIntervalSince1970)
-                let units = entry["units"] as? Double ?? 0
-                let minutes = entry["minutes"] as? Int ?? 0
+                let date = Date(timeIntervalSince1970: (entry["date"] as? NSNumber)?.doubleValue ?? Date().timeIntervalSince1970)
+                let units = (entry["units"] as? NSNumber)?.doubleValue ?? 0
+                let minutes = (entry["minutes"] as? NSNumber)?.intValue ?? 0
                 let sync = "handyfrei-\(Int(date.timeIntervalSince1970))-\(kind)"
                 let request = PumpEventStored.fetchRequest()
                 request.predicate = NSPredicate(format: "syncIdentifier == %@", sync)

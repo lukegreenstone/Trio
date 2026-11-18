@@ -833,4 +833,38 @@ struct MealPresetWatch: Identifiable, Equatable, Codable {
     var carbs: Double
     var fat: Double
     var protein: Double
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case carbs
+        case fat
+        case protein
+    }
+
+    init(id: String, name: String, carbs: Double, fat: Double, protein: Double) {
+        self.id = id
+        self.name = name
+        self.carbs = carbs
+        self.fat = fat
+        self.protein = protein
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? "Mahlzeit"
+        carbs = try container.decodeIfPresent(Double.self, forKey: .carbs) ?? 0
+        fat = try container.decodeIfPresent(Double.self, forKey: .fat) ?? 0
+        protein = try container.decodeIfPresent(Double.self, forKey: .protein) ?? 0
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(carbs, forKey: .carbs)
+        try container.encode(fat, forKey: .fat)
+        try container.encode(protein, forKey: .protein)
+    }
 }

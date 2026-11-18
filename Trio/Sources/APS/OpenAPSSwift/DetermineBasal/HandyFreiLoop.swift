@@ -93,9 +93,19 @@ public enum HandyFreiLoop {
             )
             var history = try pumpHistory(files)
             let known = Set(history.map(\.id))
-            history.append(contentsOf: deliveries.flatMap(events).filter { !known.contains($0.id) })
+            let fresh = deliveries.filter { !alreadyRecorded($0, history) }
+            history.append(contentsOf: fresh.flatMap(events).filter { !known.contains($0.id) })
             var carbs: [CarbsEntry] = (try? JSONBridge.from(string: files["carbHistory"] ?? "[]")) ?? []
-            carbs.append(contentsOf: watchCarbs.map { item in
+            let storedCarbs = carbs
+            let knownCarbs = Set(storedCarbs.compactMap(\.id))
+            carbs.append(contentsOf: watchCarbs.filter { item in
+                if knownCarbs.contains(item.id) { return false }
+                return !storedCarbs.contains { existing in
+                    let when = existing.actualDate ?? existing.createdAt
+                    return abs(when.timeIntervalSince(item.date)) < 180
+                        && abs(NSDecimalNumber(decimal: existing.carbs).doubleValue - item.grams) < 0.1
+                }
+            }.map { item in
                 CarbsEntry(
                     id: item.id,
                     createdAt: item.date,
@@ -241,6 +251,21 @@ public enum HandyFreiLoop {
         let text = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         let shown = text.isEmpty ? String(describing: error) : text
         return shown.count <= 180 ? shown : String(shown.prefix(180))
+    }
+
+    /// The phone history uses its own ids after hand-back. Match the dose itself so it is not counted twice.
+    private static func alreadyRecorded(_ delivery: Delivery, _ history: [PumpHistoryEvent]) -> Bool {
+        history.contains { event in
+            guard abs(event.timestamp.timeIntervalSince(delivery.date)) < 180 else { return false }
+            if delivery.kind == "bolus" {
+                guard event.type == .bolus || event.type == .smb else { return false }
+                let amount = NSDecimalNumber(decimal: event.amount ?? -1).doubleValue
+                return abs(amount - delivery.units) < 0.051
+            }
+            guard event.type == .tempBasal else { return false }
+            let rate = NSDecimalNumber(decimal: event.rate ?? -1).doubleValue
+            return abs(rate - delivery.units) < 0.051
+        }
     }
 
     /// The iPhone stores every temp as a duration entry plus a rate entry. One entry without the other makes IOB throw.
