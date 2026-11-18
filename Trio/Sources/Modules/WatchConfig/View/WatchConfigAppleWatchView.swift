@@ -102,6 +102,24 @@ struct WatchConfigAppleWatchView: BaseView {
                     handyFreiNote = session.note
                 }
                 .disabled(!HandyFrei.isEnabled())
+                Button("Sensor & Loop aufs iPhone zurückholen") {
+                    let cgm = resolver.resolve(FetchGlucoseManager.self)?.cgmManager
+                    let session = HandyFreiPhone.stop(
+                        fingerprint: HandyFrei.Fingerprint(
+                            pumpPeripheralID: nil,
+                            pumpSerial: nil,
+                            sensorSerial: nil,
+                            sensorPeripheralID: nil
+                        ),
+                        cgm: cgm
+                    )
+                    handyFreiNote = session.note.isEmpty
+                        ? "Sensor und Loop sind wieder auf dem iPhone. Ein späteres Protokoll wird nur einmal übernommen."
+                        : session.note
+                    handyFreiReport = HandyFreiPhone.lastReport
+                }
+                Text("Holt den Sensor und den Loop zurück, auch wenn die Uhr nicht antwortet. Eine spätere Übergabe der Uhr wird nur einmal gezählt.")
+                    .font(.footnote)
                 if !handyFreiNote.isEmpty {
                     Text(handyFreiNote).font(.footnote)
                 }

@@ -320,6 +320,7 @@ final class HandyFreiSession {
             guard let self else { return }
             while state.handyFreiRunning, epoch == self.doseEpoch, !Task.isCancelled {
                 self.scheduleRefresh()
+                await MainActor.run { state.reportHandyFreiHeartbeat() }
                 try? await Task.sleep(nanoseconds: 60_000_000_000)
                 guard state.handyFreiRunning, epoch == self.doseEpoch else { return }
                 let snapshot = await MainActor.run { () -> (
@@ -578,13 +579,7 @@ final class HandyFreiSession {
     private func keepAwake(_ state: WatchState) async {
         guard state.handyFreiRunning else { return }
         workoutRestarts += 1
-        guard workoutRestarts <= 1 else {
-            await MainActor.run {
-                self.giveUpOrRetry(state, "Die Workout-Sitzung ist zu Ende.")
-            }
-            return
-        }
-        await mark(state, "Workout erneut")
+        await mark(state, "Workout erneut \(workoutRestarts). Die Uhr bleibt in Handy-frei.")
         let allowed = await HandyFreiWorkout.shared.prepare { ended in
             DispatchQueue.main.async {
                 guard state.handyFreiRunning, ended else { return }
@@ -780,7 +775,7 @@ final class HandyFreiSession {
         let headline: String
         if let link = error as? HandyFreiLinkError {
             if case let .sensorNotSeen(detail) = link {
-                return "\(detail). Bluetooth am iPhone wieder einschalten."
+                return "\(detail). Die Uhr sucht weiter, auch ohne iPhone."
             }
             switch link {
             case .bluetoothOff:
@@ -809,7 +804,7 @@ final class HandyFreiSession {
         } else {
             headline = "\(stage): \(error.localizedDescription)"
         }
-        return "\(headline). \(error.localizedDescription). Bluetooth am iPhone wieder einschalten."
+        return "\(headline). \(error.localizedDescription). Die Uhr sucht weiter."
     }
 
     private func absorb(_ state: WatchState, _ mgdl: Int) {
@@ -1206,6 +1201,7 @@ final class HandyFreiSession {
             HandyFreiMedtrumLink.shared.stop()
         }
         state.handyFreiStatus = "Handy-frei beendet. „Handy-frei aktivieren“ startet wieder, auch ohne iPhone."
+        state.reportHandyFreiHeartbeat()
     }
 
     private func phoneReachable(_ state: WatchState) -> Bool {
@@ -1221,8 +1217,8 @@ final class HandyFreiSession {
             return
         }
         state.handyFreiAlarm = "\(Self.clockMinute()) \(text)"
-        state.handyFreiStatus = "\(Self.clockMinute()) \(text) Nächster Versuch in 90 s. Falls Bluetooth am iPhone noch an ist, hält das iPhone die Pumpe."
-        state.handyFreiLoopLine = state.handyFreiStatus
+        state.handyFreiStatus = "\(Self.clockMinute()) \(text) Nächster Versuch in 90 s. Die Uhr macht weiter, auch ohne iPhone."
+        state.handyFreiLoopLine = ""
         log.append([
             "date": Date().timeIntervalSince1970,
             "kind": "alarm",
@@ -1244,10 +1240,11 @@ final class HandyFreiSession {
                     }
                     return
                 }
-                await self.mark(state, "Verbindung neu, iPhone nicht da.")
+                await self.mark(state, "Verbindung neu. Pumpenverlauf zuerst, dann der Sensor.")
                 self.sensorRetries = 0
                 self.pumpRetries = 0
                 self.stallAttempts = 0
+                await self.keepAwake(state)
                 do {
                     try await self.openPump(state, attempt: 1)
                     guard state.handyFreiRunning, epoch == self.doseEpoch else { return }
@@ -1262,14 +1259,30 @@ final class HandyFreiSession {
         }
     }
 
-    /// After a watch reboot, a session that was still running starts again from the saved copy.
+    private weak var boundState: WatchState?
+
+    /// The view that owns the buttons. A background wake uses the same object.
+    func bind(_ state: WatchState) {
+        boundState = state
+    }
+
+    /// After a crash, kill, or reboot, the next launch reads the saved session and starts the workout and the scan again.
     func resumeIfNeeded(_ state: WatchState) {
+        bind(state)
         guard !state.handyFreiRunning, HandyFreiDisk.wasActive() else { return }
+        state.handyFreiStatus = "Handy-frei wird aus der letzten Kopie fortgesetzt."
         restartFromCache(state)
     }
 
     func wakeFromBackground() {
+        guard HandyFreiDisk.wasActive() || boundState?.handyFreiRunning == true else { return }
         scheduleRefresh()
+        guard let state = boundState else { return }
+        if state.handyFreiRunning {
+            Task { await self.keepAwake(state) }
+        } else {
+            resumeIfNeeded(state)
+        }
     }
 
     private func scheduleRefresh() {
@@ -1304,6 +1317,7 @@ final class HandyFreiSession {
         sendLog(state)
         active = false
         HandyFreiDisk.save(session: self)
+        state.reportHandyFreiHeartbeat()
         HandyFreiWorkout.shared.stop()
         HandyFreiLibreLink.stop()
         Task {

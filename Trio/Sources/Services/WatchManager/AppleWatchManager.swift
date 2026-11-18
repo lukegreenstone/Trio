@@ -38,6 +38,7 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
     private var highGlucose: Decimal = 180.0
     private var currentGlucoseTarget: Decimal = 100.0
     private var activeBolusAmount: Double = 0.0
+    private var watchHandoffTimer: Timer?
 
     // Queue for handling Core Data change notifications
     private let queue = DispatchQueue(label: "BaseWatchManagerManager.queue", qos: .utility)
@@ -156,6 +157,12 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
             session.delegate = self
             session.activate()
             self.session = session
+            HandyFreiPhone.bindLibre(self.fetchGlucoseManager.cgmManager)
+            DispatchQueue.main.async { [weak self] in
+                self?.watchHandoffTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+                    self?.checkHandyFreiHandoff()
+                }
+            }
 
             debug(.watchManager, "📱 Phone session setup - isPaired: \(session.isPaired)")
         } else {
@@ -678,6 +685,14 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
             SimpleLogReporter.appendToWatchLog(logs)
         }
 
+        if message["handyFreiHeartbeat"] != nil || message["handyFreiRunning"] != nil {
+            Task { @MainActor [weak self] in
+                self?.recordHandyFreiWatch(message, reachable: true)
+            }
+            if message["handyFreiPhoneOff"] == nil, message["handyFreiActivate"] == nil, message["handyFreiLog"] == nil {
+                return
+            }
+        }
         if message["handyFreiPhoneOff"] as? Bool == true {
             Task { @MainActor in
                 HandyFreiPhone.watchSaysPhoneIsOff()
@@ -697,7 +712,7 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
         }
         if let log = message["handyFreiLog"] as? [[String: Any]] {
             Task { @MainActor in
-                HandyFreiPhone.importLog(log)
+                HandyFreiPhone.importLog(log, cgm: self.fetchGlucoseManager.cgmManager)
             }
             return
         }
@@ -845,7 +860,7 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
     func session(_: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
         if let log = userInfo["handyFreiLog"] as? [[String: Any]] {
             Task { @MainActor in
-                HandyFreiPhone.importLog(log)
+                HandyFreiPhone.importLog(log, cgm: self.fetchGlucoseManager.cgmManager)
             }
         }
         if let logs = userInfo["watchLogs"] as? String {
@@ -940,6 +955,7 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
     func sessionReachabilityDidChange(_ session: WCSession) {
         debug(.watchManager, "📱 Phone reachability changed: \(session.isReachable)")
 
+        checkHandyFreiHandoff()
         if session.isReachable {
             // Try to send data when connection is established
             Task {
@@ -952,6 +968,36 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
                 self?.retryConnection()
             }
         }
+    }
+
+    /// Asks a reachable watch whether Handy-frei is still running. A reply, or a pushed heartbeat, can return the sensor.
+    private func checkHandyFreiHandoff() {
+        let cgm = fetchGlucoseManager.cgmManager
+        HandyFreiPhone.bindLibre(cgm)
+        guard HandyFreiPhone.radioIsHandedOff, let session, session.activationState == .activated else { return }
+        guard session.isReachable else {
+            HandyFreiPhone.noteWatch(reachable: false, running: nil, heartbeat: nil, cgm: cgm)
+            return
+        }
+        session.sendMessage(["handyFreiStatusRequest": true], replyHandler: { [weak self] reply in
+            let running = reply["handyFreiRunning"] as? Bool
+            let beat = (reply["handyFreiHeartbeat"] as? NSNumber)?.doubleValue
+            HandyFreiPhone.noteWatch(reachable: true, running: running, heartbeat: beat, cgm: self?.fetchGlucoseManager.cgmManager)
+        }, errorHandler: { [weak self] _ in
+            HandyFreiPhone.noteWatch(reachable: false, running: nil, heartbeat: nil, cgm: self?.fetchGlucoseManager.cgmManager)
+        })
+    }
+
+    private func recordHandyFreiWatch(_ message: [String: Any], reachable: Bool) {
+        let running = message["handyFreiRunning"] as? Bool
+        let beat = (message["handyFreiHeartbeat"] as? NSNumber)?.doubleValue
+            ?? (message["handyFreiHeartbeat"] as? TimeInterval)
+        HandyFreiPhone.noteWatch(
+            reachable: reachable,
+            running: running,
+            heartbeat: beat,
+            cgm: fetchGlucoseManager.cgmManager
+        )
     }
 
     /// Processes bolus requests received from the Watch

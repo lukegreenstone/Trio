@@ -58,6 +58,7 @@ public final class HandyFreiMedtrumLink: NSObject, CBCentralManagerDelegate, CBP
         advertisedSN = Data(serial.reversed())
         sessionToken = token
         backupToken = Data(base64Encoded: backupTokenBase64) ?? Data()
+        // watchOS does not restore CB centrals after a kill or reboot, so this is a fresh scan.
         central = CBCentralManager(delegate: self, queue: queue)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             queue.async {

@@ -23,7 +23,9 @@ public enum HandyFreiLibreLink {
         onStatus: @escaping @Sendable (String) -> Void = { _ in }
     ) async throws {
         guard blePIN.count == 4, phase5RawKey.count == 16 else { throw HandyFreiLinkError.badKey }
-        let scanner = SensorScannerNG()
+        // On iOS this asks CoreBluetooth to restore the central. watchOS has no
+        // restoration key, so a killed watch app must scan again after it is launched.
+        let scanner = SensorScannerNG(configuration: .background(restorationIdentifier: "org.trio.handyfrei.libre"))
         heldScanner = scanner
         // Same token as LibreLoopPairingService.scanForSensorNG: the NFC address
         // with colons removed. The sensor puts that token in the local name,

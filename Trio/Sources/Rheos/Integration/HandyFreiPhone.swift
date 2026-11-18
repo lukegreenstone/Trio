@@ -138,7 +138,7 @@ enum HandyFreiPhone {
     }
 
     /// Stores the watch log, then lets the loop run again. Order is fixed: log first.
-    static func importLog(_ entries: [[String: Any]]) {
+    static func importLog(_ entries: [[String: Any]], cgm: Any? = nil) {
         let data = try? JSONSerialization.data(withJSONObject: entries)
         if let data {
             UserDefaults.standard.set(data, forKey: logKey)
@@ -159,17 +159,17 @@ enum HandyFreiPhone {
         lock.unlock()
         let session = HandyFrei.resumeAfterLog(current, logImported: true)
         HandyFreiGate.setPhoneLoopPaused(false)
-        resumeLibreRadio()
+        resumeLibreRadio(cgm)
         lock.lock()
         pending = session
         lock.unlock()
         store(session)
     }
 
-    static func stop(fingerprint: HandyFrei.Fingerprint) -> HandyFrei.Session {
+    static func stop(fingerprint: HandyFrei.Fingerprint, cgm: Any? = nil) -> HandyFrei.Session {
         let (session, _) = HandyFrei.stop(HandyFrei.idle(fingerprint: fingerprint))
         HandyFreiGate.setPhoneLoopPaused(false)
-        resumeLibreRadio()
+        resumeLibreRadio(cgm)
         lock.lock()
         pending = session
         lock.unlock()
@@ -658,17 +658,93 @@ enum HandyFreiPhone {
     }
 
     private static weak var handedLibre: LibreLoopCGMManager?
+    private static let handoffKey = "org.loopkit.LibreLoop.radioHandedToWatch"
+    private static let heartbeatKey = "handyfrei.watchHeartbeat"
+    private static let runningKey = "handyfrei.watchRunning"
+    private static let unreachableSinceKey = "handyfrei.watchUnreachableSince"
+    /// A missing or stale heartbeat, and a watch that stays unreachable, both give the sensor back.
+    private static let silenceLimit: TimeInterval = 15 * 60
+
+    static var radioIsHandedOff: Bool {
+        UserDefaults.standard.bool(forKey: handoffKey)
+    }
 
     /// Stops the phone connecting. The sensor session, serial, and keychain item stay.
+    /// The hand-off is stored, so a relaunch does not connect again while the watch is alive.
     private static func releaseLibreRadio(_ cgm: Any?) {
         guard let libre = cgm as? LibreLoopCGMManager else { return }
         handedLibre = libre
         libre.releaseRadioKeepingPairing()
+        let now = Date().timeIntervalSince1970
+        let defaults = UserDefaults.standard
+        defaults.set(true, forKey: handoffKey)
+        defaults.set(now, forKey: heartbeatKey)
+        defaults.set(true, forKey: runningKey)
+        defaults.removeObject(forKey: unreachableSinceKey)
     }
 
-    private static func resumeLibreRadio() {
-        handedLibre?.resumeRadioAfterHandoff()
+    private static func resumeLibreRadio(_ cgm: Any? = nil) {
+        let libre = (cgm as? LibreLoopCGMManager) ?? handedLibre
+        libre?.resumeRadioAfterHandoff()
         handedLibre = nil
+        let defaults = UserDefaults.standard
+        defaults.set(false, forKey: handoffKey)
+        defaults.set(false, forKey: runningKey)
+        defaults.removeObject(forKey: unreachableSinceKey)
+    }
+
+    /// Remembers the live manager after a relaunch, when the weak reference is gone.
+    static func bindLibre(_ cgm: Any?) {
+        if let libre = cgm as? LibreLoopCGMManager {
+            handedLibre = libre
+        }
+    }
+
+    /// Gives the sensor and the loop back when the watch is not actually running.
+    /// A reachable watch that says Handy-frei is off, or whose heartbeat is older than 15 minutes, returns immediately.
+    /// An unreachable watch returns only after 15 minutes with no heartbeat, so a phone relaunch does not steal a live session.
+    static func noteWatch(reachable: Bool, running: Bool?, heartbeat: TimeInterval?, cgm: Any?) {
+        bindLibre(cgm)
+        guard radioIsHandedOff else { return }
+        let now = Date().timeIntervalSince1970
+        let defaults = UserDefaults.standard
+        if let heartbeat, heartbeat > 0 {
+            defaults.set(heartbeat, forKey: heartbeatKey)
+        }
+        if let running {
+            defaults.set(running, forKey: runningKey)
+        }
+        let beat = defaults.double(forKey: heartbeatKey)
+        let beatAge = beat > 0 ? now - beat : silenceLimit + 1
+        if reachable {
+            defaults.removeObject(forKey: unreachableSinceKey)
+            let reportedOff = defaults.object(forKey: runningKey) != nil && !defaults.bool(forKey: runningKey)
+            if reportedOff || beatAge > silenceLimit {
+                reclaimRadio(cgm, reason: reportedOff
+                    ? "Die Uhr meldet kein laufendes Handy-frei."
+                    : "Kein Herzschlag von der Uhr seit 15 Minuten.")
+            }
+            return
+        }
+        if defaults.double(forKey: unreachableSinceKey) == 0 {
+            defaults.set(now, forKey: unreachableSinceKey)
+        }
+        let away = now - defaults.double(forKey: unreachableSinceKey)
+        if away > silenceLimit, beatAge > silenceLimit {
+            reclaimRadio(cgm, reason: "Die Uhr ist seit 15 Minuten nicht erreichbar und ohne Herzschlag.")
+        }
+    }
+
+    private static func reclaimRadio(_ cgm: Any?, reason: String) {
+        guard radioIsHandedOff else { return }
+        _ = stop(fingerprint: HandyFrei.Fingerprint(
+            pumpPeripheralID: nil, pumpSerial: nil, sensorSerial: nil, sensorPeripheralID: nil
+        ), cgm: cgm)
+        var session = pending
+        session?.note = reason + " Sensor und Loop sind wieder auf dem iPhone. Ein späteres Protokoll wird nur einmal übernommen."
+        if let session {
+            store(session)
+        }
     }
 
     private static func send(_ session: HandyFrei.Session, snapshot: HandyFrei.Snapshot?, kind: String) {

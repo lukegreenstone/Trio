@@ -399,19 +399,28 @@ enum HandyFrei {
 }
 
 /// Phone loop pause. The watch process has its own copy and never pauses the phone.
+/// The flag is stored so a relaunch does not resume dosing while the watch still has the sensor.
 enum HandyFreiGate {
     private static let lock = NSLock()
+    private static let key = "handyfrei.phoneLoopPaused"
+    private static var loaded = false
     private static var paused = false
 
     static var phoneLoopPaused: Bool {
         lock.lock()
         defer { lock.unlock() }
+        if !loaded {
+            paused = UserDefaults.standard.bool(forKey: key)
+            loaded = true
+        }
         return paused
     }
 
     static func setPhoneLoopPaused(_ value: Bool) {
         lock.lock()
         paused = value
+        loaded = true
         lock.unlock()
+        UserDefaults.standard.set(value, forKey: key)
     }
 }

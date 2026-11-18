@@ -228,6 +228,26 @@ import WatchConnectivity
     }
 
     /// Handles incoming messages from the paired iPhone when Phone is in the foreground
+    func session(_ session: WCSession, didReceiveMessage message: [String: Any], replyHandler: @escaping ([String: Any]) -> Void) {
+        if message["handyFreiStatusRequest"] as? Bool == true {
+            replyHandler([
+                "handyFreiRunning": handyFreiRunning,
+                "handyFreiHeartbeat": Date().timeIntervalSince1970
+            ])
+            return
+        }
+        replyHandler([:])
+        self.session(session, didReceiveMessage: message)
+    }
+
+    func reportHandyFreiHeartbeat() {
+        guard let session, session.activationState == .activated, session.isReachable else { return }
+        session.sendMessage([
+            "handyFreiHeartbeat": Date().timeIntervalSince1970,
+            "handyFreiRunning": handyFreiRunning
+        ], replyHandler: nil) { _ in }
+    }
+
     func session(_: WCSession, didReceiveMessage message: [String: Any]) {
         if message["handyFrei"] != nil {
             Task { await WatchLogger.shared.log("⌚️ Watch received Handy-frei") }
@@ -403,6 +423,7 @@ import WatchConnectivity
             }
 
             if session.isReachable {
+                self.reportHandyFreiHeartbeat()
                 self.forceConditionalWatchStateUpdate()
 
                 // reset input amounts

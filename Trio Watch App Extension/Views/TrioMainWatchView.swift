@@ -4,6 +4,7 @@ import WatchKit
 
 struct TrioMainWatchView: View {
     @State private var state = WatchState()
+    @Environment(\.scenePhase) private var scenePhase
 
     // misc
     @State private var currentPage: Int = 0
@@ -250,6 +251,11 @@ struct TrioMainWatchView: View {
         .ignoresSafeArea()
         .onAppear {
             HandyFreiSession.shared.resumeIfNeeded(state)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active || phase == .background {
+                HandyFreiSession.shared.wakeFromBackground()
+            }
         }
     }
 
