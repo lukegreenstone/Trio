@@ -18,7 +18,7 @@ struct HandyFreiWatchView: View {
                     .font(.headline)
                 Text(state.handyFreiStatus)
                     .font(.footnote)
-                if !state.handyFreiLoopLine.isEmpty {
+                if !state.handyFreiLoopLine.isEmpty, state.handyFreiLoopLine != state.handyFreiStatus {
                     Text(state.handyFreiLoopLine)
                         .font(.footnote)
                 }
@@ -765,6 +765,7 @@ final class HandyFreiSession {
 
     private func mark(_ state: WatchState, _ text: String) async {
         await MainActor.run {
+            guard state.handyFreiStatus != text else { return }
             state.handyFreiStatus = text
             log.append([
                 "date": Date().timeIntervalSince1970,

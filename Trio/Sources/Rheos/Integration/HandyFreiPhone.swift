@@ -91,6 +91,8 @@ enum HandyFreiPhone {
         ))
         let session = HandyFrei.watchTakesRadio(offered)
         HandyFreiGate.setPhoneLoopPaused(true)
+        // Libre 3 allows one central. Drop the phone's link without deleting the sensor or its keys.
+        releaseLibreRadio(cgm)
         lock.lock()
         pending = session
         logImported = false
@@ -157,6 +159,7 @@ enum HandyFreiPhone {
         lock.unlock()
         let session = HandyFrei.resumeAfterLog(current, logImported: true)
         HandyFreiGate.setPhoneLoopPaused(false)
+        resumeLibreRadio()
         lock.lock()
         pending = session
         lock.unlock()
@@ -166,6 +169,7 @@ enum HandyFreiPhone {
     static func stop(fingerprint: HandyFrei.Fingerprint) -> HandyFrei.Session {
         let (session, _) = HandyFrei.stop(HandyFrei.idle(fingerprint: fingerprint))
         HandyFreiGate.setPhoneLoopPaused(false)
+        resumeLibreRadio()
         lock.lock()
         pending = session
         lock.unlock()
@@ -651,6 +655,20 @@ enum HandyFreiPhone {
 
     private static func store(_ session: HandyFrei.Session) {
         UserDefaults.standard.set(session.note, forKey: statusKey)
+    }
+
+    private static weak var handedLibre: LibreLoopCGMManager?
+
+    /// Stops the phone connecting. The sensor session, serial, and keychain item stay.
+    private static func releaseLibreRadio(_ cgm: Any?) {
+        guard let libre = cgm as? LibreLoopCGMManager else { return }
+        handedLibre = libre
+        libre.releaseRadioKeepingPairing()
+    }
+
+    private static func resumeLibreRadio() {
+        handedLibre?.resumeRadioAfterHandoff()
+        handedLibre = nil
     }
 
     private static func send(_ session: HandyFrei.Session, snapshot: HandyFrei.Snapshot?, kind: String) {

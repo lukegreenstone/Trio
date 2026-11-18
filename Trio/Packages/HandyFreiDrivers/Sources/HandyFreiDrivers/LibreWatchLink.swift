@@ -146,15 +146,17 @@ public enum HandyFreiLibreLink {
                         $0.uuidString.caseInsensitiveCompare(LibreSensorGATT.serviceUUID.uuidString) == .orderedSame
                     })
                 )
-                let unnamedLibre = progress.libreCount == 1
+                let shownName = (local ?? found.name) ?? ""
+                let abbott = shownName.uppercased().hasPrefix("ABBOTT")
+                let onlyLibre = progress.libreCount == 1
                     && progress.saw(found.id)
-                    && (local ?? found.name)?.isEmpty != false
-                    && Date().timeIntervalSince(progress.started) >= 45
-                if named || unnamedLibre {
+                    && (shownName.isEmpty || abbott)
+                    && Date().timeIntervalSince(progress.started) >= 8
+                if named || onlyLibre {
                     peripheral = found.peripheral
                     scanner.stopScan()
                     scanner.requestConnect(found.peripheral)
-                    onStatus(named ? "Sensor: gefunden, verbinde" : "Sensor: ein Libre-Gerät, verbinde")
+                    onStatus(named ? "Sensor: gefunden, verbinde" : "Sensor: Libre-Dienst, verbinde")
                 } else {
                     publish(searching: true)
                 }
@@ -224,16 +226,30 @@ public enum HandyFreiLibreLink {
         throw HandyFreiLinkError.sensorNotSeen(progress.line(searching: false, expected: expected))
     }
 
-    /// Libre 3 identity, same fields the iPhone scan compares: advertised local
-    /// name, `peripheral.name`, then manufacturer data. Comparison is the
-    /// 12 hex digits of the BLE address, ignoring case and separators.
+    /// Libre 3 identity. The iPhone compares the advertised local name with the
+    /// NFC address. Libre 3 Plus often has no name, or a name that starts with
+    /// ABBOTT, and puts the address only in manufacturer data, sometimes reversed.
     static func advertisementMatches(name: String?, localName: String?, manufacturerHex: String?, expected: String) -> Bool {
+        let reversed = reversedHexBytes(expected)
         for raw in [localName, name].compactMap({ $0 }) {
             let token = raw.uppercased().filter(\.isHexDigit)
-            if token == expected || token.contains(expected) { return true }
+            if token == expected || token.contains(expected) || token.contains(reversed) { return true }
         }
-        if let manufacturerHex, manufacturerHex.uppercased().contains(expected) { return true }
+        if let hex = manufacturerHex?.uppercased(), hex.contains(expected) || hex.contains(reversed) { return true }
         return false
+    }
+
+    /// Six-byte BLE address with the byte order flipped, which is how some Libre advertisements store it.
+    private static func reversedHexBytes(_ hex: String) -> String {
+        guard hex.count == 12, hex.count.isMultiple(of: 2) else { return hex }
+        var bytes: [Substring] = []
+        var index = hex.startIndex
+        while index < hex.endIndex {
+            let next = hex.index(index, offsetBy: 2)
+            bytes.append(hex[index ..< next])
+            index = next
+        }
+        return bytes.reversed().joined()
     }
 }
 
@@ -286,6 +302,8 @@ private final class LibreScanProgress: @unchecked Sendable {
         let libres = libreCount
         if libres > 0 {
             text += ", Libre-Dienst \(libres)"
+        } else if packets > 80 {
+            text += ". Kein Libre-Dienst, das iPhone hält den Sensor noch"
         }
         return text
     }
