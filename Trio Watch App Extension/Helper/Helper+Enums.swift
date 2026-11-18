@@ -6,6 +6,7 @@ enum NavigationDestinations: String {
     case carbsInput = "CarbsInputView"
     case bolusInput = "BolusInputView"
     case bolusConfirm = "BolusConfirmView"
+    case mealPresets = "MealPresetListView"
 }
 
 enum MealBolusStep: String {

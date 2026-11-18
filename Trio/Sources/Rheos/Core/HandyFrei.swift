@@ -74,6 +74,7 @@ enum HandyFrei {
         var rheosISF: [Double]
         var rheosCarbRatio: [Double]
         var loopFiles: [String: String]
+        var mealPresets: [MealPreset] = []
         var glucose: Double?
         /// Set when a required Libre key is missing. Handy-frei must not start.
         var refusal: String? = nil
@@ -87,7 +88,10 @@ enum HandyFrei {
                 "rheosBasal": rheosBasal,
                 "rheosISF": rheosISF,
                 "rheosCarbRatio": rheosCarbRatio,
-                "loopFiles": loopFiles
+                "loopFiles": loopFiles,
+                "mealPresets": mealPresets.map {
+                    ["id": $0.id, "name": $0.name, "carbs": $0.carbs, "fat": $0.fat, "protein": $0.protein]
+                }
             ]
             if let pumpSerial { raw["pumpSerial"] = pumpSerial }
             if let sessionToken { raw["sessionToken"] = sessionToken }
@@ -109,6 +113,14 @@ enum HandyFrei {
             if let glucose { raw["glucose"] = glucose }
             return raw
         }
+    }
+
+    struct MealPreset: Equatable {
+        var id: String
+        var name: String
+        var carbs: Double
+        var fat: Double
+        var protein: Double
     }
 
     enum Step: Equatable {

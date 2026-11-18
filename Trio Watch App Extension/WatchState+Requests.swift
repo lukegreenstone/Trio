@@ -47,10 +47,24 @@ extension WatchState {
     ///   - amount: The amount of carbs in grams
     ///   - date: The timestamp for the carb entry (defaults to current time)
     func sendCarbsRequest(_ amount: Int, _ date: Date = Date()) {
+        let fat = fatAmount
+        let protein = proteinAmount
+        let name = pendingMealName
+        let capped = min(amount, max(0, NSDecimalNumber(decimal: maxCarbs).intValue))
+        fatAmount = 0
+        proteinAmount = 0
+        pendingMealName = ""
         if handyFreiRunning {
-            HandyFreiSession.shared.recordCarbs(grams: amount, date: date)
+            HandyFreiSession.shared.recordCarbs(
+                grams: capped,
+                fat: min(fat, max(0, NSDecimalNumber(decimal: maxFat).intValue)),
+                protein: min(protein, max(0, NSDecimalNumber(decimal: maxProtein).intValue)),
+                name: name,
+                date: date,
+                state: self
+            )
             let shown = cob ?? "0"
-            handleAcknowledgment(success: true, message: "\(amount) g gespeichert. COB \(shown) g")
+            handleAcknowledgment(success: true, message: "\(capped) g gespeichert. COB \(shown) g")
             return
         }
         guard let session = session, session.isReachable else {
@@ -65,8 +79,12 @@ extension WatchState {
         }
 
         let message: [String: Any] = [
-            WatchMessageKeys.carbs: amount,
-            WatchMessageKeys.date: date.timeIntervalSince1970
+            WatchMessageKeys.carbs: capped,
+            WatchMessageKeys.date: date.timeIntervalSince1970,
+            WatchMessageKeys.fat: fat,
+            WatchMessageKeys.protein: protein,
+            WatchMessageKeys.mealName: name,
+            WatchMessageKeys.carbID: UUID().uuidString
         ]
 
         session.sendMessage(message, replyHandler: nil) { error in

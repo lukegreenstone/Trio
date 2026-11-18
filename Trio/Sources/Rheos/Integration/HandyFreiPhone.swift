@@ -159,6 +159,7 @@ enum HandyFreiPhone {
             UserDefaults.standard.set(text, forKey: reportKey)
         }
         storeDeliveries(entries)
+        storeCarbs(entries)
         lock.lock()
         logImported = true
         let current = pending ?? HandyFrei.idle(fingerprint: HandyFrei.Fingerprint(
@@ -201,6 +202,7 @@ enum HandyFreiPhone {
             rheosBasal: rheosBasal, rheosISF: rheosISF, rheosCarbRatio: rheosCarbRatio,
             loopFiles: loopFiles, glucose: glucose
         )
+        snapshot.mealPresets = mealPresets()
         if let medtrum = pump as? MedtrumPumpManager {
             let state = medtrum.state
             snapshot.pumpSerial = state.pumpSN.base64EncodedString()
@@ -234,6 +236,63 @@ enum HandyFreiPhone {
             }
         }
         return snapshot
+    }
+
+    static func mealPresets() -> [HandyFrei.MealPreset] {
+        let context = CoreDataStack.shared.newTaskContext()
+        var presets: [HandyFrei.MealPreset] = []
+        context.performAndWait {
+            let request = MealPresetStored.fetchRequest()
+            let found = (try? context.fetch(request)) ?? []
+            presets = found.map { item in
+                HandyFrei.MealPreset(
+                    id: item.objectID.uriRepresentation().absoluteString,
+                    name: item.dish ?? "Mahlzeit",
+                    carbs: item.carbs?.doubleValue ?? 0,
+                    fat: item.fat?.doubleValue ?? 0,
+                    protein: item.protein?.doubleValue ?? 0
+                )
+            }
+        }
+        return presets
+    }
+
+    private static func storeCarbs(_ entries: [[String: Any]]) {
+        let context = CoreDataStack.shared.newTaskContext()
+        context.performAndWait {
+            for entry in entries where (entry["kind"] as? String) == "carb" {
+                let grams = (entry["grams"] as? NSNumber)?.doubleValue ?? (entry["units"] as? NSNumber)?.doubleValue ?? 0
+                guard grams > 0 else { continue }
+                let fat = (entry["fat"] as? NSNumber)?.doubleValue ?? 0
+                let protein = (entry["protein"] as? NSNumber)?.doubleValue ?? 0
+                let date = Date(timeIntervalSince1970: (entry["date"] as? NSNumber)?.doubleValue ?? Date().timeIntervalSince1970)
+                let idString = entry["id"] as? String ?? ""
+                let uuid = UUID(uuidString: idString) ?? UUID()
+                let byID = CarbEntryStored.fetchRequest()
+                byID.predicate = NSPredicate(format: "id == %@", uuid as CVarArg)
+                if let found = try? context.fetch(byID), !found.isEmpty { continue }
+                let windowStart = date.addingTimeInterval(-180)
+                let windowEnd = date.addingTimeInterval(180)
+                let near = CarbEntryStored.fetchRequest()
+                near.predicate = NSPredicate(format: "date >= %@ AND date <= %@", windowStart as NSDate, windowEnd as NSDate)
+                let sameMeal = (try? context.fetch(near))?.contains { row in
+                    abs(row.carbs - grams) < 0.1 && abs(row.fat - fat) < 0.1 && abs(row.protein - protein) < 0.1
+                } ?? false
+                if sameMeal { continue }
+                let row = CarbEntryStored(context: context)
+                row.id = uuid
+                row.carbs = grams
+                row.fat = fat
+                row.protein = protein
+                row.date = date
+                row.note = entry["name"] as? String ?? "Via Watch"
+                row.isFPU = false
+                row.isUploadedToNS = false
+                row.isUploadedToHealth = false
+                row.isUploadedToTidepool = false
+            }
+            try? context.save()
+        }
     }
 
     private static func storeDeliveries(_ entries: [[String: Any]]) {

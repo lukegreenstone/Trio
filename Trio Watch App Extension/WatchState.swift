@@ -57,6 +57,10 @@ import WatchConnectivity
     var handyFreiBasal: [Double] = []
     var handyFreiISF: [Double] = []
     var handyFreiCarbRatio: [Double] = []
+    var mealPresets: [MealPresetWatch] = []
+    var showingMealPresets = false
+    var mealNeedsBolus = false
+    var pendingMealName = ""
 
     // Safety limits
     var maxBolus: Decimal = 10
@@ -287,10 +291,20 @@ import WatchConnectivity
                 self.handyFreiPumpSerial = snapshot["pumpSerial"] as? String ?? ""
                     self.handyFreiSessionToken = snapshot["sessionToken"] as? String ?? ""
                     self.handyFreiBackupToken = snapshot["backupSessionToken"] as? String ?? ""
-                self.handyFreiFiles = snapshot["loopFiles"] as? [String: String] ?? [:]
-                self.handyFreiBasal = (snapshot["rheosBasal"] as? [NSNumber])?.map(\.doubleValue) ?? []
-                self.handyFreiISF = (snapshot["rheosISF"] as? [NSNumber])?.map(\.doubleValue) ?? []
-                self.handyFreiCarbRatio = (snapshot["rheosCarbRatio"] as? [NSNumber])?.map(\.doubleValue) ?? []
+                let files = Self.stringMap(snapshot["loopFiles"])
+                if !files.isEmpty { self.handyFreiFiles = files }
+                let basal = Self.doubles(snapshot["rheosBasal"])
+                let isf = Self.doubles(snapshot["rheosISF"])
+                let carbRatio = Self.doubles(snapshot["rheosCarbRatio"])
+                if !basal.isEmpty { self.handyFreiBasal = basal }
+                if !isf.isEmpty { self.handyFreiISF = isf }
+                if !carbRatio.isEmpty { self.handyFreiCarbRatio = carbRatio }
+                let presets = Self.mealPresets(from: snapshot["mealPresets"])
+                if !presets.isEmpty { self.mealPresets = presets }
+                if let maxBolus = snapshot["maxBolus"] as? NSNumber, maxBolus.doubleValue > 0 {
+                    self.maxBolus = maxBolus.decimalValue
+                }
+                HandyFreiSession.HandyFreiDisk.saveSnapshot(self)
             }
             if kind == "watch-owns" {
                 if self.handyFreiRunning {
@@ -615,6 +629,14 @@ import WatchConnectivity
             }
         }
 
+        if let mealData = message[WatchMessageKeys.mealPresets] as? [[String: Any]] {
+            let parsed = Self.mealPresets(from: mealData)
+            if !parsed.isEmpty {
+                mealPresets = parsed
+                HandyFreiSession.HandyFreiDisk.saveSnapshot(self)
+            }
+        }
+
         if let tempTargetData = message[WatchMessageKeys.tempTargetPresets] as? [[String: Any]] {
             tempTargetPresets = tempTargetData.compactMap { data in
                 guard let name = data["name"] as? String,
@@ -680,6 +702,51 @@ import WatchConnectivity
 
         applyRheosFields(message)
         publishWatchFace()
+    }
+
+    func stageMeal(_ preset: MealPresetWatch) {
+        let carbCap = max(0, NSDecimalNumber(decimal: maxCarbs).intValue)
+        let fatCap = max(0, NSDecimalNumber(decimal: maxFat).intValue)
+        let proteinCap = max(0, NSDecimalNumber(decimal: maxProtein).intValue)
+        carbsAmount = min(carbCap, Int(preset.carbs.rounded()))
+        fatAmount = min(fatCap, Int(preset.fat.rounded()))
+        proteinAmount = min(proteinCap, Int(preset.protein.rounded()))
+        pendingMealName = preset.name
+        bolusAmount = 0
+    }
+
+    private static func doubles(_ value: Any?) -> [Double] {
+        if let numbers = value as? [NSNumber] { return numbers.map(\.doubleValue) }
+        if let numbers = value as? [Double] { return numbers }
+        return []
+    }
+
+    static func stringMap(_ value: Any?) -> [String: String] {
+        if let map = value as? [String: String] { return map }
+        guard let any = value as? [String: Any] else { return [:] }
+        var out: [String: String] = [:]
+        for (key, item) in any {
+            if let text = item as? String {
+                out[key] = text
+            }
+        }
+        return out
+    }
+
+    static func mealPresets(from value: Any?) -> [MealPresetWatch] {
+        guard let rows = value as? [[String: Any]] else { return [] }
+        return rows.compactMap { row in
+            let name = row["name"] as? String ?? ""
+            let carbs = (row["carbs"] as? NSNumber)?.doubleValue ?? 0
+            guard !name.isEmpty || carbs > 0 else { return nil }
+            return MealPresetWatch(
+                id: row["id"] as? String ?? name,
+                name: name.isEmpty ? "Mahlzeit" : name,
+                carbs: carbs,
+                fat: (row["fat"] as? NSNumber)?.doubleValue ?? 0,
+                protein: (row["protein"] as? NSNumber)?.doubleValue ?? 0
+            )
+        }
     }
 
     /// The main bubble reads these fields. During Handy-frei they come from the watch, not the phone.
@@ -758,4 +825,12 @@ struct WatchRheosSuggestion: Identifiable, Equatable {
     var kind: String
     var title: String
     var note: String
+}
+
+struct MealPresetWatch: Identifiable, Equatable, Codable {
+    var id: String
+    var name: String
+    var carbs: Double
+    var fat: Double
+    var protein: Double
 }

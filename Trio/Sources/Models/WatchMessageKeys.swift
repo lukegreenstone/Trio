@@ -43,6 +43,11 @@ enum WatchMessageKeys {
     static let maxYAxisValue = "maxYAxisValue"
     static let overridePresets = "overridePresets"
     static let tempTargetPresets = "tempTargetPresets"
+    static let mealPresets = "mealPresets"
+    static let fat = "fat"
+    static let protein = "protein"
+    static let mealName = "mealName"
+    static let carbID = "carbID"
 
     // Limits and Settings Keys
     static let maxBolus = "maxBolus"

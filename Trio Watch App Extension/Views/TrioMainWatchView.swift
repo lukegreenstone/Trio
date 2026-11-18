@@ -195,6 +195,12 @@ struct TrioMainWatchView: View {
             .sheet(isPresented: $showingHandyFrei) {
                 HandyFreiWatchView(state: state)
             }
+            .onChange(of: state.mealNeedsBolus) { _, needs in
+                guard needs else { return }
+                state.mealNeedsBolus = false
+                showingHandyFrei = false
+                navigationPath.append(NavigationDestinations.bolusInput)
+            }
             .sheet(isPresented: $showingTempTargetSheet) {
                 TempTargetPresetsView(
                     state: state,
@@ -230,6 +236,8 @@ struct TrioMainWatchView: View {
                         bolusAmount: $state.bolusAmount,
                         confirmationProgress: $state.confirmationProgress
                     )
+                case .mealPresets:
+                    MealPresetListView(state: state)
                 }
             }
             .onChange(of: navigationPath) { _, newPath in
@@ -279,6 +287,8 @@ struct TrioMainWatchView: View {
         switch treatment {
         case .meal:
             navigationPath.append(NavigationDestinations.carbsInput)
+        case .savedMeal:
+            navigationPath.append(NavigationDestinations.mealPresets)
         case .bolus:
             // Reset carbs amount when directly going to bolus input
             state.carbsAmount = 0

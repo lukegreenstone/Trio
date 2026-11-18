@@ -15,6 +15,24 @@ public enum HandyFreiLoop {
         public var maxBolus: Double
         public var maxBasal: Double
         public var cob: Double
+        /// True only when determine-basal threw. A busy or throttled minute is not a failure.
+        public var failed: Bool
+    }
+
+    public struct WatchCarb: Equatable {
+        public var id: String
+        public var date: Date
+        public var grams: Double
+        public var fat: Double
+        public var protein: Double
+
+        public init(id: String, date: Date, grams: Double, fat: Double = 0, protein: Double = 0) {
+            self.id = id
+            self.date = date
+            self.grams = grams
+            self.fat = fat
+            self.protein = protein
+        }
     }
 
     public struct Delivery: Equatable {
@@ -38,12 +56,12 @@ public enum HandyFreiLoop {
         rheosCarbRatio: [Double],
         glucose: [(date: Date, mgdl: Int)],
         deliveries: [Delivery],
-        watchCarbs: [(date: Date, grams: Double)] = [],
+        watchCarbs: [WatchCarb] = [],
         now: Date
     ) -> Outcome {
         let empty = Outcome(
             deliver: false, cancelTemp: false, rate: 0, minutes: 0, smb: 0,
-            reason: "Schatten. Eingaben fehlen.", iob: 0, maxIOB: 0, maxBolus: 0, maxBasal: 0, cob: 0
+            reason: "Schatten. Eingaben fehlen.", iob: 0, maxIOB: 0, maxBolus: 0, maxBasal: 0, cob: 0, failed: false
         )
         guard let newest = glucose.max(by: { $0.date < $1.date }) else { return empty }
         if now.timeIntervalSince(newest.date) > 12 * 60 {
@@ -52,13 +70,14 @@ public enum HandyFreiLoop {
             stale.reason = "Glukose älter als 12 Minuten. Kein Insulin."
             return stale
         }
+        let samples = fiveMinuteSamples(glucose)
         do {
-            let preferences: Preferences = try JSONBridge.from(string: files["preferences"] ?? "")
-            let settings: PumpSettings = try JSONBridge.from(string: files["settings"] ?? "")
-            var basal: [BasalProfileEntry] = try JSONBridge.from(string: files["basal"] ?? "")
-            let targets: BGTargets = try JSONBridge.from(string: files["targets"] ?? "")
-            var isf: InsulinSensitivities = try JSONBridge.from(string: files["isf"] ?? "")
-            var carbRatios: CarbRatios = try JSONBridge.from(string: files["carbRatios"] ?? "")
+            let preferences: Preferences = try decode(files, "preferences", "Einstellungen")
+            let settings: PumpSettings = try decode(files, "settings", "Pumpeneinstellungen")
+            var basal: [BasalProfileEntry] = try decode(files, "basal", "Basalprofil")
+            let targets: BGTargets = try decode(files, "targets", "Zielwerte")
+            var isf: InsulinSensitivities = try decode(files, "isf", "ISF")
+            var carbRatios: CarbRatios = try decode(files, "carbRatios", "KE-Faktor")
             basal = scaleBasal(basal, rheosBasal, ceiling: settings.maxBasal)
             isf = scaleISF(isf, rheosISF)
             carbRatios = scaleCarb(carbRatios, rheosCarbRatio)
@@ -72,24 +91,25 @@ public enum HandyFreiLoop {
                 tempTargets: [],
                 clock: now
             )
-            var history: [PumpHistoryEvent] = (try? JSONBridge.from(string: files["pumpHistory"] ?? "[]")) ?? []
-            history.append(contentsOf: deliveries.map(event))
+            var history = try pumpHistory(files)
+            let known = Set(history.map(\.id))
+            history.append(contentsOf: deliveries.flatMap(events).filter { !known.contains($0.id) })
             var carbs: [CarbsEntry] = (try? JSONBridge.from(string: files["carbHistory"] ?? "[]")) ?? []
             carbs.append(contentsOf: watchCarbs.map { item in
                 CarbsEntry(
-                    id: nil,
+                    id: item.id,
                     createdAt: item.date,
                     actualDate: item.date,
                     carbs: Decimal(item.grams),
-                    fat: nil,
-                    protein: nil,
+                    fat: item.fat > 0 ? Decimal(item.fat) : nil,
+                    protein: item.protein > 0 ? Decimal(item.protein) : nil,
                     note: nil,
                     enteredBy: "watch",
                     isFPU: nil,
                     fpuID: nil
                 )
             })
-            let points = glucose.map { item in
+            let points = samples.map { item in
                 BloodGlucose(
                     id: UUID().uuidString,
                     sgv: item.mgdl,
@@ -102,9 +122,18 @@ public enum HandyFreiLoop {
                     glucose: item.mgdl
                 )
             }
-            let autosensJSON = (files["autosens"]?.isEmpty == false) ? files["autosens"]! : "{\"ratio\":1}"
-            guard let autosens = try JSONBridge.autosens(from: autosensJSON) else {
-                throw DeterminationError.missingInputs
+            let autosens: Autosens
+            if files["autosens"]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+                autosens = try decode(files, "autosens", "Autosens")
+            } else {
+                autosens = Autosens(
+                    ratio: 1,
+                    newisf: nil,
+                    deviationsUnsorted: nil,
+                    timestamp: nil,
+                    debugInfo: nil,
+                    error: nil
+                )
             }
             let iob = try IobGenerator.generate(history: history, profile: profile, clock: now, autosens: autosens)
             let meal = try MealGenerator.generate(
@@ -164,34 +193,99 @@ public enum HandyFreiLoop {
                 maxIOB: maxIOB,
                 maxBolus: maxBolus,
                 maxBasal: NSDecimalNumber(decimal: settings.maxBasal).doubleValue,
-                cob: NSDecimalNumber(decimal: meal?.mealCOB ?? 0).doubleValue
+                cob: NSDecimalNumber(decimal: meal?.mealCOB ?? 0).doubleValue,
+                failed: false
             )
         } catch {
             var failed = empty
-            failed.reason = "Bestimmung fehlgeschlagen. Kein Insulin."
-            failed.cancelTemp = true
+            failed.failed = true
+            failed.cancelTemp = false
+            failed.reason = "Bestimmung fehlgeschlagen: \(brief(error))"
             return failed
         }
     }
 
-    private static func event(_ delivery: Delivery) -> PumpHistoryEvent {
+    /// Libre sends about one value a minute. determine-basal expects roughly one value per 5 minutes.
+    private static func fiveMinuteSamples(_ glucose: [(date: Date, mgdl: Int)]) -> [(date: Date, mgdl: Int)] {
+        var buckets: [Int: (date: Date, mgdl: Int)] = [:]
+        for sample in glucose.sorted(by: { $0.date < $1.date }) {
+            let slot = Int(sample.date.timeIntervalSince1970 / 300)
+            buckets[slot] = sample
+        }
+        return buckets.keys.sorted().compactMap { buckets[$0] }
+    }
+
+    private static func decode<T: Decodable>(_ files: [String: String], _ key: String, _ name: String) throws -> T {
+        let raw = files[key]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if raw.isEmpty {
+            throw InputError.missing(name)
+        }
+        do {
+            return try JSONBridge.from(string: raw)
+        } catch {
+            throw InputError.unreadable(name, brief(error))
+        }
+    }
+
+    private static func pumpHistory(_ files: [String: String]) throws -> [PumpHistoryEvent] {
+        let raw = files["pumpHistory"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if raw.isEmpty || raw == "[]" { return [] }
+        do {
+            return try JSONBridge.from(string: raw)
+        } catch {
+            throw InputError.unreadable("Pumpenverlauf", brief(error))
+        }
+    }
+
+    private static func brief(_ error: Error) -> String {
+        let text = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        let shown = text.isEmpty ? String(describing: error) : text
+        return shown.count <= 180 ? shown : String(shown.prefix(180))
+    }
+
+    /// The iPhone stores every temp as a duration entry plus a rate entry. One entry without the other makes IOB throw.
+    private static func events(_ delivery: Delivery) -> [PumpHistoryEvent] {
+        let id = "handyfrei-\(Int(delivery.date.timeIntervalSince1970))"
         if delivery.kind == "bolus" {
-            return PumpHistoryEvent(
-                id: "handyfrei-\(delivery.date.timeIntervalSince1970)",
-                type: .smb,
+            return [PumpHistoryEvent(
+                id: id,
+                type: .bolus,
                 timestamp: delivery.date,
                 amount: Decimal(delivery.units),
-                isSMB: true
-            )
+                duration: 0,
+                isSMB: true,
+                isExternal: false
+            )]
         }
-        return PumpHistoryEvent(
-            id: "handyfrei-\(delivery.date.timeIntervalSince1970)",
-            type: .tempBasal,
-            timestamp: delivery.date,
-            duration: delivery.minutes,
-            rate: Decimal(delivery.units),
-            temp: .absolute
-        )
+        return [
+            PumpHistoryEvent(
+                id: id,
+                type: .tempBasalDuration,
+                timestamp: delivery.date,
+                durationMin: max(0, delivery.minutes)
+            ),
+            PumpHistoryEvent(
+                id: "_\(id)",
+                type: .tempBasal,
+                timestamp: delivery.date,
+                rate: Decimal(delivery.units),
+                temp: .absolute
+            )
+        ]
+    }
+
+    private enum InputError: LocalizedError {
+        case missing(String)
+        case unreadable(String, String)
+
+        var errorDescription: String? {
+            switch self {
+            case let .missing(name):
+                return "fehlt \(name)"
+            case let .unreadable(name, detail):
+                return "\(name): \(detail)"
+            }
+        }
     }
 
     private static func factor(_ factors: [Double], minutes: Int) -> Double {

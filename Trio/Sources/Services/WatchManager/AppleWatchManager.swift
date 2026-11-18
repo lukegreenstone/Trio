@@ -541,6 +541,15 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
                     "isEnabled": preset.isEnabled
                 ]
             },
+            WatchMessageKeys.mealPresets: HandyFreiPhone.mealPresets().map { preset in
+                [
+                    "id": preset.id,
+                    "name": preset.name,
+                    "carbs": preset.carbs,
+                    "fat": preset.fat,
+                    "protein": preset.protein
+                ]
+            },
             WatchMessageKeys.maxBolus: state.maxBolus,
             WatchMessageKeys.maxCarbs: state.maxCarbs,
             WatchMessageKeys.maxFat: state.maxFat,
@@ -718,7 +727,14 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
             {
                 let date = Date(timeIntervalSince1970: timestamp)
                 debug(.watchManager, "📱 Received carbs request from watch: \(carbsAmount)g at \(date)")
-                self.handleCarbsRequest(carbsAmount, date)
+                self.handleCarbsRequest(
+                    carbsAmount,
+                    date,
+                    fat: (message[WatchMessageKeys.fat] as? NSNumber)?.doubleValue ?? 0,
+                    protein: (message[WatchMessageKeys.protein] as? NSNumber)?.doubleValue ?? 0,
+                    id: message[WatchMessageKeys.carbID] as? String,
+                    name: message[WatchMessageKeys.mealName] as? String ?? ""
+                )
             } else if let bolusAmount = message[WatchMessageKeys.bolus] as? Double,
                       let carbsAmount = message[WatchMessageKeys.carbs] as? Int,
                       let timestamp = message[WatchMessageKeys.date] as? TimeInterval
@@ -952,16 +968,31 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
     /// - Parameters:
     ///   - amount: The carbs amount in grams
     ///   - date: Timestamp for the carbs entry
-    private func handleCarbsRequest(_ amount: Int, _ date: Date) {
+    private func handleCarbsRequest(
+        _ amount: Int,
+        _ date: Date,
+        fat: Double = 0,
+        protein: Double = 0,
+        id: String? = nil,
+        name: String = ""
+    ) {
         Task {
             let context = CoreDataStack.shared.newTaskContext()
 
             await context.perform {
+                let uuid = UUID(uuidString: id ?? "") ?? UUID()
+                let existing = CarbEntryStored.fetchRequest()
+                existing.predicate = NSPredicate(format: "id == %@", uuid as CVarArg)
+                if let found = try? context.fetch(existing), !found.isEmpty { return }
                 let carbEntry = CarbEntryStored(context: context)
-                carbEntry.id = UUID()
-                carbEntry.carbs = Double(truncating: amount as NSNumber)
+                carbEntry.id = uuid
+                carbEntry.carbs = Double(amount)
+                carbEntry.fat = fat
+                carbEntry.protein = protein
                 carbEntry.date = date
-                carbEntry.note = String(localized: "Via Watch", comment: "Note added to carb entry when entered via watch")
+                carbEntry.note = name.isEmpty
+                    ? String(localized: "Via Watch", comment: "Note added to carb entry when entered via watch")
+                    : name
                 carbEntry.isFPU = false // set this to false to ensure watch-entered carbs are displayed in main chart
                 carbEntry.isUploadedToNS = false
                 carbEntry.isUploadedToHealth = false

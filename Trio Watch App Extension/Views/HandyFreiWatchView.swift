@@ -40,6 +40,9 @@ struct HandyFreiWatchView: View {
                 Button("Handy-frei beenden") {
                     state.stopHandyFrei()
                 }
+                Button("Mahlzeiten") {
+                    state.showingMealPresets = true
+                }
                 if let copied = state.handyFreiSnapshotAt {
                     let hours = Int(Date().timeIntervalSince(copied) / 3600)
                     Text(hours < 1
@@ -52,6 +55,36 @@ struct HandyFreiWatchView: View {
             }
             .padding()
         }
+        .sheet(isPresented: $state.showingMealPresets) {
+            MealPresetListView(state: state)
+        }
+    }
+}
+
+struct MealPresetListView: View {
+    @Bindable var state: WatchState
+
+    var body: some View {
+        List {
+            if state.mealPresets.isEmpty {
+                Text("Keine gespeicherten Mahlzeiten. Sie kommen mit der Kopie vom iPhone.")
+                    .font(.footnote)
+            }
+            ForEach(state.mealPresets) { preset in
+                Button {
+                    state.stageMeal(preset)
+                    state.showingMealPresets = false
+                    state.mealNeedsBolus = true
+                } label: {
+                    VStack(alignment: .leading) {
+                        Text(preset.name)
+                        Text("\(Int(preset.carbs.rounded())) g · F \(Int(preset.fat.rounded())) · E \(Int(preset.protein.rounded()))")
+                            .font(.footnote)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Mahlzeiten")
     }
 }
 
@@ -123,9 +156,12 @@ final class HandyFreiSession {
     private var lastLoopAt = Date.distantPast
     private var doseStartedAt: Date?
     private var bolusUncertain = false
-    private var carbs: [(date: Date, grams: Double)] = []
-    /// Observed loop spacing is about 3 to 4 minutes. The watchdog uses twice that.
-    private let loopInterval: TimeInterval = 210
+    private var determining = false
+    private var lastSuccess = Date.distantPast
+    private var lastReason = "Loop wartet auf den ersten Wert."
+    private var lastIOB = 0.0
+    private var lastCOB = 0.0
+    private var carbs: [HandyFreiDisk.Carb] = []
     private var address = ""
     private var pin = Data()
     private var phase5 = Data()
@@ -147,9 +183,7 @@ final class HandyFreiSession {
         dosing = false
         doseStartedAt = nil
         bolusUncertain = false
-        carbs = []
-        lastDose = .distantPast
-        lastLoopAt = Date()
+        determining = false
         pumpRetries = 0
         sensorRetries = 0
         workoutRestarts = 0
@@ -162,6 +196,12 @@ final class HandyFreiSession {
         log = []
         deliveries = []
         readings = []
+        carbs = []
+        lastSuccess = .distantPast
+        lastDose = .distantPast
+        lastReason = "Loop wartet auf den ersten Wert."
+        HandyFreiDisk.restore(into: state, session: self)
+        lastLoopAt = lastSuccess == .distantPast ? Date() : lastSuccess
         address = state.handyFreiBleAddress
         pin = Data(base64Encoded: state.handyFreiBlePIN) ?? Data()
         phase5 = Data(base64Encoded: state.handyFreiPhase5) ?? Data()
@@ -216,10 +256,10 @@ final class HandyFreiSession {
         loopWatchTask = Task { await self.watchLoop(state, epoch: epoch) }
     }
 
-    /// If a pump command or a missed glucose packet stops the cycle, start it again.
+    /// Keeps the countdown moving, and starts the loop when it reaches zero.
     private func watchLoop(_ state: WatchState, epoch: Int) async {
         while state.handyFreiRunning, epoch == doseEpoch, !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: 30_000_000_000)
+            try? await Task.sleep(nanoseconds: 15_000_000_000)
             guard state.handyFreiRunning, epoch == doseEpoch, !Task.isCancelled else { return }
             let stuck = await MainActor.run { () -> Bool in
                 guard let started = self.doseStartedAt, self.dosing else { return false }
@@ -236,26 +276,56 @@ final class HandyFreiSession {
                     state.handyFreiLoopLine = line
                 }
             }
-            let idle = Date().timeIntervalSince(lastLoopAt)
-            let busy = await MainActor.run { self.dosing }
-            guard !busy, idle > self.loopInterval * 2 else { continue }
             await MainActor.run {
-                state.handyFreiStatus = "\(Self.clock()) Loop-Wächter: letzter Lauf vor \(Int(idle / 60)) min, starte neu."
+                let remain = self.secondsUntilLoop()
+                if let last = self.readings.max(by: { $0.date < $1.date }) {
+                    if remain > 0 {
+                        self.showWaiting(state, mgdl: last.mgdl, remain: remain)
+                    } else if Date().timeIntervalSince(last.date) <= 12 * 60 {
+                        self.evaluate(state, mgdl: last.mgdl, appendReading: false)
+                    }
+                }
             }
-            await MainActor.run { self.rerunLoop(state) }
         }
     }
 
-    /// Uses the glucose already stored. Does not invent a new reading.
-    private func rerunLoop(_ state: WatchState) {
-        guard state.handyFreiRunning, !dosing else { return }
-        guard let last = readings.max(by: { $0.date < $1.date }) else { return }
-        guard Date().timeIntervalSince(last.date) <= 12 * 60 else { return }
-        evaluate(state, mgdl: last.mgdl, appendReading: false)
-    }
-
-    func recordCarbs(grams: Int, date: Date) {
-        carbs.append((date: date, grams: Double(grams)))
+    func recordCarbs(grams: Int, fat: Int = 0, protein: Int = 0, name: String = "", id: String = UUID().uuidString, date: Date, state: WatchState) {
+        let entry = HandyFreiDisk.Carb(
+            id: id,
+            date: date.timeIntervalSince1970,
+            grams: Double(grams),
+            fat: Double(fat),
+            protein: Double(protein),
+            name: name
+        )
+        carbs.append(entry)
+        log.append([
+            "date": date.timeIntervalSince1970,
+            "kind": "carb",
+            "id": id,
+            "grams": Double(grams),
+            "fat": Double(fat),
+            "protein": Double(protein),
+            "name": name,
+            "text": "\(name.isEmpty ? "Mahlzeit" : name) \(grams) g"
+        ])
+        HandyFreiDisk.save(session: self)
+        guard !determining, !dosing, let mgdl = readings.max(by: { $0.date < $1.date })?.mgdl else { return }
+        let outcome = HandyFreiLoop.tick(
+            files: state.handyFreiFiles,
+            rheosBasal: state.handyFreiBasal,
+            rheosISF: state.handyFreiISF,
+            rheosCarbRatio: state.handyFreiCarbRatio,
+            glucose: readings,
+            deliveries: deliveries,
+            watchCarbs: loopCarbs(),
+            now: Date()
+        )
+        guard !outcome.failed else { return }
+        lastIOB = outcome.iob
+        lastCOB = outcome.cob
+        state.iob = String(format: "%.1f", outcome.iob)
+        state.cob = String(format: "%.0f", outcome.cob)
     }
 
     private func startGlucoseWatch(_ state: WatchState, epoch: Int) {
@@ -504,14 +574,59 @@ final class HandyFreiSession {
         evaluate(state, mgdl: mgdl, appendReading: true)
     }
 
-    /// One loop pass. The pump task always clears its busy flag, including on timeout.
+    private func secondsUntilLoop() -> Int {
+        guard lastSuccess != .distantPast else { return 0 }
+        return max(0, Int((5 * 60) - Date().timeIntervalSince(lastSuccess)))
+    }
+
+    /// Shown between determinations. This is not a failure.
+    private func showWaiting(_ state: WatchState, mgdl: Int, remain: Int) {
+        let line = "\(Self.clockMinute()) \(mgdl) mg/dL · nächster Loop in \(remain)s · \(lastReason)"
+        state.handyFreiGlucose = mgdl
+        state.handyFreiStatus = line
+        state.handyFreiLoopLine = line
+    }
+
+    private func loopCarbs() -> [HandyFreiLoop.WatchCarb] {
+        carbs.map {
+            HandyFreiLoop.WatchCarb(
+                id: $0.id,
+                date: Date(timeIntervalSince1970: $0.date),
+                grams: $0.grams,
+                fat: $0.fat,
+                protein: $0.protein
+            )
+        }
+    }
+
+    /// One loop pass. A minute that arrives while a run is in progress, or before five minutes are up, does not start another determination.
     private func evaluate(_ state: WatchState, mgdl: Int, appendReading: Bool) {
         if appendReading {
             readings.append((Date(), mgdl))
             stallAttempts = 0
             if readings.count > 36 { readings.removeFirst(readings.count - 36) }
+            HandyFreiDisk.save(session: self)
         }
-        lastLoopAt = Date()
+        let remain = secondsUntilLoop()
+        if determining || dosing || remain > 0 {
+            if appendReading {
+                let age = lastSuccess == .distantPast ? 0 : Int(Date().timeIntervalSince(lastSuccess) / 60)
+                state.applyHandyFreiDisplay(
+                    mgdl: mgdl,
+                    iob: lastIOB,
+                    cob: lastCOB,
+                    loopLine: state.handyFreiLoopLine,
+                    loopAgeMinutes: age
+                )
+            }
+            if determining || dosing {
+                state.handyFreiStatus = "\(Self.clockMinute()) \(mgdl) mg/dL · Loop läuft · \(lastReason)"
+            } else {
+                showWaiting(state, mgdl: mgdl, remain: remain)
+            }
+            return
+        }
+        determining = true
         let outcome = HandyFreiLoop.tick(
             files: state.handyFreiFiles,
             rheosBasal: state.handyFreiBasal,
@@ -519,32 +634,49 @@ final class HandyFreiSession {
             rheosCarbRatio: state.handyFreiCarbRatio,
             glucose: readings,
             deliveries: deliveries,
-            watchCarbs: carbs,
+            watchCarbs: loopCarbs(),
             now: Date()
         )
-        let clock = Self.clockMinute()
-        let waiting = Date().timeIntervalSince(lastDose) < 5 * 60
-        let preview = waiting
-            ? "\(clock) \(mgdl) mg/dL · nächster Loop in \(max(0, Int(5 * 60 - Date().timeIntervalSince(lastDose))))s · \(outcome.reason)"
-            : "\(clock) \(mgdl) mg/dL · Temp \(String(format: "%.2f", outcome.rate)) U/h \(outcome.minutes) min · SMB \(String(format: "%.2f", outcome.smb)) U · \(outcome.reason)"
-        let loopAge = lastDose == .distantPast ? 0 : Int(Date().timeIntervalSince(lastDose) / 60)
+        determining = false
+        lastLoopAt = Date()
+        if outcome.failed {
+            lastReason = outcome.reason
+            let line = "\(Self.clockMinute()) \(mgdl) mg/dL · \(outcome.reason)"
+            state.handyFreiGlucose = mgdl
+            state.handyFreiStatus = line
+            state.handyFreiLoopLine = line
+            log.append(["date": Date().timeIntervalSince1970, "kind": "determination", "text": line])
+            HandyFreiDisk.save(session: self)
+            return
+        }
+        lastSuccess = Date()
+        lastDose = lastSuccess
+        lastReason = outcome.reason
+        lastIOB = outcome.iob
+        lastCOB = outcome.cob
+        let preview = "\(Self.clockMinute()) \(mgdl) mg/dL · Temp \(String(format: "%.2f", outcome.rate)) U/h \(outcome.minutes) min · SMB \(String(format: "%.2f", outcome.smb)) U · \(outcome.reason)"
         state.handyFreiGlucose = mgdl
         state.handyFreiStatus = preview
-        state.applyHandyFreiDisplay(
-            mgdl: mgdl,
-            iob: outcome.iob,
-            cob: outcome.cob,
-            loopLine: preview,
-            loopAgeMinutes: waiting ? loopAge : 0
-        )
+        state.handyFreiLoopLine = preview
+        state.iob = String(format: "%.1f", outcome.iob)
+        state.cob = String(format: "%.0f", outcome.cob)
+        if appendReading {
+            state.applyHandyFreiDisplay(
+                mgdl: mgdl,
+                iob: outcome.iob,
+                cob: outcome.cob,
+                loopLine: preview,
+                loopAgeMinutes: 0
+            )
+        }
         log.append([
             "date": Date().timeIntervalSince1970,
             "kind": "determination",
             "text": preview
         ])
+        HandyFreiDisk.save(session: self)
         guard outcome.deliver || outcome.cancelTemp else { return }
         guard !dosing else { return }
-        guard !waiting else { return }
         dosing = true
         doseStartedAt = Date()
         lastDose = Date()
@@ -574,6 +706,7 @@ final class HandyFreiSession {
                 await MainActor.run {
                     self.deliveries.append(HandyFreiLoop.Delivery(kind: "temp", units: rate, minutes: outcome.minutes, date: Date()))
                     self.log.append(["date": Date().timeIntervalSince1970, "kind": "temp", "units": rate, "minutes": outcome.minutes])
+                    HandyFreiDisk.save(session: self)
                 }
                 finished = "Pumpe \(Self.clockMinute()): Temp \(String(format: "%.2f", rate)) U/h ok"
             } else if sent {
@@ -604,6 +737,7 @@ final class HandyFreiSession {
                     self.bolusUncertain = false
                     self.deliveries.append(HandyFreiLoop.Delivery(kind: "bolus", units: units, minutes: 0, date: Date()))
                     self.log.append(["date": Date().timeIntervalSince1970, "kind": "bolus", "units": units, "minutes": 0])
+                    HandyFreiDisk.save(session: self)
                 }
                 finished += " · SMB \(String(format: "%.2f", units)) U ok"
                 await self.refreshTotals(state, mgdl: mgdl, line: finished)
@@ -638,7 +772,7 @@ final class HandyFreiSession {
             rheosCarbRatio: state.handyFreiCarbRatio,
             glucose: readings,
             deliveries: deliveries,
-            watchCarbs: carbs,
+            watchCarbs: loopCarbs(),
             now: Date()
         )
         await MainActor.run {
@@ -684,6 +818,7 @@ final class HandyFreiSession {
             if sent {
                 self.deliveries.append(HandyFreiLoop.Delivery(kind: "bolus", units: amount, minutes: 0, date: Date()))
                 self.log.append(["date": Date().timeIntervalSince1970, "kind": "bolus", "units": amount, "minutes": 0])
+                HandyFreiDisk.save(session: self)
                 state.handyFreiLoopLine = "\(Self.clock()) Bolus \(String(format: "%.2f", amount)) U · Pumpe ok"
                 state.handleAcknowledgment(success: true, message: "Bolus \(String(format: "%.2f", amount)) U")
             } else {
@@ -879,6 +1014,144 @@ final class HandyFreiSession {
             }
         } else {
             state.session?.transferUserInfo(message)
+        }
+    }
+
+    enum HandyFreiDisk {
+        struct Carb: Codable {
+            var id: String
+            var date: TimeInterval
+            var grams: Double
+            var fat: Double
+            var protein: Double
+            var name: String
+        }
+
+        struct StoredDelivery: Codable {
+            var kind: String
+            var units: Double
+            var minutes: Int
+            var date: TimeInterval
+        }
+
+        struct Reading: Codable {
+            var date: TimeInterval
+            var mgdl: Int
+        }
+
+        struct File: Codable {
+            var files: [String: String] = [:]
+            var basal: [Double] = []
+            var isf: [Double] = []
+            var carbRatio: [Double] = []
+            var presets: [MealPresetWatch] = []
+            var deliveries: [StoredDelivery] = []
+            var carbs: [Carb] = []
+            var readings: [Reading] = []
+            var lastSuccess: TimeInterval = 0
+            var lastReason: String = ""
+            var lastIOB: Double = 0
+            var lastCOB: Double = 0
+            var bleAddress = ""
+            var sensorPeripheralID = ""
+            var blePIN = ""
+            var phase5 = ""
+            var pumpSerial = ""
+            var sessionToken = ""
+            var backupToken = ""
+            var snapshotAt: TimeInterval = 0
+            var logJSON: Data = Data()
+        }
+
+        static func save(session: HandyFreiSession) {
+            var file = load() ?? File()
+            file.deliveries = session.deliveries.map {
+                StoredDelivery(kind: $0.kind, units: $0.units, minutes: $0.minutes, date: $0.date.timeIntervalSince1970)
+            }
+            file.carbs = session.carbs
+            file.readings = session.readings.map { Reading(date: $0.date.timeIntervalSince1970, mgdl: $0.mgdl) }
+            file.lastSuccess = session.lastSuccess.timeIntervalSince1970
+            file.lastReason = session.lastReason
+            file.lastIOB = session.lastIOB
+            file.lastCOB = session.lastCOB
+            file.logJSON = (try? JSONSerialization.data(withJSONObject: session.log)) ?? file.logJSON
+            write(file)
+        }
+
+        static func saveSnapshot(_ state: WatchState) {
+            var file = load() ?? File()
+            if !state.handyFreiFiles.isEmpty { file.files = state.handyFreiFiles }
+            file.basal = state.handyFreiBasal
+            file.isf = state.handyFreiISF
+            file.carbRatio = state.handyFreiCarbRatio
+            file.presets = state.mealPresets
+            file.bleAddress = state.handyFreiBleAddress
+            file.sensorPeripheralID = state.handyFreiSensorPeripheralID
+            file.blePIN = state.handyFreiBlePIN
+            file.phase5 = state.handyFreiPhase5
+            file.pumpSerial = state.handyFreiPumpSerial
+            file.sessionToken = state.handyFreiSessionToken
+            file.backupToken = state.handyFreiBackupToken
+            if let copied = state.handyFreiSnapshotAt { file.snapshotAt = copied.timeIntervalSince1970 }
+            write(file)
+        }
+
+        static func restore(into state: WatchState, session: HandyFreiSession) {
+            guard let file = load() else { return }
+            if !file.files.isEmpty { state.handyFreiFiles = file.files }
+            if state.handyFreiBasal.isEmpty { state.handyFreiBasal = file.basal }
+            if state.handyFreiISF.isEmpty { state.handyFreiISF = file.isf }
+            if state.handyFreiCarbRatio.isEmpty { state.handyFreiCarbRatio = file.carbRatio }
+            if state.mealPresets.isEmpty { state.mealPresets = file.presets }
+            if state.handyFreiBleAddress.isEmpty { state.handyFreiBleAddress = file.bleAddress }
+            if state.handyFreiSensorPeripheralID.isEmpty { state.handyFreiSensorPeripheralID = file.sensorPeripheralID }
+            if state.handyFreiBlePIN.isEmpty { state.handyFreiBlePIN = file.blePIN }
+            if state.handyFreiPhase5.isEmpty { state.handyFreiPhase5 = file.phase5 }
+            if state.handyFreiPumpSerial.isEmpty { state.handyFreiPumpSerial = file.pumpSerial }
+            if state.handyFreiSessionToken.isEmpty { state.handyFreiSessionToken = file.sessionToken }
+            if state.handyFreiBackupToken.isEmpty { state.handyFreiBackupToken = file.backupToken }
+            if state.handyFreiSnapshotAt == nil, file.snapshotAt > 0 {
+                state.handyFreiSnapshotAt = Date(timeIntervalSince1970: file.snapshotAt)
+            }
+            session.deliveries = file.deliveries.map {
+                HandyFreiLoop.Delivery(
+                    kind: $0.kind,
+                    units: $0.units,
+                    minutes: $0.minutes,
+                    date: Date(timeIntervalSince1970: $0.date)
+                )
+            }
+            session.carbs = file.carbs
+            session.readings = file.readings.map { (date: Date(timeIntervalSince1970: $0.date), mgdl: $0.mgdl) }
+            if file.lastSuccess > 1_000_000_000 {
+                session.lastSuccess = Date(timeIntervalSince1970: file.lastSuccess)
+                session.lastDose = session.lastSuccess
+            }
+            if !file.lastReason.isEmpty { session.lastReason = file.lastReason }
+            session.lastIOB = file.lastIOB
+            session.lastCOB = file.lastCOB
+            if let restored = try? JSONSerialization.jsonObject(with: file.logJSON) as? [[String: Any]] {
+                session.log = restored
+            }
+        }
+
+        private static func load() -> File? {
+            guard let url = fileURL(), let data = try? Data(contentsOf: url) else { return nil }
+            return try? JSONDecoder().decode(File.self, from: data)
+        }
+
+        private static func write(_ file: File) {
+            guard let url = fileURL(), let data = try? JSONEncoder().encode(file) else { return }
+            try? data.write(to: url, options: .atomic)
+        }
+
+        private static func fileURL() -> URL? {
+            guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+                return nil
+            }
+            let folder = base.appendingPathComponent("HandyFrei", isDirectory: true)
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            return folder.appendingPathComponent("snapshot.json")
         }
     }
 }
