@@ -77,28 +77,23 @@ public enum HandyFreiLoop {
                 guard let raw = files["profile"]?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return nil }
                 return try? JSONBridge.from(string: raw)
             }()
-            let profile: Profile
-            if let saved = savedProfile, let scaled = saved.basalprofile, !scaled.isEmpty {
-                // The phone already applied Rheos and the temp target when it wrote this profile.
-                // The watch does not run Rheos again.
-                profile = saved
+            if let scaled = savedProfile?.basalprofile, !scaled.isEmpty {
                 basal = scaled
             } else {
                 basal = scaleBasal(basal, rheosBasal, ceiling: settings.maxBasal)
                 isf = scaleISF(isf, rheosISF)
                 carbRatios = scaleCarb(carbRatios, rheosCarbRatio)
-                let tempTargets: [TempTarget] = (try? JSONBridge.from(string: files["tempTargets"] ?? "")) ?? []
-                profile = try ProfileGenerator.generate(
-                    pumpSettings: settings,
-                    bgTargets: targets,
-                    basalProfile: basal,
-                    isf: isf,
-                    preferences: preferences,
-                    carbRatios: carbRatios,
-                    tempTargets: tempTargets,
-                    clock: now
-                )
             }
+            let profile = try ProfileGenerator.generate(
+                pumpSettings: settings,
+                bgTargets: targets,
+                basalProfile: basal,
+                isf: isf,
+                preferences: preferences,
+                carbRatios: carbRatios,
+                tempTargets: liveTempTargets(files, now: now),
+                clock: now
+            )
             var history = try pumpHistory(files).removingDuplicateSuspendResumeEvents()
             let known = Set(history.map(\.id))
             let fresh = deliveries.filter { !alreadyRecorded($0, history) }
@@ -159,14 +154,18 @@ public enum HandyFreiLoop {
                 stale.maxIOB = NSDecimalNumber(decimal: preferences.maxIOB).doubleValue
                 stale.maxBolus = NSDecimalNumber(decimal: settings.maxBolus).doubleValue
                 stale.maxBasal = NSDecimalNumber(decimal: settings.maxBasal).doubleValue
-                stale.reason = "Glukose älter als 12 Minuten. Kein Insulin." + autosensAge(autosens, now: now)
+                stale.reason = "Glukose älter als 12 Minuten. Kein Insulin." + autosensAge(autosens, now: now) + reservoir(files).note
                 return stale
             }
-            let custom = trioVariables(files) ?? TrioCustomOrefVariables(
-                average_total_data: 0, weightedAverage: 0, currentTDD: 0, past2hoursAverage: 0,
-                date: now, overridePercentage: 100, useOverride: false, duration: 0, unlimited: false,
-                overrideTarget: 0, smbIsOff: false, advancedSettings: false, isfAndCr: false,
-                isf: false, cr: false, smbIsScheduledOff: false, start: 0, end: 0, smbMinutes: 0, uamMinutes: 0
+            let custom = withWatchInsulin(
+                expiredOverride(trioVariables(files), now: now) ?? TrioCustomOrefVariables(
+                    average_total_data: 0, weightedAverage: 0, currentTDD: 0, past2hoursAverage: 0,
+                    date: now, overridePercentage: 100, useOverride: false, duration: 0, unlimited: false,
+                    overrideTarget: 0, smbIsOff: false, advancedSettings: false, isfAndCr: false,
+                    isf: false, cr: false, smbIsScheduledOff: false, start: 0, end: 0, smbMinutes: 0, uamMinutes: 0
+                ),
+                deliveries: deliveries,
+                now: now
             )
             let running = deliveries.last { $0.kind == "temp" && now.timeIntervalSince($0.date) < Double($0.minutes) * 60 }
             let current = TempBasal(
@@ -185,7 +184,7 @@ public enum HandyFreiLoop {
                     slopeFromMaxDeviation: 0, slopeFromMinDeviation: 0, allDeviations: [], lastCarbTime: 0
                 ),
                 autosensData: autosens,
-                reservoirData: reservoir(files),
+                reservoirData: reservoir(files).units,
                 glucose: points,
                 microBolusAllowed: true,
                 trioCustomOrefVariables: custom,
@@ -205,7 +204,7 @@ public enum HandyFreiLoop {
                 rate: max(0, rate),
                 minutes: max(0, minutes),
                 smb: max(0, smb),
-                reason: (determination?.reason ?? "Keine Bestimmung.") + autosensAge(autosens, now: now),
+                reason: (determination?.reason ?? "Keine Bestimmung.") + autosensAge(autosens, now: now) + reservoir(files).note,
                 iob: currentIOB,
                 maxIOB: maxIOB,
                 maxBolus: maxBolus,
@@ -263,10 +262,74 @@ public enum HandyFreiLoop {
         return try? JSONBridge.from(string: raw)
     }
 
-    private static func reservoir(_ files: [String: String]) -> Decimal {
+    /// A temp target counts only until its duration ends. A cancel entry (duration 0) stays.
+    private static func liveTempTargets(_ files: [String: String], now: Date) -> [TempTarget] {
+        let all: [TempTarget] = (try? JSONBridge.from(string: files["tempTargets"] ?? "")) ?? []
+        return all.filter { target in
+            guard target.enabled != false else { return false }
+            let minutes = NSDecimalNumber(decimal: target.duration).doubleValue
+            guard minutes > 0 else { return true }
+            return now < target.createdAt.addingTimeInterval(minutes * 60)
+        }
+    }
+
+    /// Adds insulin the watch has given since the snapshot. This is not the full scheduled-basal
+    /// inference the iPhone uses for TDD; that needs the pump manager and is not run here.
+    private static func withWatchInsulin(
+        _ variables: TrioCustomOrefVariables,
+        deliveries: [Delivery],
+        now: Date
+    ) -> TrioCustomOrefVariables {
+        var copy = variables
+        let since = variables.date
+        let twoHours = now.addingTimeInterval(-2 * 3600)
+        func insulin(_ dose: Delivery, after: Date) -> Decimal {
+            guard dose.date >= after else { return 0 }
+            if dose.kind == "bolus" { return NSDecimalNumber(value: dose.units).decimalValue }
+            let hours = min(Double(dose.minutes) * 60, now.timeIntervalSince(dose.date)) / 3600
+            return NSDecimalNumber(value: dose.units * max(0, hours)).decimalValue
+        }
+        let all = deliveries.reduce(Decimal(0)) { $0 + insulin($1, after: since) }
+        let recent = deliveries.reduce(Decimal(0)) { $0 + insulin($1, after: max(since, twoHours)) }
+        if all > 0 { copy.currentTDD += all }
+        if recent > 0 { copy.past2hoursAverage += recent }
+        return copy
+    }
+
+    /// An override with an end time stops when that time is reached. An unlimited one stays.
+    private static func expiredOverride(_ variables: TrioCustomOrefVariables?, now: Date) -> TrioCustomOrefVariables? {
+        guard var variables else { return nil }
+        guard variables.useOverride, !variables.unlimited else { return variables }
+        let minutes = NSDecimalNumber(decimal: variables.duration).doubleValue
+        guard minutes > 0, now.timeIntervalSince(variables.date) >= minutes * 60 else { return variables }
+        variables.useOverride = false
+        variables.overridePercentage = 100
+        variables.overrideTarget = 0
+        variables.smbIsOff = false
+        return variables
+    }
+
+    private static var rememberedReservoir: Decimal?
+
+    /// A missing reservoir file does not become 50 U. The last real reading is kept and named.
+    private static func reservoir(_ files: [String: String]) -> (units: Decimal, note: String) {
         let raw = files["reservoir"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let number = raw.replacingOccurrences(of: "\"", with: "")
-        return Decimal(string: number) ?? 50
+        if let value = Decimal(string: number), value > 0 {
+            rememberedReservoir = value
+            return (value, "")
+        }
+        if let rememberedReservoir {
+            return (rememberedReservoir, " Reservoir letzte Lesung.")
+        }
+        return (0, " Reservoir unbekannt.")
+    }
+
+    public static func autosensAgeMinutes(_ files: [String: String], now: Date) -> Int? {
+        guard let raw = files["autosens"]?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty,
+              let autosens: Autosens = try? JSONBridge.from(string: raw),
+              let timestamp = autosens.timestamp else { return nil }
+        return max(0, Int(now.timeIntervalSince(timestamp) / 60))
     }
 
     private static func autosensAge(_ autosens: Autosens, now: Date) -> String {
@@ -410,7 +473,8 @@ public enum HandyFreiLoop {
     /// The phone history uses its own ids after hand-back. Match the dose itself so it is not counted twice.
     private static func alreadyRecorded(_ delivery: Delivery, _ history: [PumpHistoryEvent]) -> Bool {
         history.contains { event in
-            guard abs(event.timestamp.timeIntervalSince(delivery.date)) < 180 else { return false }
+            let window: TimeInterval = delivery.kind == "bolus" ? 10 * 60 : 180
+            guard abs(event.timestamp.timeIntervalSince(delivery.date)) < window else { return false }
             if delivery.kind == "bolus" {
                 guard event.type == .bolus || event.type == .smb else { return false }
                 let amount = NSDecimalNumber(decimal: event.amount ?? -1).doubleValue
@@ -465,6 +529,197 @@ public enum HandyFreiLoop {
                 return "\(name): \(detail)"
             }
         }
+    }
+
+    public struct SavedOverride: Equatable, Codable {
+        public var name: String
+        public var percentage: Double
+        public var durationMinutes: Double
+        public var indefinite: Bool
+        public var target: Double
+        public var smbIsOff: Bool
+        public var isf: Bool
+        public var cr: Bool
+        public var isfAndCr: Bool
+        public var advancedSettings: Bool
+        public var smbMinutes: Double
+        public var uamMinutes: Double
+        public var start: Double
+        public var end: Double
+        public var smbIsScheduledOff: Bool
+    }
+
+    public struct SavedTempTarget: Equatable, Codable {
+        public var name: String
+        public var target: Double
+        public var durationMinutes: Double
+        public var halfBasalTarget: Double
+    }
+
+    public static func savedOverrides(_ files: [String: String]) -> [SavedOverride] {
+        guard let data = files["overridePresets"]?.data(using: .utf8),
+              let rows = try? JSONDecoder().decode([SavedOverride].self, from: data) else { return [] }
+        return rows
+    }
+
+    public static func savedTempTargets(_ files: [String: String]) -> [SavedTempTarget] {
+        guard let data = files["tempTargetPresets"]?.data(using: .utf8),
+              let rows = try? JSONDecoder().decode([SavedTempTarget].self, from: data) else { return [] }
+        return rows
+    }
+
+    /// Writes an override into the snapshot variables. The loop applies percentage, ISF/CR and SMB flags from there.
+    public static func startOverride(_ files: inout [String: String], _ preset: SavedOverride, now: Date) {
+        var base = trioVariables(files) ?? TrioCustomOrefVariables(
+            average_total_data: 0, weightedAverage: 1, currentTDD: 0, past2hoursAverage: 0,
+            date: now, overridePercentage: 100, useOverride: false, duration: 0, unlimited: false,
+            overrideTarget: 0, smbIsOff: false, advancedSettings: false, isfAndCr: false,
+            isf: false, cr: false, smbIsScheduledOff: false, start: 0, end: 0, smbMinutes: 30, uamMinutes: 30
+        )
+        base.date = now
+        base.useOverride = true
+        base.overridePercentage = NSDecimalNumber(value: preset.percentage).decimalValue
+        base.duration = NSDecimalNumber(value: preset.durationMinutes).decimalValue
+        base.unlimited = preset.indefinite
+        base.overrideTarget = NSDecimalNumber(value: preset.target).decimalValue
+        base.smbIsOff = preset.smbIsOff
+        base.isf = preset.isf
+        base.cr = preset.cr
+        base.isfAndCr = preset.isfAndCr
+        base.advancedSettings = preset.advancedSettings
+        base.smbIsScheduledOff = preset.smbIsScheduledOff
+        base.start = NSDecimalNumber(value: preset.start).decimalValue
+        base.end = NSDecimalNumber(value: preset.end).decimalValue
+        if preset.smbMinutes > 0 { base.smbMinutes = NSDecimalNumber(value: preset.smbMinutes).decimalValue }
+        if preset.uamMinutes > 0 { base.uamMinutes = NSDecimalNumber(value: preset.uamMinutes).decimalValue }
+        files["trioVariables"] = encodeModel(base)
+    }
+
+    public static func stopOverride(_ files: inout [String: String], now: Date) {
+        guard var base = trioVariables(files) else { return }
+        base.date = now
+        base.useOverride = false
+        base.overridePercentage = 100
+        base.overrideTarget = 0
+        base.smbIsOff = false
+        base.unlimited = false
+        base.duration = 0
+        files["trioVariables"] = encodeModel(base)
+    }
+
+    public static func startTempTarget(
+        _ files: inout [String: String],
+        name: String,
+        target: Double,
+        minutes: Int,
+        halfBasal: Double,
+        now: Date
+    ) {
+        var all: [TempTarget] = (try? JSONBridge.from(string: files["tempTargets"] ?? "")) ?? []
+        all.append(TempTarget(
+            name: name,
+            createdAt: now,
+            targetTop: NSDecimalNumber(value: target).decimalValue,
+            targetBottom: NSDecimalNumber(value: target).decimalValue,
+            duration: NSDecimalNumber(value: minutes).decimalValue,
+            enteredBy: TempTarget.local,
+            reason: name,
+            isPreset: false,
+            enabled: true,
+            halfBasalTarget: NSDecimalNumber(value: halfBasal).decimalValue
+        ))
+        files["tempTargets"] = encodeModel(all)
+    }
+
+    public static func stopTempTarget(_ files: inout [String: String], now: Date) {
+        var all: [TempTarget] = (try? JSONBridge.from(string: files["tempTargets"] ?? "")) ?? []
+        all.append(TempTarget.cancel(at: now))
+        files["tempTargets"] = encodeModel(all)
+    }
+
+    /// Same two-window autosens as the iPhone. Returns nil when there is not enough glucose.
+    public static func recomputeAutosens(
+        files: [String: String],
+        glucose: [(date: Date, mgdl: Int)],
+        deliveries: [Delivery],
+        watchCarbs: [WatchCarb],
+        now: Date
+    ) -> String? {
+        let points = combinedGlucose(files: files, watch: glucose)
+        guard points.count >= 72 else { return nil }
+        let preferences: Preferences
+        let settings: PumpSettings
+        let basal: [BasalProfileEntry]
+        do {
+            preferences = try decode(files, "preferences", "Einstellungen")
+            settings = try decode(files, "settings", "Pumpeneinstellungen")
+            basal = try decode(files, "basal", "Basalprofil")
+        } catch {
+            return nil
+        }
+        let isf: InsulinSensitivities
+        let carbRatios: CarbRatios
+        let targets: BGTargets
+        do {
+            isf = try decode(files, "isf", "ISF")
+            carbRatios = try decode(files, "carbRatios", "KE-Faktor")
+            targets = try decode(files, "targets", "Zielwerte")
+        } catch {
+            return nil
+        }
+        let profile: Profile
+        do {
+            profile = try ProfileGenerator.generate(
+                pumpSettings: settings,
+                bgTargets: targets,
+                basalProfile: basal,
+                isf: isf,
+                preferences: preferences,
+                carbRatios: carbRatios,
+                tempTargets: liveTempTargets(files, now: now),
+                clock: now
+            )
+        } catch {
+            return nil
+        }
+        var history = (try? pumpHistory(files).removingDuplicateSuspendResumeEvents()) ?? []
+        let known = Set(history.map(\.id))
+        history.append(contentsOf: deliveries.filter { !alreadyRecorded($0, history) }.flatMap(events).filter { !known.contains($0.id) })
+        var carbs: [CarbsEntry] = (try? JSONBridge.from(string: files["carbHistory"] ?? "[]")) ?? []
+        carbs.append(contentsOf: watchCarbs.map { item in
+            CarbsEntry(
+                id: item.id, createdAt: item.date, actualDate: item.date,
+                carbs: NSDecimalNumber(value: item.grams).decimalValue,
+                fat: item.fat > 0 ? NSDecimalNumber(value: item.fat).decimalValue : nil,
+                protein: item.protein > 0 ? NSDecimalNumber(value: item.protein).decimalValue : nil,
+                note: nil, enteredBy: "watch", isFPU: nil, fpuID: nil
+            )
+        })
+        let treatments = try? IobHistory.calcTempTreatments(
+            history: history.map { $0.computedEvent() },
+            profile: profile,
+            clock: now,
+            autosens: nil,
+            zeroTempDuration: nil
+        )
+        guard let ratio8 = try? AutosensGenerator.generate(
+            glucose: points, pumpHistory: history, basalProfile: basal, profile: profile, carbs: carbs,
+            tempTargets: liveTempTargets(files, now: now), maxDeviations: 96, clock: now, precomputedTreatments: treatments
+        ), let ratio24 = try? AutosensGenerator.generate(
+            glucose: points, pumpHistory: history, basalProfile: basal, profile: profile, carbs: carbs,
+            tempTargets: liveTempTargets(files, now: now), maxDeviations: 288, clock: now, precomputedTreatments: treatments
+        ) else { return nil }
+        var chosen = ratio8.ratio < ratio24.ratio ? ratio8 : ratio24
+        chosen.timestamp = now
+        return encodeModel(chosen)
+    }
+
+    private static func encodeModel<T: Encodable>(_ value: T) -> String {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .customISO8601
+        encoder.outputFormatting = [.withoutEscapingSlashes]
+        guard let data = try? encoder.encode(value), let text = String(data: data, encoding: .utf8) else { return "" }
+        return text
     }
 
     private static func factor(_ factors: [Double], minutes: Int) -> Double {

@@ -7,6 +7,9 @@ import WatchKit
 /// Handy-frei on the watch. One start, sensor and pump together. No patch stop and no sensor activation.
 struct HandyFreiWatchView: View {
     @Bindable var state: WatchState
+    @State private var showingAdjustments = false
+    @State private var customTarget = 110.0
+    @State private var customMinutes = 60.0
 
     var body: some View {
         ScrollView {
@@ -43,6 +46,14 @@ struct HandyFreiWatchView: View {
                 Button("Mahlzeiten") {
                     state.showingMealPresets = true
                 }
+                if state.handyFreiRunning {
+                    Button(showingAdjustments ? "Anpassungen schließen" : "Override und Temp-Ziel") {
+                        showingAdjustments.toggle()
+                    }
+                    if showingAdjustments {
+                        adjustments
+                    }
+                }
                 if let copied = state.handyFreiSnapshotAt {
                     let hours = Int(Date().timeIntervalSince(copied) / 3600)
                     Text(hours < 1
@@ -57,6 +68,40 @@ struct HandyFreiWatchView: View {
         }
         .sheet(isPresented: $state.showingMealPresets) {
             MealPresetListView(state: state)
+        }
+    }
+
+    private var adjustments: some View {
+        let overrides = HandyFreiLoop.savedOverrides(state.handyFreiFiles)
+        let targets = HandyFreiLoop.savedTempTargets(state.handyFreiFiles)
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("Override").font(.footnote)
+            if overrides.isEmpty {
+                Text("Keine Override-Vorlagen in der Kopie.").font(.footnote)
+            }
+            ForEach(overrides, id: \.name) { preset in
+                Button(preset.indefinite ? "\(preset.name) \(Int(preset.percentage)) %" : "\(preset.name) \(Int(preset.percentage)) % \(Int(preset.durationMinutes)) min") {
+                    HandyFreiSession.shared.startOverride(state, preset)
+                }
+            }
+            Button("Override beenden") { HandyFreiSession.shared.stopOverride(state) }
+            Text("Temp-Ziel").font(.footnote)
+            ForEach(targets, id: \.name) { preset in
+                Button("\(preset.name) \(Int(preset.target)) \(Int(preset.durationMinutes)) min") {
+                    HandyFreiSession.shared.startTempTarget(state, name: preset.name, target: preset.target, minutes: max(15, Int(preset.durationMinutes)))
+                }
+            }
+            Text("Eigenes Ziel \(Int(customTarget)) mg/dL, \(Int(customMinutes)) min")
+                .font(.footnote)
+                .focusable()
+                .digitalCrownRotation($customTarget, from: 80, through: 180, by: 5, sensitivity: .medium, isContinuous: false, isHapticFeedbackEnabled: true)
+            Button("Dauer \(Int(customMinutes)) min") {
+                customMinutes = customMinutes >= 120 ? 30 : customMinutes + 30
+            }
+            Button("Eigenes Temp-Ziel starten") {
+                HandyFreiSession.shared.startTempTarget(state, name: "Eigenes", target: customTarget, minutes: Int(customMinutes))
+            }
+            Button("Temp-Ziel beenden") { HandyFreiSession.shared.stopTempTarget(state) }
         }
     }
 }
@@ -153,6 +198,7 @@ final class HandyFreiSession {
     private var backoffTask: Task<Void, Never>?
     private var glucoseAgeTask: Task<Void, Never>?
     private var loopWatchTask: Task<Void, Never>?
+    private var autosensTask: Task<Void, Never>?
     private var lastLoopAt = Date.distantPast
     private var doseStartedAt: Date?
     private var bolusUncertain = false
@@ -180,6 +226,8 @@ final class HandyFreiSession {
         glucoseAgeTask = nil
         loopWatchTask?.cancel()
         loopWatchTask = nil
+        autosensTask?.cancel()
+        autosensTask = nil
         dosing = false
         doseStartedAt = nil
         bolusUncertain = false
@@ -220,6 +268,7 @@ final class HandyFreiSession {
         Task {
             guard state.handyFreiRunning, epoch == self.doseEpoch else { return }
             self.startLoopWatch(state, epoch: epoch)
+            self.startAutosensRefresh(state, epoch: epoch)
             let allowed = await HandyFreiWorkout.shared.prepare { ended in
                 DispatchQueue.main.async {
                     guard state.handyFreiRunning, ended else { return }
@@ -256,6 +305,75 @@ final class HandyFreiSession {
     private func startLoopWatch(_ state: WatchState, epoch: Int) {
         loopWatchTask?.cancel()
         loopWatchTask = Task { await self.watchLoop(state, epoch: epoch) }
+    }
+
+    /// Recalculates autosens off the loop. It waits until the snapshot ratio is half an hour old.
+    private func startAutosensRefresh(_ state: WatchState, epoch: Int) {
+        autosensTask?.cancel()
+        autosensTask = Task { [weak self] in
+            guard let self else { return }
+            while state.handyFreiRunning, epoch == self.doseEpoch, !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 60_000_000_000)
+                guard state.handyFreiRunning, epoch == self.doseEpoch else { return }
+                let snapshot = await MainActor.run { () -> (
+                    files: [String: String], readings: [(date: Date, mgdl: Int)],
+                    deliveries: [HandyFreiLoop.Delivery], carbs: [HandyFreiLoop.WatchCarb]
+                ) in
+                    (state.handyFreiFiles, self.readings, self.deliveries, self.loopCarbs())
+                }
+                let age = HandyFreiLoop.autosensAgeMinutes(snapshot.files, now: Date())
+                guard age == nil || (age ?? 0) >= 30 else { continue }
+                let files = snapshot.files
+                let readings = snapshot.readings
+                let deliveries = snapshot.deliveries
+                let carbs = snapshot.carbs
+                let json = await Task.detached(priority: .utility) {
+                    HandyFreiLoop.recomputeAutosens(
+                        files: files, glucose: readings, deliveries: deliveries, watchCarbs: carbs, now: Date()
+                    )
+                }.value
+                guard let json, !json.isEmpty else { continue }
+                await MainActor.run {
+                    state.handyFreiFiles["autosens"] = json
+                    state.handyFreiStatus = "\(Self.clock()) Autosens neu berechnet."
+                }
+            }
+        }
+    }
+
+    func startOverride(_ state: WatchState, _ preset: HandyFreiLoop.SavedOverride) {
+        HandyFreiLoop.startOverride(&state.handyFreiFiles, preset, now: Date())
+        log.append([
+            "date": Date().timeIntervalSince1970, "kind": "override", "name": preset.name,
+            "percentage": preset.percentage, "minutes": Int(preset.durationMinutes),
+            "text": "Override \(preset.name) \(Int(preset.percentage)) %"
+        ])
+        state.handyFreiStatus = "Override \(preset.name) aktiv."
+        HandyFreiDisk.save(session: self)
+    }
+
+    func stopOverride(_ state: WatchState) {
+        HandyFreiLoop.stopOverride(&state.handyFreiFiles, now: Date())
+        log.append(["date": Date().timeIntervalSince1970, "kind": "overrideStop", "text": "Override aus"])
+        state.handyFreiStatus = "Override beendet."
+        HandyFreiDisk.save(session: self)
+    }
+
+    func startTempTarget(_ state: WatchState, name: String, target: Double, minutes: Int) {
+        HandyFreiLoop.startTempTarget(&state.handyFreiFiles, name: name, target: target, minutes: minutes, halfBasal: 160, now: Date())
+        log.append([
+            "date": Date().timeIntervalSince1970, "kind": "tempTarget", "name": name,
+            "target": target, "minutes": minutes, "text": "Temp-Ziel \(name) \(Int(target)) \(minutes) min"
+        ])
+        state.handyFreiStatus = "Temp-Ziel \(Int(target)) für \(minutes) min."
+        HandyFreiDisk.save(session: self)
+    }
+
+    func stopTempTarget(_ state: WatchState) {
+        HandyFreiLoop.stopTempTarget(&state.handyFreiFiles, now: Date())
+        log.append(["date": Date().timeIntervalSince1970, "kind": "tempTargetStop", "text": "Temp-Ziel aus"])
+        state.handyFreiStatus = "Temp-Ziel beendet."
+        HandyFreiDisk.save(session: self)
     }
 
     /// Keeps the countdown moving, and starts the loop when it reaches zero.
@@ -349,8 +467,8 @@ final class HandyFreiSession {
         let settings = HandyFreiLoop.mealSettings(state.handyFreiFiles)
         if settings.fpu, fat > 0 || protein > 0 {
             let future = FatProteinConversion.futureEntries(
-                fat: Decimal(fat),
-                protein: Decimal(protein),
+                fat: NSDecimalNumber(value: fat).decimalValue,
+                protein: NSDecimalNumber(value: protein).decimalValue,
                 createdAt: date,
                 actualDate: date,
                 fpuID: id,
@@ -474,6 +592,7 @@ final class HandyFreiSession {
             await mark(state, "Pumpe: Status gelesen")
             await mark(state, "Pumpe: Verlauf lesen")
             try await HandyFreiMedtrumLink.shared.send(.readHistory)
+            await MainActor.run { self.adoptPumpReading(state) }
             await mark(state, "Pumpe: Verlauf gelesen")
             pumpRetries = 0
         } catch {
@@ -481,6 +600,31 @@ final class HandyFreiSession {
             guard attempt < 3, state.handyFreiRunning else { throw error }
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             try await openPump(state, attempt: attempt + 1)
+        }
+    }
+
+    /// The synchronize reply has the latest completed bolus and reservoir. A bolus already
+    /// in the snapshot within 10 minutes is not added again.
+    private func adoptPumpReading(_ state: WatchState) {
+        let link = HandyFreiMedtrumLink.shared
+        if let units = link.lastReservoirUnits, units > 0 {
+            state.handyFreiFiles["reservoir"] = String(units)
+        }
+        if let units = link.lastBolusUnits, units >= 0.05 {
+            let already = deliveries.contains {
+                $0.kind == "bolus" && abs($0.units - units) < 0.051 && Date().timeIntervalSince($0.date) < 10 * 60
+            }
+            if !already {
+                deliveries.append(HandyFreiLoop.Delivery(kind: "bolus", units: units, minutes: 0, date: Date()))
+                log.append([
+                    "date": Date().timeIntervalSince1970,
+                    "kind": "bolus",
+                    "units": units,
+                    "minutes": 0,
+                    "text": "Bolus aus dem Pumpenverlauf"
+                ])
+                HandyFreiDisk.save(session: self)
+            }
         }
     }
 

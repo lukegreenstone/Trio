@@ -148,6 +148,7 @@ enum HandyFreiPhone {
         storeCarbs(entries)
         storeGlucose(entries)
         storeLoopStates(entries)
+        storeAdjustments(entries)
         lock.lock()
         logImported = true
         let current = pending ?? HandyFrei.idle(fingerprint: HandyFrei.Fingerprint(
@@ -198,7 +199,52 @@ enum HandyFreiPhone {
         if !live.pump.isEmpty { files["pumpHistory"] = live.pump }
         if !live.carbs.isEmpty { files["carbHistory"] = live.carbs }
         if !live.glucose.isEmpty { files["glucoseHistory"] = live.glucose }
+        let presets = livePresets()
+        files["overridePresets"] = presets.overrides
+        files["tempTargetPresets"] = presets.targets
         return files
+    }
+
+    private static func livePresets() -> (overrides: String, targets: String) {
+        let context = CoreDataStack.shared.newTaskContext()
+        var overrides = "[]"
+        var targets = "[]"
+        context.performAndWait {
+            let overrideRequest = OverrideStored.fetchRequest()
+            overrideRequest.predicate = NSPredicate(format: "isPreset == YES")
+            let overrideRows = (try? context.fetch(overrideRequest)) ?? []
+            overrides = encodeJSON(overrideRows.map { row in
+                OverridePresetCopy(
+                    name: row.name ?? "Override",
+                    percentage: row.percentage,
+                    duration: row.duration?.doubleValue ?? 0,
+                    indefinite: row.indefinite,
+                    target: row.target?.doubleValue ?? 0,
+                    smbIsOff: row.smbIsOff,
+                    isf: row.isf,
+                    cr: row.cr,
+                    isfAndCr: row.isfAndCr,
+                    advancedSettings: row.advancedSettings,
+                    smbMinutes: row.smbMinutes?.doubleValue ?? 0,
+                    uamMinutes: row.uamMinutes?.doubleValue ?? 0,
+                    start: row.start?.doubleValue ?? 0,
+                    end: row.end?.doubleValue ?? 0,
+                    smbIsScheduledOff: row.smbIsScheduledOff
+                )
+            })
+            let targetRequest = TempTargetStored.fetchRequest()
+            targetRequest.predicate = NSPredicate(format: "isPreset == YES")
+            let targetRows = (try? context.fetch(targetRequest)) ?? []
+            targets = encodeJSON(targetRows.map { row in
+                TempTargetPresetCopy(
+                    name: row.name ?? "Temp-Ziel",
+                    target: row.target?.doubleValue ?? 0,
+                    duration: row.duration?.doubleValue ?? 0,
+                    halfBasalTarget: row.halfBasalTarget?.doubleValue ?? 160
+                )
+            })
+        }
+        return (overrides, targets)
     }
 
     private static func liveAlgorithmInputs(smoothGlucose: Bool) -> (pump: String, carbs: String, glucose: String) {
@@ -260,6 +306,31 @@ enum HandyFreiPhone {
             }
         }
         return orphaned.map(\.objectID)
+    }
+
+    private struct OverridePresetCopy: Encodable {
+        var name: String
+        var percentage: Double
+        var duration: Double
+        var indefinite: Bool
+        var target: Double
+        var smbIsOff: Bool
+        var isf: Bool
+        var cr: Bool
+        var isfAndCr: Bool
+        var advancedSettings: Bool
+        var smbMinutes: Double
+        var uamMinutes: Double
+        var start: Double
+        var end: Double
+        var smbIsScheduledOff: Bool
+    }
+
+    private struct TempTargetPresetCopy: Encodable {
+        var name: String
+        var target: Double
+        var duration: Double
+        var halfBasalTarget: Double
     }
 
     private static func encodeJSON<T: Encodable>(_ value: T) -> String {
@@ -431,6 +502,75 @@ enum HandyFreiPhone {
                 row.enacted = true
                 row.received = true
                 row.isUploadedToNS = false
+            }
+            try? context.save()
+        }
+    }
+
+    private static func storeAdjustments(_ entries: [[String: Any]]) {
+        let context = CoreDataStack.shared.newTaskContext()
+        context.performAndWait {
+            for entry in entries {
+                let kind = entry["kind"] as? String ?? ""
+                let date = Date(timeIntervalSince1970: (entry["date"] as? NSNumber)?.doubleValue ?? 0)
+                guard date.timeIntervalSince1970 > 1 else { continue }
+                if kind == "override" {
+                    let name = entry["name"] as? String ?? "Override"
+                    let existing = OverrideStored.fetchRequest()
+                    existing.predicate = NSPredicate(format: "name == %@ AND date >= %@ AND date <= %@", name, date.addingTimeInterval(-120) as NSDate, date.addingTimeInterval(120) as NSDate)
+                    if let found = try? context.fetch(existing), !found.isEmpty { continue }
+                    let row = OverrideStored(context: context)
+                    row.id = UUID().uuidString
+                    row.name = name
+                    row.date = date
+                    row.percentage = (entry["percentage"] as? NSNumber)?.doubleValue ?? 100
+                    row.duration = NSDecimalNumber(value: (entry["minutes"] as? NSNumber)?.doubleValue ?? 0)
+                    row.indefinite = row.duration?.doubleValue == 0
+                    row.enabled = true
+                    row.isPreset = false
+                    row.isUploadedToNS = false
+                    row.smbIsOff = false
+                    row.isf = false
+                    row.cr = false
+                    row.isfAndCr = false
+                    row.advancedSettings = false
+                    row.smbIsScheduledOff = false
+                } else if kind == "overrideStop" {
+                    let recent = OverrideStored.fetchRequest()
+                    recent.predicate = NSPredicate(format: "isPreset == NO AND enabled == YES")
+                    recent.sortDescriptors = [NSSortDescriptor(key: "date", ascending: false)]
+                    recent.fetchLimit = 1
+                    if let row = (try? context.fetch(recent))?.first {
+                        row.enabled = false
+                    }
+                } else if kind == "tempTarget" {
+                    let name = entry["name"] as? String ?? "Temp-Ziel"
+                    let existing = TempTargetStored.fetchRequest()
+                    existing.predicate = NSPredicate(format: "name == %@ AND date >= %@ AND date <= %@", name, date.addingTimeInterval(-120) as NSDate, date.addingTimeInterval(120) as NSDate)
+                    if let found = try? context.fetch(existing), !found.isEmpty { continue }
+                    let row = TempTargetStored(context: context)
+                    row.id = UUID()
+                    row.name = name
+                    row.date = date
+                    row.target = NSDecimalNumber(value: (entry["target"] as? NSNumber)?.doubleValue ?? 0)
+                    row.duration = NSDecimalNumber(value: (entry["minutes"] as? NSNumber)?.doubleValue ?? 0)
+                    row.halfBasalTarget = 160
+                    row.enabled = true
+                    row.isPreset = false
+                    row.isUploadedToNS = false
+                    row.enteredBy = "watch"
+                } else if kind == "tempTargetStop" {
+                    let row = TempTargetStored(context: context)
+                    row.id = UUID()
+                    row.name = "Cancel"
+                    row.date = date
+                    row.duration = 0
+                    row.target = 0
+                    row.enabled = true
+                    row.isPreset = false
+                    row.isUploadedToNS = false
+                    row.enteredBy = "watch"
+                }
             }
             try? context.save()
         }

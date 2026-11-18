@@ -348,8 +348,18 @@ public final class HandyFreiMedtrumLink: NSObject, CBCentralManagerDelegate, CBP
         }
     }
 
+    /// Latest reservoir and completed bolus from the pump's synchronize reply.
+    public private(set) var lastReservoirUnits: Double?
+    public private(set) var lastBolusUnits: Double?
+
     private func remember(_ response: SynchronizePacketResponse) {
         patchState = response.state
+        if let reservoir = response.reservoir, reservoir > 0 {
+            lastReservoirUnits = reservoir
+        }
+        if let bolus = response.bolus, bolus.completed, bolus.delivered >= 0.05 {
+            lastBolusUnits = bolus.delivered
+        }
         if response.state.isDeliveryHalted || response.basal?.type.isSuspendedByPump() == true {
             basalKnown = true
             basalIsTemp = false
