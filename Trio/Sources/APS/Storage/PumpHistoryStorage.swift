@@ -54,7 +54,7 @@ final class BasePumpHistoryStorage: PumpHistoryStorage, Injectable {
         let types: [String]
         switch type {
         case .bolus:
-            units = NSDecimalNumber(decimal: dose.unitsInDeliverableIncrements).doubleValue
+            units = dose.unitsInDeliverableIncrements
             types = [PumpEventStored.EventType.bolus.rawValue, PumpEventStored.EventType.smb.rawValue]
         case .tempBasal:
             guard event.type == .tempBasal else { return false }
