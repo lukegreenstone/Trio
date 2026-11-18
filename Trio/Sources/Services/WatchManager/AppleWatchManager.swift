@@ -670,7 +670,8 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
             return
         }
         if message["handyFreiActivate"] as? Bool == true {
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
                 HandyFreiPhone.activateFromWatch(
                     pump: self.deviceDataManager.pumpManager,
                     cgm: self.fetchGlucoseManager.cgmManager,

@@ -249,10 +249,10 @@ enum HandyFreiPhone {
                 let request = PumpEventStored.fetchRequest()
                 request.predicate = NSPredicate(format: "syncIdentifier == %@", sync)
                 if let found = try? context.fetch(request), !found.isEmpty { continue }
+                let windowStart = date.addingTimeInterval(-180)
+                let windowEnd = date.addingTimeInterval(180)
                 if kind == "temp" {
                     let near = PumpEventStored.fetchRequest()
-                    let windowStart = date.addingTimeInterval(-30)
-                    let windowEnd = date.addingTimeInterval(30)
                     near.predicate = NSPredicate(
                         format: "type == %@ AND timestamp >= %@ AND timestamp <= %@",
                         PumpEventStored.EventType.tempBasal.rawValue,
@@ -260,9 +260,22 @@ enum HandyFreiPhone {
                         windowEnd as NSDate
                     )
                     let sameRate = (try? context.fetch(near))?.contains { row in
-                        abs((row.tempBasal?.rate?.doubleValue ?? -999) - units) < 0.001
+                        abs((row.tempBasal?.rate?.doubleValue ?? -999) - units) < 0.051
                     } ?? false
                     if sameRate { continue }
+                } else {
+                    let near = PumpEventStored.fetchRequest()
+                    near.predicate = NSPredicate(
+                        format: "(type == %@ OR type == %@) AND timestamp >= %@ AND timestamp <= %@",
+                        PumpEventStored.EventType.bolus.rawValue,
+                        PumpEventStored.EventType.smb.rawValue,
+                        windowStart as NSDate,
+                        windowEnd as NSDate
+                    )
+                    let sameAmount = (try? context.fetch(near))?.contains { row in
+                        abs((row.bolus?.amount?.doubleValue ?? -999) - units) < 0.051
+                    } ?? false
+                    if sameAmount { continue }
                 }
                 let row = PumpEventStored(context: context)
                 row.id = UUID().uuidString

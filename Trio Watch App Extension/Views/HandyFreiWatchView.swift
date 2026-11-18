@@ -34,7 +34,14 @@ struct HandyFreiWatchView: View {
                 Button("Handy-frei beenden") {
                     state.stopHandyFrei()
                 }
-                Text("Start geht sofort, auch ohne iPhone. Die letzte Kopie reicht. Die Kopplung bleibt auf dem iPhone.")
+                if let copied = state.handyFreiSnapshotAt {
+                    let hours = Int(Date().timeIntervalSince(copied) / 3600)
+                    Text(hours < 1
+                        ? "Letzte Kopie: vor weniger als einer Stunde."
+                        : "Letzte Kopie: vor \(hours) Stunden. Ein alter Pumpentoken kann abgelehnt werden.")
+                        .font(.footnote)
+                }
+                Text("Start geht sofort, auch ohne iPhone. Die letzte Kopie reicht. Die Kopplung bleibt auf dem iPhone. Ist Bluetooth am iPhone noch an, hält das iPhone die Pumpe, bis die Verbindung fällt.")
                     .font(.footnote)
             }
             .padding()
@@ -58,12 +65,17 @@ extension WatchState {
         }
         session.sendMessage(["handyFreiActivate": true], replyHandler: nil, errorHandler: { _ in
             DispatchQueue.main.async {
-                if !self.handyFreiRunning {
-                    self.handyFreiStatus = "iPhone nicht erreicht. Start mit der letzten Kopie."
-                    self.startHandyFrei()
-                }
+                guard !self.handyFreiRunning else { return }
+                self.handyFreiStatus = "iPhone nicht erreicht. Start mit der letzten Kopie."
+                self.startHandyFrei()
             }
         })
+        // The phone is asked for a fresh copy, but the watch does not wait on it.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+            guard !self.handyFreiRunning else { return }
+            self.handyFreiStatus = "Kein neuer Schnappschuss. Start mit der letzten Kopie."
+            self.startHandyFrei()
+        }
     }
 
     /// Restarts from the keys and profile already on the watch. Does not ask the iPhone.
@@ -95,10 +107,12 @@ final class HandyFreiSession {
     private var sensorRetries = 0
     private var workoutRestarts = 0
     private var replacingSensor = false
+    private var sensorGeneration = 0
     private var lastPacketAt: Date?
     private var lastStallAttempt = Date.distantPast
     private var stallAttempts = 0
     private var backoffTask: Task<Void, Never>?
+    private var glucoseAgeTask: Task<Void, Never>?
     private var address = ""
     private var pin = Data()
     private var phase5 = Data()
@@ -113,6 +127,8 @@ final class HandyFreiSession {
         doseEpoch += 1
         backoffTask?.cancel()
         backoffTask = nil
+        glucoseAgeTask?.cancel()
+        glucoseAgeTask = nil
         dosing = false
         lastDose = .distantPast
         pumpRetries = 0
@@ -162,8 +178,7 @@ final class HandyFreiSession {
                     return
                 }
                 try await self.openSensor(state)
-                let started = Date()
-                Task { await self.watchGlucoseAge(state, epoch: epoch, started: started) }
+                self.startGlucoseWatch(state, epoch: epoch)
             } catch {
                 let text = Self.failureText(stage: "Start", error: error)
                 await self.mark(state, text)
@@ -176,8 +191,14 @@ final class HandyFreiSession {
     }
 
     /// No insulin once the newest reading is older than 12 minutes. The session stays up.
+    private func startGlucoseWatch(_ state: WatchState, epoch: Int) {
+        glucoseAgeTask?.cancel()
+        let started = Date()
+        glucoseAgeTask = Task { await self.watchGlucoseAge(state, epoch: epoch, started: started) }
+    }
+
     private func watchGlucoseAge(_ state: WatchState, epoch: Int, started: Date) async {
-        while state.handyFreiRunning, epoch == doseEpoch {
+        while state.handyFreiRunning, epoch == doseEpoch, !Task.isCancelled {
             try? await Task.sleep(nanoseconds: 60_000_000_000)
             guard state.handyFreiRunning, epoch == doseEpoch else { return }
             let snapshot = await MainActor.run { () -> (date: Date, hasReading: Bool) in
@@ -276,6 +297,8 @@ final class HandyFreiSession {
     }
 
     private func openSensor(_ state: WatchState, announce: String? = nil) async throws {
+        sensorGeneration += 1
+        let generation = sensorGeneration
         replacingSensor = true
         HandyFreiLibreLink.stop()
         await mark(state, announce ?? (sensorRetries == 0 ? "Sensor: suche" : "Sensor: erneut \(sensorRetries)"))
@@ -293,6 +316,8 @@ final class HandyFreiSession {
             onDisconnect: { [weak self] in
                 DispatchQueue.main.async {
                     guard let self, state.handyFreiRunning, !self.replacingSensor else { return }
+                    // A link we already replaced must not start a second session.
+                    guard generation == self.sensorGeneration else { return }
                     Task { await self.restoreSensor(state) }
                 }
             },
@@ -632,7 +657,7 @@ final class HandyFreiSession {
             return
         }
         state.handyFreiAlarm = text
-        state.handyFreiStatus = "\(text) iPhone nicht erreichbar. Nächster Versuch in 90 s."
+        state.handyFreiStatus = "\(text) iPhone nicht erreichbar. Nächster Versuch in 90 s. Falls Bluetooth am iPhone noch an ist, hält das iPhone die Pumpe."
         state.handyFreiLoopLine = state.handyFreiStatus
         log.append([
             "date": Date().timeIntervalSince1970,
@@ -664,8 +689,7 @@ final class HandyFreiSession {
                     guard state.handyFreiRunning, epoch == self.doseEpoch else { return }
                     try await self.openSensor(state)
                     await self.mark(state, "Sensor und Pumpe: Versuch geschafft.")
-                    let started = Date()
-                    Task { await self.watchGlucoseAge(state, epoch: epoch, started: started) }
+                    await MainActor.run { self.startGlucoseWatch(state, epoch: epoch) }
                     return
                 } catch {
                     await self.mark(state, "Noch nicht verbunden. Nächster Versuch in 90 s. \(error.localizedDescription)")

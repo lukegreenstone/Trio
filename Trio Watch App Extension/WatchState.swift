@@ -49,6 +49,8 @@ import WatchConnectivity
     var handyFreiBackupToken = ""
     var handyFreiGlucose: Int?
     var handyFreiGlucoseDate: Date?
+    /// When the last key snapshot arrived. A start without the phone uses this copy as-is.
+    var handyFreiSnapshotAt: Date?
     /// Last loop time, determination, and pump result. Sensor packets do not overwrite this.
     var handyFreiLoopLine = ""
     var handyFreiFiles: [String: String] = [:]
@@ -277,6 +279,7 @@ import WatchConnectivity
             self.handyFreiStatus = [note, shadow].filter { !$0.isEmpty }.joined(separator: " ")
             if let snapshot = handyFrei["snapshot"] as? [String: Any] {
                 self.handyFreiReadyToConfirm = true
+                self.handyFreiSnapshotAt = Date()
                 self.handyFreiBleAddress = snapshot["bleAddress"] as? String ?? ""
                 self.handyFreiSensorPeripheralID = snapshot["sensorPeripheralID"] as? String ?? ""
                 self.handyFreiBlePIN = snapshot["blePIN"] as? String ?? ""
