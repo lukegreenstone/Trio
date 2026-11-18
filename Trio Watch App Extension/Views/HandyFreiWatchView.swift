@@ -24,15 +24,17 @@ struct HandyFreiWatchView: View {
                         .font(.footnote)
                         .foregroundStyle(.orange)
                 }
-                if state.handyFreiReadyToConfirm, !state.handyFreiRunning {
-                    Button("Übernehmen") {
-                        state.requestHandyFrei()
-                    }
+                Button("Handy-frei aktivieren") {
+                    state.activateHandyFrei()
+                }
+                .disabled(state.handyFreiRunning)
+                Button(state.handyFreiRunning ? "Erneut versuchen" : "Handy-frei neu starten") {
+                    state.restartHandyFreiFromCache()
                 }
                 Button("Handy-frei beenden") {
                     state.stopHandyFrei()
                 }
-                Text("Sensor, Loop und Pumpe laufen auf der Uhr. Nur die sechs erlaubten Befehle. Bei Abbruch Bluetooth am iPhone wieder einschalten.")
+                Text("Start geht sofort, auch ohne iPhone. Die letzte Kopie reicht. Die Kopplung bleibt auf dem iPhone.")
                     .font(.footnote)
             }
             .padding()
@@ -46,18 +48,32 @@ extension WatchState {
         HandyFreiSession.shared.start(self)
     }
 
-    /// One tap. Starts only after the phone confirms Bluetooth is off, or when the phone is unreachable.
-    func requestHandyFrei() {
+    /// Starts at once. A reachable phone sends a fresh snapshot and pauses its loop. Otherwise the last copy is used.
+    func activateHandyFrei() {
         guard !handyFreiRunning else { return }
-        guard let session else {
+        handyFreiStatus = "Handy-frei wird aktiviert…"
+        guard let session, session.activationState == .activated, session.isReachable else {
             startHandyFrei()
             return
         }
-        session.sendMessage(["handyFreiPhoneOff": true], replyHandler: nil, errorHandler: { _ in
+        session.sendMessage(["handyFreiActivate": true], replyHandler: nil, errorHandler: { _ in
             DispatchQueue.main.async {
-                self.startHandyFrei()
+                if !self.handyFreiRunning {
+                    self.handyFreiStatus = "iPhone nicht erreicht. Start mit der letzten Kopie."
+                    self.startHandyFrei()
+                }
             }
         })
+    }
+
+    /// Restarts from the keys and profile already on the watch. Does not ask the iPhone.
+    func restartHandyFreiFromCache() {
+        HandyFreiSession.shared.restartFromCache(self)
+    }
+
+    /// One tap. Starts only after the phone confirms Bluetooth is off, or when the phone is unreachable.
+    func requestHandyFrei() {
+        activateHandyFrei()
     }
 
     func stopHandyFrei() {
@@ -82,6 +98,7 @@ final class HandyFreiSession {
     private var lastPacketAt: Date?
     private var lastStallAttempt = Date.distantPast
     private var stallAttempts = 0
+    private var backoffTask: Task<Void, Never>?
     private var address = ""
     private var pin = Data()
     private var phase5 = Data()
@@ -94,6 +111,8 @@ final class HandyFreiSession {
         guard !state.handyFreiRunning else { return }
         state.handyFreiRunning = true
         doseEpoch += 1
+        backoffTask?.cancel()
+        backoffTask = nil
         dosing = false
         lastDose = .distantPast
         pumpRetries = 0
@@ -131,7 +150,7 @@ final class HandyFreiSession {
             }
             guard allowed else {
                 await MainActor.run {
-                    self.fail(state, "HealthKit nicht erlaubt. Bluetooth am iPhone wieder einschalten.")
+                    self.giveUpOrRetry(state, "HealthKit nicht erlaubt.")
                 }
                 return
             }
@@ -150,7 +169,7 @@ final class HandyFreiSession {
                 await self.mark(state, text)
                 await MainActor.run {
                     guard state.handyFreiRunning else { return }
-                    self.fail(state, text)
+                    self.giveUpOrRetry(state, text)
                 }
             }
         }
@@ -189,7 +208,7 @@ final class HandyFreiSession {
         workoutRestarts += 1
         guard workoutRestarts <= 1 else {
             await MainActor.run {
-                self.fail(state, "Die Workout-Sitzung ist zu Ende. Bluetooth am iPhone wieder einschalten.")
+                self.giveUpOrRetry(state, "Die Workout-Sitzung ist zu Ende.")
             }
             return
         }
@@ -202,7 +221,7 @@ final class HandyFreiSession {
         }
         guard allowed, state.handyFreiRunning else {
             await MainActor.run {
-                self.fail(state, "HealthKit nicht erlaubt. Bluetooth am iPhone wieder einschalten.")
+                self.giveUpOrRetry(state, "HealthKit nicht erlaubt.")
             }
             return
         }
@@ -241,8 +260,9 @@ final class HandyFreiSession {
         lastStallAttempt = Date()
         stallAttempts += 1
         guard stallAttempts <= 3 else {
+            stallAttempts = 0
             await MainActor.run {
-                self.fail(state, "Sensor steht seit \(quietMinutes) min. Bluetooth am iPhone wieder einschalten.")
+                self.giveUpOrRetry(state, "Sensor steht seit \(quietMinutes) min.")
             }
             return
         }
@@ -293,8 +313,9 @@ final class HandyFreiSession {
         guard state.handyFreiRunning else { return }
         pumpRetries += 1
         guard pumpRetries <= 3 else {
+            pumpRetries = 0
             await MainActor.run {
-                self.fail(state, "Pumpe weg. Bluetooth am iPhone wieder einschalten.")
+                self.giveUpOrRetry(state, "Pumpe weg.")
             }
             return
         }
@@ -302,7 +323,7 @@ final class HandyFreiSession {
             try await openPump(state, attempt: pumpRetries)
         } catch {
             await MainActor.run {
-                self.fail(state, "Pumpe weg. \(error.localizedDescription). Bluetooth am iPhone wieder einschalten.")
+                self.giveUpOrRetry(state, "Pumpe weg. \(error.localizedDescription)")
             }
         }
     }
@@ -311,8 +332,9 @@ final class HandyFreiSession {
         guard state.handyFreiRunning, !replacingSensor else { return }
         sensorRetries += 1
         guard sensorRetries <= 3 else {
+            sensorRetries = 0
             await MainActor.run {
-                self.fail(state, "Sensor weg. Bluetooth am iPhone wieder einschalten.")
+                self.giveUpOrRetry(state, "Sensor weg.")
             }
             return
         }
@@ -383,7 +405,8 @@ final class HandyFreiSession {
         let device = WKInterfaceDevice.current()
         device.isBatteryMonitoringEnabled = true
         if device.batteryLevel >= 0, device.batteryLevel < 0.1 {
-            fail(state, "Akku unter 10 Prozent. Bluetooth am iPhone wieder einschalten.")
+            state.handyFreiStatus = "Akku unter 10 Prozent. Kein Insulin."
+            state.handyFreiLoopLine = state.handyFreiStatus
             return
         }
         readings.append((Date(), mgdl))
@@ -593,7 +616,73 @@ final class HandyFreiSession {
             try? await HandyFreiMedtrumLink.shared.send(.cancelTempBasal)
             HandyFreiMedtrumLink.shared.stop()
         }
-        state.handyFreiStatus = "Handy-frei beendet. Bluetooth am iPhone wieder einschalten."
+        state.handyFreiStatus = "Handy-frei beendet. „Handy-frei aktivieren“ startet wieder, auch ohne iPhone."
+    }
+
+    private func phoneReachable(_ state: WatchState) -> Bool {
+        guard let session = state.session else { return false }
+        return session.activationState == .activated && session.isReachable
+    }
+
+    /// Ends the session only when the iPhone can take the radio back. Otherwise keeps retrying.
+    private func giveUpOrRetry(_ state: WatchState, _ text: String) {
+        guard state.handyFreiRunning else { return }
+        if phoneReachable(state) {
+            fail(state, text)
+            return
+        }
+        state.handyFreiAlarm = text
+        state.handyFreiStatus = "\(text) iPhone nicht erreichbar. Nächster Versuch in 90 s."
+        state.handyFreiLoopLine = state.handyFreiStatus
+        log.append([
+            "date": Date().timeIntervalSince1970,
+            "kind": "alarm",
+            "text": state.handyFreiStatus
+        ])
+        guard backoffTask == nil else { return }
+        let epoch = doseEpoch
+        backoffTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.doseEpoch == epoch { self.backoffTask = nil }
+            }
+            while state.handyFreiRunning, epoch == self.doseEpoch {
+                try? await Task.sleep(nanoseconds: 90_000_000_000)
+                guard state.handyFreiRunning, epoch == self.doseEpoch else { return }
+                if self.phoneReachable(state) {
+                    await MainActor.run {
+                        self.fail(state, "iPhone ist wieder da. Steuerung zurück.")
+                    }
+                    return
+                }
+                await self.mark(state, "Verbindung neu, iPhone nicht da.")
+                self.sensorRetries = 0
+                self.pumpRetries = 0
+                self.stallAttempts = 0
+                do {
+                    try await self.openPump(state, attempt: 1)
+                    guard state.handyFreiRunning, epoch == self.doseEpoch else { return }
+                    try await self.openSensor(state)
+                    await self.mark(state, "Sensor und Pumpe: Versuch geschafft.")
+                    let started = Date()
+                    Task { await self.watchGlucoseAge(state, epoch: epoch, started: started) }
+                    return
+                } catch {
+                    await self.mark(state, "Noch nicht verbunden. Nächster Versuch in 90 s. \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    func restartFromCache(_ state: WatchState) {
+        backoffTask?.cancel()
+        backoffTask = nil
+        doseEpoch += 1
+        state.handyFreiRunning = false
+        state.handyFreiAlarm = ""
+        HandyFreiLibreLink.stop()
+        HandyFreiMedtrumLink.shared.stop()
+        start(state)
     }
 
     private func fail(_ state: WatchState, _ text: String) {

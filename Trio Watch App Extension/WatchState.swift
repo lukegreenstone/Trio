@@ -290,7 +290,11 @@ import WatchConnectivity
                 self.handyFreiCarbRatio = (snapshot["rheosCarbRatio"] as? [NSNumber])?.map(\.doubleValue) ?? []
             }
             if kind == "watch-owns" {
-                self.startHandyFrei()
+                if self.handyFreiRunning {
+                    self.restartHandyFreiFromCache()
+                } else {
+                    self.startHandyFrei()
+                }
             }
         }
     }

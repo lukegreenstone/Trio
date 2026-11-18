@@ -61,6 +61,59 @@ enum HandyFreiPhone {
         return session
     }
 
+    /// Watch button, phone reachable. Fresh snapshot, loop paused, pairing kept.
+    /// Drivers are not asked to unpair, prime, or deactivate.
+    static func activateFromWatch(pump: Any?, cgm: Any?, storage: FileStorage?) {
+        let document = RheosStore.shared.loadDocument()
+        let learned = document.decision?.learnedFactors ?? document.applied?.factors
+        let names = [
+            "preferences": OpenAPS.Settings.preferences,
+            "settings": OpenAPS.Settings.settings,
+            "basal": OpenAPS.Settings.basalProfile,
+            "targets": OpenAPS.Settings.bgTargets,
+            "isf": OpenAPS.Settings.insulinSensitivities,
+            "carbRatios": OpenAPS.Settings.carbRatios,
+            "pumpHistory": OpenAPS.Monitor.pumpHistory,
+            "carbHistory": OpenAPS.Monitor.carbHistory,
+            "autosens": OpenAPS.Settings.autosense
+        ]
+        var files: [String: String] = [:]
+        for (key, name) in names {
+            files[key] = storage?.retrieveRaw(name) ?? ""
+        }
+        let snapshot = collectSnapshot(
+            pump: pump,
+            cgm: cgm,
+            iob: 0,
+            cob: 0,
+            maxBolus: 0,
+            maxIOB: 0,
+            rheosBasal: learned?.basal ?? [],
+            rheosISF: learned?.isf ?? [],
+            rheosCarbRatio: learned?.carbRatio ?? [],
+            loopFiles: files,
+            glucose: nil
+        )
+        if snapshot.refusal != nil {
+            _ = prepare(fingerprint: HandyFrei.Fingerprint(
+                pumpPeripheralID: nil, pumpSerial: nil, sensorSerial: nil, sensorPeripheralID: nil
+            ), snapshot: snapshot)
+            return
+        }
+        let offered = HandyFrei.prepare(enabled: true, fingerprint: HandyFrei.Fingerprint(
+            pumpPeripheralID: nil, pumpSerial: nil, sensorSerial: nil, sensorPeripheralID: nil
+        ))
+        let session = HandyFrei.watchTakesRadio(offered)
+        HandyFreiGate.setPhoneLoopPaused(true)
+        lock.lock()
+        pending = session
+        logImported = false
+        lastSnapshot = snapshot
+        lock.unlock()
+        store(session)
+        send(session, snapshot: snapshot, kind: "watch-owns")
+    }
+
     /// Called when iPhone Bluetooth reports poweredOff, or when the watch asks and it really is off.
     static func bluetoothIsOff() {
         lock.lock()

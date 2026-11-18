@@ -265,6 +265,19 @@ enum HandyFrei {
         return session
     }
 
+    /// The watch asked to take the radio while the phone is still reachable.
+    /// The loop pauses. Pairing and keys stay. No sensor or pump is ended.
+    static func watchTakesRadio(_ session: Session) -> Session {
+        var next = session
+        next.step = .watchOwning
+        next.phoneOwnsRadio = false
+        next.watchOwnsRadio = true
+        next.phoneLoopPaused = true
+        next.keysDeleted = false
+        next.note = "Die Uhr hat übernommen. Der iPhone-Loop ist pausiert. Die Kopplung bleibt."
+        return next
+    }
+
     /// Only after Bluetooth is really off. Keys stay. The phone loop pauses.
     static func bluetoothIsOff(_ session: Session) -> Session {
         guard session.step == .offered || session.step == .watchAcked else {

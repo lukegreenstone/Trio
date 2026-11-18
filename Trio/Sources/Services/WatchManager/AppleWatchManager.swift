@@ -28,6 +28,8 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
     @Injected() private var iobService: IOBService!
     @Injected() private var notificationsManager: UserNotificationsManager!
     @Injected() private var rheosCoordinator: RheosCoordinator!
+    @Injected() private var deviceDataManager: DeviceDataManager!
+    @Injected() private var fetchGlucoseManager: FetchGlucoseManager!
 
     private var units: GlucoseUnits = .mgdL
     private var glucoseColorScheme: GlucoseColorScheme = .staticColor
@@ -664,6 +666,16 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
         if message["handyFreiPhoneOff"] as? Bool == true {
             Task { @MainActor in
                 HandyFreiPhone.watchSaysPhoneIsOff()
+            }
+            return
+        }
+        if message["handyFreiActivate"] as? Bool == true {
+            Task { @MainActor in
+                HandyFreiPhone.activateFromWatch(
+                    pump: self.deviceDataManager.pumpManager,
+                    cgm: self.fetchGlucoseManager.cgmManager,
+                    storage: self.fileStorage
+                )
             }
             return
         }
