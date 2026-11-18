@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import Trio
 import WatchConnectivity
 
 /// WatchState manages the communication between the Watch app and the iPhone app using WatchConnectivity.
