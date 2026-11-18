@@ -47,6 +47,12 @@ extension WatchState {
     ///   - amount: The amount of carbs in grams
     ///   - date: The timestamp for the carb entry (defaults to current time)
     func sendCarbsRequest(_ amount: Int, _ date: Date = Date()) {
+        if handyFreiRunning {
+            HandyFreiSession.shared.recordCarbs(grams: amount, date: date)
+            let shown = cob ?? "0"
+            handleAcknowledgment(success: true, message: "\(amount) g gespeichert. COB \(shown) g")
+            return
+        }
         guard let session = session, session.isReachable else {
             Task {
                 await WatchLogger.shared.log("⌚️ Carbs request aborted: session unreachable")

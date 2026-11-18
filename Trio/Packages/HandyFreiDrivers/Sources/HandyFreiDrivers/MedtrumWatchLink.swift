@@ -323,13 +323,20 @@ public final class HandyFreiMedtrumLink: NSObject, CBCentralManagerDelegate, CBP
                 for package in packages {
                     peripheral.writeValue(package, for: writeCharacteristic, type: .withResponse)
                 }
-                self.queue.asyncAfter(deadline: .now() + 45) {
+                self.queue.asyncAfter(deadline: .now() + 60) {
                     self.finishWrite(
                         .failure(HandyFreiLinkError.pumpRefused("\(name) gesendet. Zeitüberschreitung")),
                         generation: generation
                     )
                 }
             }
+        }
+    }
+
+    /// Releases a command that never answered, so the next loop is not stuck behind it.
+    public func cancelPendingWrite() {
+        queue.async {
+            self.finishWrite(.failure(HandyFreiLinkError.pumpRefused("Zeitüberschreitung")))
         }
     }
 

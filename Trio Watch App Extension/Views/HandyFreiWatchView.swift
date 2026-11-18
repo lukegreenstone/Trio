@@ -11,7 +11,7 @@ struct HandyFreiWatchView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Handy-frei")
+                Text(state.handyFreiRunning ? "Handy-frei aktiv" : "Handy-frei")
                     .font(.headline)
                 Text(state.handyFreiStatus)
                     .font(.footnote)
@@ -24,11 +24,17 @@ struct HandyFreiWatchView: View {
                         .font(.footnote)
                         .foregroundStyle(.orange)
                 }
-                Button("Handy-frei aktivieren") {
-                    state.activateHandyFrei()
+                if !state.handyFreiRunning {
+                    Button("Handy-frei aktivieren") {
+                        state.activateHandyFrei()
+                    }
                 }
-                .disabled(state.handyFreiRunning)
-                Button(state.handyFreiRunning ? "Erneut versuchen" : "Handy-frei neu starten") {
+                if state.handyFreiRunning {
+                    Button("Erneut versuchen") {
+                        state.restartHandyFreiFromCache()
+                    }
+                }
+                Button("Handy-frei neu starten") {
                     state.restartHandyFreiFromCache()
                 }
                 Button("Handy-frei beenden") {
@@ -113,6 +119,13 @@ final class HandyFreiSession {
     private var stallAttempts = 0
     private var backoffTask: Task<Void, Never>?
     private var glucoseAgeTask: Task<Void, Never>?
+    private var loopWatchTask: Task<Void, Never>?
+    private var lastLoopAt = Date.distantPast
+    private var doseStartedAt: Date?
+    private var bolusUncertain = false
+    private var carbs: [(date: Date, grams: Double)] = []
+    /// Observed loop spacing is about 3 to 4 minutes. The watchdog uses twice that.
+    private let loopInterval: TimeInterval = 210
     private var address = ""
     private var pin = Data()
     private var phase5 = Data()
@@ -129,8 +142,14 @@ final class HandyFreiSession {
         backoffTask = nil
         glucoseAgeTask?.cancel()
         glucoseAgeTask = nil
+        loopWatchTask?.cancel()
+        loopWatchTask = nil
         dosing = false
+        doseStartedAt = nil
+        bolusUncertain = false
+        carbs = []
         lastDose = .distantPast
+        lastLoopAt = Date()
         pumpRetries = 0
         sensorRetries = 0
         workoutRestarts = 0
@@ -158,6 +177,7 @@ final class HandyFreiSession {
         }
         Task {
             guard state.handyFreiRunning, epoch == self.doseEpoch else { return }
+            self.startLoopWatch(state, epoch: epoch)
             let allowed = await HandyFreiWorkout.shared.prepare { ended in
                 DispatchQueue.main.async {
                     guard state.handyFreiRunning, ended else { return }
@@ -191,6 +211,53 @@ final class HandyFreiSession {
     }
 
     /// No insulin once the newest reading is older than 12 minutes. The session stays up.
+    private func startLoopWatch(_ state: WatchState, epoch: Int) {
+        loopWatchTask?.cancel()
+        loopWatchTask = Task { await self.watchLoop(state, epoch: epoch) }
+    }
+
+    /// If a pump command or a missed glucose packet stops the cycle, start it again.
+    private func watchLoop(_ state: WatchState, epoch: Int) async {
+        while state.handyFreiRunning, epoch == doseEpoch, !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 30_000_000_000)
+            guard state.handyFreiRunning, epoch == doseEpoch, !Task.isCancelled else { return }
+            let stuck = await MainActor.run { () -> Bool in
+                guard let started = self.doseStartedAt, self.dosing else { return false }
+                return Date().timeIntervalSince(started) > 70
+            }
+            if stuck {
+                HandyFreiMedtrumLink.shared.cancelPendingWrite()
+                await MainActor.run {
+                    self.dosing = false
+                    self.doseStartedAt = nil
+                    self.bolusUncertain = true
+                    let line = "\(Self.clock()) Pumpe: Zeitüberschreitung. Loop läuft weiter. SMB wartet auf den Verlauf."
+                    state.handyFreiStatus = line
+                    state.handyFreiLoopLine = line
+                }
+            }
+            let idle = Date().timeIntervalSince(lastLoopAt)
+            let busy = await MainActor.run { self.dosing }
+            guard !busy, idle > self.loopInterval * 2 else { continue }
+            await MainActor.run {
+                state.handyFreiStatus = "\(Self.clock()) Loop-Wächter: letzter Lauf vor \(Int(idle / 60)) min, starte neu."
+            }
+            await MainActor.run { self.rerunLoop(state) }
+        }
+    }
+
+    /// Uses the glucose already stored. Does not invent a new reading.
+    private func rerunLoop(_ state: WatchState) {
+        guard state.handyFreiRunning, !dosing else { return }
+        guard let last = readings.max(by: { $0.date < $1.date }) else { return }
+        guard Date().timeIntervalSince(last.date) <= 12 * 60 else { return }
+        evaluate(state, mgdl: last.mgdl, appendReading: false)
+    }
+
+    func recordCarbs(grams: Int, date: Date) {
+        carbs.append((date: date, grams: Double(grams)))
+    }
+
     private func startGlucoseWatch(_ state: WatchState, epoch: Int) {
         glucoseAgeTask?.cancel()
         let started = Date()
@@ -434,9 +501,17 @@ final class HandyFreiSession {
             state.handyFreiLoopLine = state.handyFreiStatus
             return
         }
-        readings.append((Date(), mgdl))
-        stallAttempts = 0
-        if readings.count > 36 { readings.removeFirst(readings.count - 36) }
+        evaluate(state, mgdl: mgdl, appendReading: true)
+    }
+
+    /// One loop pass. The pump task always clears its busy flag, including on timeout.
+    private func evaluate(_ state: WatchState, mgdl: Int, appendReading: Bool) {
+        if appendReading {
+            readings.append((Date(), mgdl))
+            stallAttempts = 0
+            if readings.count > 36 { readings.removeFirst(readings.count - 36) }
+        }
+        lastLoopAt = Date()
         let outcome = HandyFreiLoop.tick(
             files: state.handyFreiFiles,
             rheosBasal: state.handyFreiBasal,
@@ -444,16 +519,17 @@ final class HandyFreiSession {
             rheosCarbRatio: state.handyFreiCarbRatio,
             glucose: readings,
             deliveries: deliveries,
+            watchCarbs: carbs,
             now: Date()
         )
-        state.handyFreiGlucose = mgdl
-        state.handyFreiStatus = "\(mgdl) mg/dL. \(outcome.reason)"
-        let clock = Self.clock()
+        let clock = Self.clockMinute()
         let waiting = Date().timeIntervalSince(lastDose) < 5 * 60
         let preview = waiting
             ? "\(clock) \(mgdl) mg/dL · nächster Loop in \(max(0, Int(5 * 60 - Date().timeIntervalSince(lastDose))))s · \(outcome.reason)"
             : "\(clock) \(mgdl) mg/dL · Temp \(String(format: "%.2f", outcome.rate)) U/h \(outcome.minutes) min · SMB \(String(format: "%.2f", outcome.smb)) U · \(outcome.reason)"
         let loopAge = lastDose == .distantPast ? 0 : Int(Date().timeIntervalSince(lastDose) / 60)
+        state.handyFreiGlucose = mgdl
+        state.handyFreiStatus = preview
         state.applyHandyFreiDisplay(
             mgdl: mgdl,
             iob: outcome.iob,
@@ -468,15 +544,25 @@ final class HandyFreiSession {
         ])
         guard outcome.deliver || outcome.cancelTemp else { return }
         guard !dosing else { return }
-        // Same cadence as the phone loop. Glucose still updates on every reading.
         guard !waiting else { return }
         dosing = true
+        doseStartedAt = Date()
         lastDose = Date()
         let epoch = doseEpoch
         let rate = Self.medtrumStep(min(outcome.rate, outcome.maxBasal))
         let units = Self.medtrumStep(min(outcome.smb, outcome.maxBolus))
+        let uncertain = bolusUncertain
         Task {
-            defer { Task { @MainActor in self.dosing = false } }
+            var finished = preview
+            defer {
+                let line = finished
+                Task { @MainActor in
+                    self.dosing = false
+                    self.doseStartedAt = nil
+                    state.handyFreiStatus = line
+                    state.handyFreiLoopLine = line
+                }
+            }
             guard state.handyFreiRunning, epoch == self.doseEpoch else { return }
             let deliverTemp = !outcome.cancelTemp && rate > 0 && outcome.minutes > 0
             let sent = await self.deliverTemp(
@@ -484,35 +570,86 @@ final class HandyFreiSession {
                 rate: deliverTemp ? rate : 0,
                 minutes: deliverTemp ? outcome.minutes : 0
             )
-            if sent {
+            if sent, deliverTemp {
                 await MainActor.run {
-                    if deliverTemp {
-                        self.deliveries.append(HandyFreiLoop.Delivery(kind: "temp", units: rate, minutes: outcome.minutes, date: Date()))
-                        self.log.append(["date": Date().timeIntervalSince1970, "kind": "temp", "units": rate, "minutes": outcome.minutes])
-                        state.handyFreiLoopLine = "\(Self.clock()) Temp \(String(format: "%.2f", rate)) U/h \(outcome.minutes) min · Pumpe ok"
-                    } else {
-                        state.handyFreiLoopLine = "\(Self.clock()) cancelTempBasal · Pumpe ok"
-                    }
+                    self.deliveries.append(HandyFreiLoop.Delivery(kind: "temp", units: rate, minutes: outcome.minutes, date: Date()))
+                    self.log.append(["date": Date().timeIntervalSince1970, "kind": "temp", "units": rate, "minutes": outcome.minutes])
                 }
+                finished = "Pumpe \(Self.clockMinute()): Temp \(String(format: "%.2f", rate)) U/h ok"
+            } else if sent {
+                finished = "Pumpe \(Self.clockMinute()): Temp abgebrochen ok"
+            } else {
+                finished = await MainActor.run { state.handyFreiLoopLine }
             }
-            // A failed temp cancel or set must not swallow the SMB from the same determination.
             let underStep = outcome.smb > 0 && units <= 0
             let overCap = units > 0 && outcome.iob + units > outcome.maxIOB
             if underStep || overCap {
-                await MainActor.run {
-                    let why = underStep ? "SMB unter 0,05 U nicht gesendet" : "SMB über Max IOB nicht gesendet"
-                    state.handyFreiLoopLine = "\(state.handyFreiLoopLine) · \(why)"
+                finished += underStep ? " · SMB unter 0,05 U nicht gesendet" : " · SMB über Max IOB nicht gesendet"
+                return
+            }
+            guard units > 0 else {
+                await self.refreshTotals(state, mgdl: mgdl, line: finished)
+                return
+            }
+            if uncertain {
+                let cleared = await self.confirmBolusState(state)
+                guard cleared else {
+                    finished += " · SMB nicht gesendet, vorheriger Bolus unsicher"
+                    return
                 }
             }
-            guard units > 0, !overCap else { return }
             let bolusSent = await self.deliverBolus(state, units: units)
             if bolusSent {
                 await MainActor.run {
+                    self.bolusUncertain = false
                     self.deliveries.append(HandyFreiLoop.Delivery(kind: "bolus", units: units, minutes: 0, date: Date()))
                     self.log.append(["date": Date().timeIntervalSince1970, "kind": "bolus", "units": units, "minutes": 0])
-                    state.handyFreiLoopLine = "\(state.handyFreiLoopLine) · SMB \(String(format: "%.2f", units)) U · Pumpe ok"
                 }
+                finished += " · SMB \(String(format: "%.2f", units)) U ok"
+                await self.refreshTotals(state, mgdl: mgdl, line: finished)
+            } else {
+                await MainActor.run { self.bolusUncertain = true }
+                finished += " · SMB unsicher, kein zweiter Bolus"
             }
+        }
+    }
+
+    /// Reads the pump before another SMB when the last bolus reply was missing.
+    private func confirmBolusState(_ state: WatchState) async -> Bool {
+        await MainActor.run {
+            state.handyFreiStatus = "\(Self.clockMinute()) Pumpe: Verlauf, bevor ein neues SMB geht."
+        }
+        do {
+            try await HandyFreiMedtrumLink.shared.send(.readStatus)
+            try await HandyFreiMedtrumLink.shared.send(.readHistory)
+            await MainActor.run { self.bolusUncertain = false }
+            return true
+        } catch {
+            await MainActor.run { self.bolusUncertain = true }
+            return false
+        }
+    }
+
+    private func refreshTotals(_ state: WatchState, mgdl: Int, line: String) async {
+        let outcome = HandyFreiLoop.tick(
+            files: state.handyFreiFiles,
+            rheosBasal: state.handyFreiBasal,
+            rheosISF: state.handyFreiISF,
+            rheosCarbRatio: state.handyFreiCarbRatio,
+            glucose: readings,
+            deliveries: deliveries,
+            watchCarbs: carbs,
+            now: Date()
+        )
+        await MainActor.run {
+            state.applyHandyFreiDisplay(
+                mgdl: mgdl,
+                iob: outcome.iob,
+                cob: outcome.cob,
+                loopLine: line,
+                loopAgeMinutes: 0
+            )
+            state.handyFreiStatus = line
         }
     }
 
@@ -610,6 +747,11 @@ final class HandyFreiSession {
         return String(format: "%02d:%02d:%02d", parts.hour ?? 0, parts.minute ?? 0, parts.second ?? 0)
     }
 
+    private static func clockMinute(_ date: Date = Date()) -> String {
+        let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
+        return String(format: "%02d:%02d", parts.hour ?? 0, parts.minute ?? 0)
+    }
+
     private static func medtrumStep(_ value: Double) -> Double {
         (value / 0.05).rounded() * 0.05
     }
@@ -656,8 +798,8 @@ final class HandyFreiSession {
             fail(state, text)
             return
         }
-        state.handyFreiAlarm = text
-        state.handyFreiStatus = "\(text) iPhone nicht erreichbar. Nächster Versuch in 90 s. Falls Bluetooth am iPhone noch an ist, hält das iPhone die Pumpe."
+        state.handyFreiAlarm = "\(Self.clockMinute()) \(text)"
+        state.handyFreiStatus = "\(Self.clockMinute()) \(text) Nächster Versuch in 90 s. Falls Bluetooth am iPhone noch an ist, hält das iPhone die Pumpe."
         state.handyFreiLoopLine = state.handyFreiStatus
         log.append([
             "date": Date().timeIntervalSince1970,

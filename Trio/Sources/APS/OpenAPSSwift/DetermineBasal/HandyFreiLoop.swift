@@ -38,6 +38,7 @@ public enum HandyFreiLoop {
         rheosCarbRatio: [Double],
         glucose: [(date: Date, mgdl: Int)],
         deliveries: [Delivery],
+        watchCarbs: [(date: Date, grams: Double)] = [],
         now: Date
     ) -> Outcome {
         let empty = Outcome(
@@ -73,7 +74,21 @@ public enum HandyFreiLoop {
             )
             var history: [PumpHistoryEvent] = (try? JSONBridge.from(string: files["pumpHistory"] ?? "[]")) ?? []
             history.append(contentsOf: deliveries.map(event))
-            let carbs: [CarbsEntry] = (try? JSONBridge.from(string: files["carbHistory"] ?? "[]")) ?? []
+            var carbs: [CarbsEntry] = (try? JSONBridge.from(string: files["carbHistory"] ?? "[]")) ?? []
+            carbs.append(contentsOf: watchCarbs.map { item in
+                CarbsEntry(
+                    id: nil,
+                    createdAt: item.date,
+                    actualDate: item.date,
+                    carbs: Decimal(item.grams),
+                    fat: nil,
+                    protein: nil,
+                    note: nil,
+                    enteredBy: "watch",
+                    isFPU: nil,
+                    fpuID: nil
+                )
+            })
             let points = glucose.map { item in
                 BloodGlucose(
                     id: UUID().uuidString,

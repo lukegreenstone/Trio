@@ -125,7 +125,7 @@ struct TrioMainWatchView: View {
                         Image(systemName: "syringe.fill")
                             .foregroundStyle(Color.insulin)
 
-                        Text(isWatchStateDated || isSessionUnreachable ? "--" : state.iob ?? "--")
+                        Text(shownIOB)
                             .foregroundStyle(isWatchStateDated ? Color.secondary : Color.white)
                             .frame(alignment: .leading)
                             .minimumScaleFactor(0.5)
@@ -137,7 +137,7 @@ struct TrioMainWatchView: View {
                         Image(systemName: "fork.knife")
                             .foregroundStyle(Color.orange)
 
-                        Text(isWatchStateDated || isSessionUnreachable ? "--" : state.cob ?? "--")
+                        Text(shownCOB)
                             .foregroundStyle(isWatchStateDated || isSessionUnreachable ? Color.secondary : Color.white)
                             .frame(alignment: .trailing)
                             .minimumScaleFactor(0.5)
@@ -240,6 +240,16 @@ struct TrioMainWatchView: View {
             }
         }
         .ignoresSafeArea()
+    }
+
+    private var shownIOB: String {
+        if state.handyFreiRunning { return state.iob ?? "--" }
+        return isWatchStateDated || isSessionUnreachable ? "--" : (state.iob ?? "--")
+    }
+
+    private var shownCOB: String {
+        if state.handyFreiRunning { return state.cob ?? "--" }
+        return isWatchStateDated || isSessionUnreachable ? "--" : (state.cob ?? "--")
     }
 
     private func updateRotation(for trend: String?) {
