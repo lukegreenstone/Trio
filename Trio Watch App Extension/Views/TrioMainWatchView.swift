@@ -248,6 +248,9 @@ struct TrioMainWatchView: View {
             }
         }
         .ignoresSafeArea()
+        .onAppear {
+            HandyFreiSession.shared.resumeIfNeeded(state)
+        }
     }
 
     private var shownIOB: String {

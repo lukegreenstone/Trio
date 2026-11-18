@@ -351,12 +351,21 @@ public final class HandyFreiMedtrumLink: NSObject, CBCentralManagerDelegate, CBP
     /// Latest reservoir and completed bolus from the pump's synchronize reply.
     public private(set) var lastReservoirUnits: Double?
     public private(set) var lastBolusUnits: Double?
+    /// Occlusion, empty reservoir, empty battery, or any other halted patch state.
+    public private(set) var lastPatchAlarm: String?
 
     private func remember(_ response: SynchronizePacketResponse) {
         patchState = response.state
-        if let reservoir = response.reservoir, reservoir > 0 {
-            lastReservoirUnits = reservoir
+        var notes: [String] = []
+        if let block = Self.dosingBlock(response.state) { notes.append(block) }
+        if !response.activeAlarms.isEmpty {
+            notes.append(response.activeAlarms.map { String(describing: $0) }.joined(separator: ", "))
         }
+        if let reservoir = response.reservoir {
+            if reservoir > 0 { lastReservoirUnits = reservoir }
+            if reservoir <= 15 { notes.append(String(format: "Reservoir %.0f U", reservoir)) }
+        }
+        lastPatchAlarm = notes.isEmpty ? nil : notes.joined(separator: " · ")
         if let bolus = response.bolus, bolus.completed, bolus.delivered >= 0.05 {
             lastBolusUnits = bolus.delivered
         }

@@ -25,13 +25,26 @@ public enum HandyFreiLoop {
         public var grams: Double
         public var fat: Double
         public var protein: Double
+        /// A delayed fat-protein row. Its date is the time it starts counting as carbs.
+        public var isFPU: Bool
+        public var fpuID: String?
 
-        public init(id: String, date: Date, grams: Double, fat: Double = 0, protein: Double = 0) {
+        public init(
+            id: String,
+            date: Date,
+            grams: Double,
+            fat: Double = 0,
+            protein: Double = 0,
+            isFPU: Bool = false,
+            fpuID: String? = nil
+        ) {
             self.id = id
             self.date = date
             self.grams = grams
             self.fat = fat
             self.protein = protein
+            self.isFPU = isFPU
+            self.fpuID = fpuID
         }
     }
 
@@ -77,7 +90,8 @@ public enum HandyFreiLoop {
                 guard let raw = files["profile"]?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return nil }
                 return try? JSONBridge.from(string: raw)
             }()
-            if let scaled = savedProfile?.basalprofile, !scaled.isEmpty {
+            if let scaled = savedProfile?.basalprofile, scaled.count > 1 {
+                // The saved profile keeps every basal slot. Lookup uses the clock, so midnight moves to the next slot.
                 basal = scaled
             } else {
                 basal = scaleBasal(basal, rheosBasal, ceiling: settings.maxBasal)
@@ -95,6 +109,7 @@ public enum HandyFreiLoop {
                 clock: now
             )
             var history = try pumpHistory(files).removingDuplicateSuspendResumeEvents()
+            history = history.filter { now.timeIntervalSince($0.timestamp) <= 24 * 3600 }
             let known = Set(history.map(\.id))
             let fresh = deliveries.filter { !alreadyRecorded($0, history) }
             history.append(contentsOf: fresh.flatMap(events).filter { !known.contains($0.id) })
@@ -102,26 +117,16 @@ public enum HandyFreiLoop {
             let storedCarbs = carbs
             let knownCarbs = Set(storedCarbs.compactMap(\.id))
             carbs.append(contentsOf: watchCarbs.filter { item in
-                if knownCarbs.contains(item.id) { return false }
+                guard item.grams >= 1, !knownCarbs.contains(item.id) else { return false }
+                // Same id is already in the file. A hand-back copy has a new id but the same minute and grams.
                 return !storedCarbs.contains { existing in
                     let when = existing.actualDate ?? existing.createdAt
-                    return abs(when.timeIntervalSince(item.date)) < 180
+                    return abs(when.timeIntervalSince(item.date)) < 45
                         && abs(NSDecimalNumber(decimal: existing.carbs).doubleValue - item.grams) < 0.1
                 }
-            }.map { item in
-                CarbsEntry(
-                    id: item.id,
-                    createdAt: item.date,
-                    actualDate: item.date,
-                    carbs: Decimal(item.grams),
-                    fat: item.fat > 0 ? Decimal(item.fat) : nil,
-                    protein: item.protein > 0 ? Decimal(item.protein) : nil,
-                    note: nil,
-                    enteredBy: "watch",
-                    isFPU: nil,
-                    fpuID: nil
-                )
-            })
+            }.map { carbEntry($0) })
+            let dayAgo = now.addingTimeInterval(-24 * 3600)
+            carbs = carbs.filter { ($0.actualDate ?? $0.createdAt) >= dayAgo }
             let autosens: Autosens
             if files["autosens"]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
                 autosens = try decode(files, "autosens", "Autosens")
@@ -165,6 +170,7 @@ public enum HandyFreiLoop {
                     isf: false, cr: false, smbIsScheduledOff: false, start: 0, end: 0, smbMinutes: 0, uamMinutes: 0
                 ),
                 deliveries: deliveries,
+                basal: basal,
                 now: now
             )
             let running = deliveries.last { $0.kind == "temp" && now.timeIntervalSince($0.date) < Double($0.minutes) * 60 }
@@ -254,7 +260,39 @@ public enum HandyFreiLoop {
                 type: "sgv"
             ))
         }
-        return points.sorted { $0.dateString < $1.dateString }
+        let dayAgo = Date().addingTimeInterval(-24 * 3600)
+        // Newest first, the same order the iPhone fetch uses. Meal COB walks the array in that order.
+        return points.filter { $0.dateString >= dayAgo }.sorted { $0.dateString > $1.dateString }
+    }
+
+    /// Writes the watch meal into the carb file the loop already reads. A later tick still
+    /// passes the same rows; matching ids are not added twice.
+    public static func rememberCarbs(_ files: inout [String: String], _ items: [WatchCarb]) {
+        var existing: [CarbsEntry] = (try? JSONBridge.from(string: files["carbHistory"] ?? "[]")) ?? []
+        let ids = Set(existing.compactMap(\.id))
+        let dayAgo = Date().addingTimeInterval(-24 * 3600)
+        existing = existing.filter { ($0.actualDate ?? $0.createdAt) >= dayAgo }
+        for item in items where item.grams >= 1 && !ids.contains(item.id) {
+            existing.append(carbEntry(item))
+        }
+        files["carbHistory"] = encodeModel(existing)
+    }
+
+    /// Same shape as the iPhone's `mapToCarbsEntry`: the event time is both dates.
+    /// A fat-protein row's event time is in the future, so it joins COB only when that time arrives.
+    private static func carbEntry(_ item: WatchCarb) -> CarbsEntry {
+        CarbsEntry(
+            id: item.id,
+            createdAt: item.date,
+            actualDate: item.date,
+            carbs: Decimal(algorithmValue: item.grams),
+            fat: item.fat > 0 ? Decimal(algorithmValue: item.fat) : 0,
+            protein: item.protein > 0 ? Decimal(algorithmValue: item.protein) : 0,
+            note: nil,
+            enteredBy: CarbsEntry.local,
+            isFPU: item.isFPU,
+            fpuID: item.fpuID
+        )
     }
 
     private static func trioVariables(_ files: [String: String]) -> TrioCustomOrefVariables? {
@@ -273,27 +311,43 @@ public enum HandyFreiLoop {
         }
     }
 
-    /// Adds insulin the watch has given since the snapshot. This is not the full scheduled-basal
-    /// inference the iPhone uses for TDD; that needs the pump manager and is not run here.
+    /// Rolls the snapshot TDD forward. The phone's figure covers the 24 hours before the copy.
+    /// As those hours fall out of the window, their share is removed and replaced by watch doses
+    /// plus the basal schedule. This is not the pump manager's gap inference.
     private static func withWatchInsulin(
         _ variables: TrioCustomOrefVariables,
         deliveries: [Delivery],
+        basal: [BasalProfileEntry],
         now: Date
     ) -> TrioCustomOrefVariables {
         var copy = variables
-        let since = variables.date
+        let elapsedHours = max(0, now.timeIntervalSince(variables.date) / 3600)
+        let kept = max(0, (24 - elapsedHours) / 24)
+        let dayAgo = now.addingTimeInterval(-24 * 3600)
         let twoHours = now.addingTimeInterval(-2 * 3600)
         func insulin(_ dose: Delivery, after: Date) -> Decimal {
             guard dose.date >= after else { return 0 }
             if dose.kind == "bolus" { return NSDecimalNumber(value: dose.units).decimalValue }
-            let hours = min(Double(dose.minutes) * 60, now.timeIntervalSince(dose.date)) / 3600
+            let hours = min(Double(dose.minutes) * 60, max(0, now.timeIntervalSince(dose.date))) / 3600
             return NSDecimalNumber(value: dose.units * max(0, hours)).decimalValue
         }
-        let all = deliveries.reduce(Decimal(0)) { $0 + insulin($1, after: since) }
-        let recent = deliveries.reduce(Decimal(0)) { $0 + insulin($1, after: max(since, twoHours)) }
-        if all > 0 { copy.currentTDD += all }
-        if recent > 0 { copy.past2hoursAverage += recent }
+        let recent = deliveries.reduce(Decimal(0)) { $0 + insulin($1, after: max(variables.date, dayAgo)) }
+        let lastTwo = deliveries.reduce(Decimal(0)) { $0 + insulin($1, after: twoHours) }
+        let basalDay = dailyBasal(basal)
+        copy.currentTDD = variables.currentTDD * NSDecimalNumber(value: kept).decimalValue + recent + basalDay * NSDecimalNumber(value: 1 - kept).decimalValue
+        copy.past2hoursAverage = variables.past2hoursAverage * NSDecimalNumber(value: max(0, (2 - elapsedHours) / 2)).decimalValue + lastTwo
         return copy
+    }
+
+    private static func dailyBasal(_ entries: [BasalProfileEntry]) -> Decimal {
+        guard !entries.isEmpty else { return 0 }
+        var total = Decimal(0)
+        for (index, entry) in entries.enumerated() {
+            let end = index + 1 < entries.count ? entries[index + 1].minutes : 24 * 60
+            let hours = NSDecimalNumber(value: max(0, end - entry.minutes)).decimalValue / 60
+            total += entry.rate * hours
+        }
+        return total
     }
 
     /// An override with an end time stops when that time is reached. An unlimited one stays.
@@ -683,18 +737,14 @@ public enum HandyFreiLoop {
             return nil
         }
         var history = (try? pumpHistory(files).removingDuplicateSuspendResumeEvents()) ?? []
+        history = history.filter { now.timeIntervalSince($0.timestamp) <= 24 * 3600 }
         let known = Set(history.map(\.id))
         history.append(contentsOf: deliveries.filter { !alreadyRecorded($0, history) }.flatMap(events).filter { !known.contains($0.id) })
         var carbs: [CarbsEntry] = (try? JSONBridge.from(string: files["carbHistory"] ?? "[]")) ?? []
-        carbs.append(contentsOf: watchCarbs.map { item in
-            CarbsEntry(
-                id: item.id, createdAt: item.date, actualDate: item.date,
-                carbs: NSDecimalNumber(value: item.grams).decimalValue,
-                fat: item.fat > 0 ? NSDecimalNumber(value: item.fat).decimalValue : nil,
-                protein: item.protein > 0 ? NSDecimalNumber(value: item.protein).decimalValue : nil,
-                note: nil, enteredBy: "watch", isFPU: nil, fpuID: nil
-            )
-        })
+        let knownCarbs = Set(carbs.compactMap(\.id))
+        carbs.append(contentsOf: watchCarbs.filter { $0.grams >= 1 && !knownCarbs.contains($0.id) }.map { carbEntry($0) })
+        let dayAgo = now.addingTimeInterval(-24 * 3600)
+        carbs = carbs.filter { ($0.actualDate ?? $0.createdAt) >= dayAgo }
         let treatments = try? IobHistory.calcTempTreatments(
             history: history.map { $0.computedEvent() },
             profile: profile,
