@@ -397,31 +397,31 @@ public enum HandyFreiLoop {
         fpu: Bool, adjustment: Decimal, delay: Decimal, interval: Decimal,
         fatty: Bool, fattyFactor: Decimal, sweet: Bool, sweetFactor: Decimal, fraction: Decimal
     ) {
-        struct Raw: Decodable {
-            var useFPUconversion: Bool?
-            var individualAdjustmentFactor: Decimal?
-            var delay: Decimal?
-            var minuteInterval: Decimal?
-            var fattyMeals: Bool?
-            var fattyMealFactor: Decimal?
-            var sweetMeals: Bool?
-            var sweetMealFactor: Decimal?
-            var overrideFactor: Decimal?
+        guard let data = files["trioSettings"]?.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return (false, Decimal(string: "0.5")!, 60, 30, false, Decimal(string: "0.7")!, false, 1, Decimal(string: "0.8")!)
         }
-        let parsed: Raw? = {
-            guard let raw = files["trioSettings"]?.data(using: .utf8) else { return nil }
-            return try? JSONDecoder().decode(Raw.self, from: raw)
-        }()
+        func decimal(_ key: String, fallback: Decimal) -> Decimal {
+            if let number = object[key] as? NSNumber { return number.decimalValue }
+            if let text = object[key] as? String, let value = Decimal(string: text) { return value }
+            return fallback
+        }
+        func flag(_ key: String) -> Bool {
+            if let value = object[key] as? Bool { return value }
+            if let number = object[key] as? NSNumber { return number.boolValue }
+            return false
+        }
         return (
-            parsed?.useFPUconversion ?? false,
-            parsed?.individualAdjustmentFactor ?? Decimal(string: "0.5")!,
-            parsed?.delay ?? 60,
-            parsed?.minuteInterval ?? 30,
-            parsed?.fattyMeals ?? false,
-            parsed?.fattyMealFactor ?? Decimal(string: "0.7")!,
-            parsed?.sweetMeals ?? false,
-            parsed?.sweetMealFactor ?? 1,
-            parsed?.overrideFactor ?? Decimal(string: "0.8")!
+            flag("useFPUconversion"),
+            decimal("individualAdjustmentFactor", fallback: Decimal(string: "0.5")!),
+            decimal("delay", fallback: 60),
+            decimal("minuteInterval", fallback: 30),
+            flag("fattyMeals"),
+            decimal("fattyMealFactor", fallback: Decimal(string: "0.7")!),
+            flag("sweetMeals"),
+            decimal("sweetMealFactor", fallback: 1),
+            decimal("overrideFactor", fallback: Decimal(string: "0.8")!)
         )
     }
 

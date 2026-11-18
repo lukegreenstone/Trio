@@ -422,41 +422,55 @@ enum HandyFreiPhone {
         let context = CoreDataStack.shared.newTaskContext()
         context.performAndWait {
             for entry in entries where (entry["kind"] as? String) == "carb" || (entry["kind"] as? String) == "fpu" {
-                let grams = (entry["grams"] as? NSNumber)?.doubleValue ?? (entry["units"] as? NSNumber)?.doubleValue ?? 0
-                let fat = (entry["fat"] as? NSNumber)?.doubleValue ?? 0
-                let protein = (entry["protein"] as? NSNumber)?.doubleValue ?? 0
+                let grams = number(entry["grams"]) ?? number(entry["units"]) ?? 0
+                let fat = number(entry["fat"]) ?? 0
+                let protein = number(entry["protein"]) ?? 0
                 guard grams > 0 || fat > 0 || protein > 0 else { continue }
-                let date = Date(timeIntervalSince1970: (entry["date"] as? NSNumber)?.doubleValue ?? Date().timeIntervalSince1970)
+                let date = Date(timeIntervalSince1970: number(entry["date"]) ?? Date().timeIntervalSince1970)
+                let isFPU = (entry["kind"] as? String) == "fpu"
                 let idString = entry["id"] as? String ?? ""
                 let uuid = UUID(uuidString: idString) ?? UUID()
                 let byID = CarbEntryStored.fetchRequest()
                 byID.predicate = NSPredicate(format: "id == %@", uuid as CVarArg)
                 if let found = try? context.fetch(byID), !found.isEmpty { continue }
-                let windowStart = date.addingTimeInterval(-180)
-                let windowEnd = date.addingTimeInterval(180)
+                // A plain carb and an FPU row are different even when the grams match.
+                // Two FPU rows are the same only when they are the same dose a few seconds apart,
+                // not when the next delayed row happens to have the same grams.
+                let window: TimeInterval = isFPU ? 45 : 180
+                let windowStart = date.addingTimeInterval(-window)
+                let windowEnd = date.addingTimeInterval(window)
                 let near = CarbEntryStored.fetchRequest()
-                near.predicate = NSPredicate(format: "date >= %@ AND date <= %@", windowStart as NSDate, windowEnd as NSDate)
+                near.predicate = NSPredicate(format: "date >= %@ AND date <= %@ AND isFPU == %@", windowStart as NSDate, windowEnd as NSDate, NSNumber(value: isFPU))
                 let sameMeal = (try? context.fetch(near))?.contains { row in
-                    abs(row.carbs - grams) < 0.1 && abs(row.fat - fat) < 0.1 && abs(row.protein - protein) < 0.1
+                    guard abs(row.carbs - grams) < 0.1 else { return false }
+                    if isFPU { return true }
+                    return abs(row.fat - fat) < 0.1 && abs(row.protein - protein) < 0.1
                 } ?? false
                 if sameMeal { continue }
                 let row = CarbEntryStored(context: context)
                 row.id = uuid
                 row.carbs = grams
-                row.fat = fat
-                row.protein = protein
+                row.fat = isFPU ? 0 : fat
+                row.protein = isFPU ? 0 : protein
                 row.date = date
-                row.note = entry["name"] as? String ?? "Via Watch"
-                row.isFPU = (entry["kind"] as? String) == "fpu"
+                row.note = isFPU ? nil : ((entry["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Via Watch")
+                row.isFPU = isFPU
                 if let parent = entry["fpuID"] as? String, let fpu = UUID(uuidString: parent) {
                     row.fpuID = fpu
                 }
                 row.isUploadedToNS = false
-                row.isUploadedToHealth = false
-                row.isUploadedToTidepool = false
+                // Trio uploads the parent meal to Health and Tidepool, and the delayed FPU rows only to Nightscout.
+                row.isUploadedToHealth = isFPU
+                row.isUploadedToTidepool = isFPU
             }
             try? context.save()
         }
+    }
+
+    private static func number(_ value: Any?) -> Double? {
+        if let number = value as? NSNumber { return number.doubleValue }
+        if let text = value as? String { return Double(text) }
+        return nil
     }
 
     private static func storeGlucose(_ entries: [[String: Any]]) {

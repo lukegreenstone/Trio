@@ -466,7 +466,7 @@ final class HandyFreiSession {
             fpuID: (fat > 0 || protein > 0) ? id : nil
         )
         carbs.append(entry)
-        log.append([
+        var parent: [String: Any] = [
             "date": date.timeIntervalSince1970,
             "kind": "carb",
             "id": id,
@@ -474,8 +474,12 @@ final class HandyFreiSession {
             "fat": Double(fat),
             "protein": Double(protein),
             "name": name,
-            "text": "\(name.isEmpty ? "Mahlzeit" : name) \(grams) g F \(fat) E \(protein)"
-        ])
+            "text": "\(name.isEmpty ? "Mahlzeit" : name) \(grams) g KH, \(fat) g Fett, \(protein) g Eiweiß"
+        ]
+        if fat > 0 || protein > 0 {
+            parent["fpuID"] = id
+        }
+        log.append(parent)
         var fpuCount = 0
         let settings = HandyFreiLoop.mealSettings(state.handyFreiFiles)
         if settings.fpu, fat > 0 || protein > 0 {
