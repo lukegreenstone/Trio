@@ -1,6 +1,6 @@
 diff --git a/LibreLoop/LibreLoop/LibreLoopCGMManager/LibreLoopCGMManager.swift b/LibreLoop/LibreLoop/LibreLoopCGMManager/LibreLoopCGMManager.swift
---- a/LibreLoop/LibreLoop/LibreLoopCGMManager/LibreLoopCGMManager.swift	2026-11-18 18:32:54.811015902 +0000
-+++ b/LibreLoop/LibreLoop/LibreLoopCGMManager/LibreLoopCGMManager.swift	2026-11-18 18:32:54.835015983 +0000
+--- a/LibreLoop/LibreLoop/LibreLoopCGMManager/LibreLoopCGMManager.swift	2026-11-18 19:16:06.919148539 +0000
++++ b/LibreLoop/LibreLoop/LibreLoopCGMManager/LibreLoopCGMManager.swift	2026-11-18 19:16:06.947150002 +0000
 @@ -62,6 +62,11 @@
      /// the new pairing's handshake. Guards reconnect scheduling.
      private(set) var isDeleted = false
@@ -30,10 +30,15 @@ diff --git a/LibreLoop/LibreLoop/LibreLoopCGMManager/LibreLoopCGMManager.swift b
          observeAppLifecycle()
          registerDeviceLogForwarding()
      }
-@@ -838,6 +844,38 @@
+@@ -838,6 +844,43 @@
          }
      }
  
++    /// The pairing file reloads the stored hand-off. The setter stays in this file.
++    func refreshRadioHandoffFromStore() {
++        radioHandedToWatch = UserDefaults.standard.bool(forKey: Self.radioHandoffKey)
++    }
++
 +    /// Drops this phone's BLE link so the watch can be the Libre 3's one central.
 +    /// The sensor is not ended, the keychain item is not deleted, and the saved
 +    /// serial, address, and pin stay.
@@ -70,13 +75,13 @@ diff --git a/LibreLoop/LibreLoop/LibreLoopCGMManager/LibreLoopCGMManager.swift b
          // The central is shared and outlives this manager, so a deleted manager
          // must stop driving it — otherwise its event listener + reconnect loop
 diff --git a/LibreLoop/LibreLoop/Pairing/LibreLoopCGMManager+Pairing.swift b/LibreLoop/LibreLoop/Pairing/LibreLoopCGMManager+Pairing.swift
---- a/LibreLoop/LibreLoop/Pairing/LibreLoopCGMManager+Pairing.swift	2026-11-18 18:32:54.815015916 +0000
-+++ b/LibreLoop/LibreLoop/Pairing/LibreLoopCGMManager+Pairing.swift	2026-11-18 18:32:54.835015983 +0000
+--- a/LibreLoop/LibreLoop/Pairing/LibreLoopCGMManager+Pairing.swift	2026-11-18 19:16:06.919148539 +0000
++++ b/LibreLoop/LibreLoop/Pairing/LibreLoopCGMManager+Pairing.swift	2026-11-18 19:16:06.947150002 +0000
 @@ -846,6 +846,11 @@
              llog("reconnect: manager deleted; not scheduling")
              return
          }
-+        radioHandedToWatch = UserDefaults.standard.bool(forKey: Self.radioHandoffKey)
++        refreshRadioHandoffFromStore()
 +        guard !radioHandedToWatch else {
 +            llog("reconnect: radio handed to the watch; not scheduling")
 +            return
