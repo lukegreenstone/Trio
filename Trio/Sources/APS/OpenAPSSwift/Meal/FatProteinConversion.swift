@@ -2,6 +2,20 @@ import Foundation
 
 /// The iPhone fat-protein conversion. `CarbsStorage` and Handy-frei both call this.
 public enum FatProteinConversion {
+    /// One delayed carbohydrate row. Same fields `CarbsEntry` stores; this type is public so the Watch can read it.
+    public struct ScheduledCarb: Equatable {
+        public let id: String?
+        public let createdAt: Date
+        public let actualDate: Date?
+        public let carbs: Decimal
+        public let fat: Decimal?
+        public let protein: Decimal?
+        public let note: String?
+        public let enteredBy: String?
+        public let isFPU: Bool?
+        public let fpuID: String?
+    }
+
     public static let adjustmentBounds = (lower: Decimal(string: "0.1")!, upper: Decimal(string: "1.2")!)
     public static let delayBounds = (lower: Decimal(15), upper: Decimal(120))
     public static let intervalBounds = (lower: Decimal(30), upper: Decimal(60))
@@ -15,7 +29,7 @@ public enum FatProteinConversion {
         adjustment: Decimal,
         delayMinutes: Decimal,
         intervalMinutes: Decimal
-    ) -> [CarbsEntry] {
+    ) -> [ScheduledCarb] {
         guard fat > 0 || protein > 0 else { return [] }
         let adjustment = adjustment.clamp(lowerBound: adjustmentBounds.lower, upperBound: adjustmentBounds.upper)
         let delayMinutes = delayMinutes.clamp(lowerBound: delayBounds.lower, upperBound: delayBounds.upper)
@@ -44,7 +58,7 @@ public enum FatProteinConversion {
         let sharedID = fpuID ?? UUID().uuidString
 
         return amounts.enumerated().map { index, grams in
-            CarbsEntry(
+            ScheduledCarb(
                 id: UUID().uuidString,
                 createdAt: createdAt,
                 actualDate: start.addingTimeInterval(TimeInterval(index) * spacing),
@@ -55,6 +69,42 @@ public enum FatProteinConversion {
                 enteredBy: CarbsEntry.local,
                 isFPU: true,
                 fpuID: sharedID
+            )
+        }
+    }
+
+    /// The same rows as `futureEntries`, as the iPhone's carb model.
+    static func carbEntries(
+        fat: Decimal,
+        protein: Decimal,
+        createdAt: Date,
+        actualDate: Date?,
+        fpuID: String?,
+        adjustment: Decimal,
+        delayMinutes: Decimal,
+        intervalMinutes: Decimal
+    ) -> [CarbsEntry] {
+        futureEntries(
+            fat: fat,
+            protein: protein,
+            createdAt: createdAt,
+            actualDate: actualDate,
+            fpuID: fpuID,
+            adjustment: adjustment,
+            delayMinutes: delayMinutes,
+            intervalMinutes: intervalMinutes
+        ).map { item in
+            CarbsEntry(
+                id: item.id,
+                createdAt: item.createdAt,
+                actualDate: item.actualDate,
+                carbs: item.carbs,
+                fat: item.fat,
+                protein: item.protein,
+                note: item.note,
+                enteredBy: item.enteredBy,
+                isFPU: item.isFPU,
+                fpuID: item.fpuID
             )
         }
     }

@@ -865,6 +865,7 @@
 		DD98ACC02D71013200C0778F /* StatChartUtils.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD98ACBF2D71013200C0778F /* StatChartUtils.swift */; };
 		DD9E6DA22D59A12700514CEC /* MealHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD9E6DA12D59A12200514CEC /* MealHistory.swift */; };
 		DD9E6DA52D5A66BA00514CEC /* MealGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD9E6DA42D5A66B500514CEC /* MealGenerator.swift */; };
+		F47C0A112E0F0A0100000002 /* FatProteinConversion.swift in Sources */ = {isa = PBXBuildFile; fileRef = F47C0A112E0F0A0100000001 /* FatProteinConversion.swift */; };
 		DD9E6DA72D5A695500514CEC /* MealTotal.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD9E6DA62D5A694900514CEC /* MealTotal.swift */; };
 		DD9ECB682CA99F4500AA7C45 /* TrioRemoteControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD9ECB672CA99F4500AA7C45 /* TrioRemoteControl.swift */; };
 		DD9ECB6A2CA99F6C00AA7C45 /* CommandPayload.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD9ECB692CA99F6C00AA7C45 /* CommandPayload.swift */; };
@@ -1998,6 +1999,7 @@
 		DD98ACBF2D71013200C0778F /* StatChartUtils.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatChartUtils.swift; sourceTree = "<group>"; };
 		DD9E6DA12D59A12200514CEC /* MealHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealHistory.swift; sourceTree = "<group>"; };
 		DD9E6DA42D5A66B500514CEC /* MealGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealGenerator.swift; sourceTree = "<group>"; };
+		F47C0A112E0F0A0100000001 /* FatProteinConversion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FatProteinConversion.swift; sourceTree = "<group>"; };
 		DD9E6DA62D5A694900514CEC /* MealTotal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MealTotal.swift; sourceTree = "<group>"; };
 		DD9ECB672CA99F4500AA7C45 /* TrioRemoteControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrioRemoteControl.swift; sourceTree = "<group>"; };
 		DD9ECB692CA99F6C00AA7C45 /* CommandPayload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandPayload.swift; sourceTree = "<group>"; };
@@ -4551,6 +4553,7 @@
 			isa = PBXGroup;
 			children = (
 				3BBB76A92E01C7070040977D /* MealCob.swift */,
+				F47C0A112E0F0A0100000001 /* FatProteinConversion.swift */,
 				DD9E6DA42D5A66B500514CEC /* MealGenerator.swift */,
 				DD9E6DA12D59A12200514CEC /* MealHistory.swift */,
 				DD9E6DA62D5A694900514CEC /* MealTotal.swift */,
@@ -5875,6 +5878,7 @@
 				E974172296125A5AE99E634C /* PumpConfigRootView.swift in Sources */,
 				BD8E6B212D9036CA00ABF8FA /* OnboardingProvider.swift in Sources */,
 				DD9E6DA52D5A66BA00514CEC /* MealGenerator.swift in Sources */,
+				F47C0A112E0F0A0100000002 /* FatProteinConversion.swift in Sources */,
 				DD1745502C55CA5500211FAC /* UnitsLimitsSettingsProvider.swift in Sources */,
 				581AC4392BE22ED10038760C /* JSONConverter.swift in Sources */,
 				BD4064D12C4ED26900582F43 /* CoreDataObserver.swift in Sources */,

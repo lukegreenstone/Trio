@@ -163,7 +163,7 @@ final class BaseCarbsStorage: CarbsStorage, Injectable {
             .clamp(to: providerSettings.delay)
         let spreadInterval = trioSettings.minuteInterval
             .clamp(to: providerSettings.minuteInterval)
-        let futureEntries = FatProteinConversion.futureEntries(
+        let futureEntries = FatProteinConversion.carbEntries(
             fat: fat,
             protein: protein,
             createdAt: createdAt,
