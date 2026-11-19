@@ -1716,7 +1716,7 @@ final class HandyFreiWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutB
             } catch {
                 lastFailure = "Sammlung: \(error.localizedDescription)"
                 ignoreEnd = true
-                onEnd = nil
+                self.onEnd = nil
                 self.session = nil
                 self.builder = nil
                 session.end()
