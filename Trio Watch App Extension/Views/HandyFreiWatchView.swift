@@ -1705,6 +1705,7 @@ final class HandyFreiWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutB
             let builder = session.associatedWorkoutBuilder()
             builder.delegate = self
             builder.dataSource = HKLiveWorkoutDataSource(healthStore: store, workoutConfiguration: configuration)
+            ignoreEnd = false
             session.delegate = self
             self.session = session
             self.builder = builder
@@ -1739,25 +1740,27 @@ final class HandyFreiWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutB
     }
 
     func workoutSession(
-        _: HKWorkoutSession,
+        _ workoutSession: HKWorkoutSession,
         didChangeTo toState: HKWorkoutSessionState,
         from fromState: HKWorkoutSessionState,
         date _: Date
     ) {
         // .paused and .stopped are not a new session. Only a finished one is.
         guard toState == .ended else { return }
-        reportEnd("beendet (\(String(describing: fromState)))")
+        reportEnd(workoutSession, "beendet (\(String(describing: fromState)))")
     }
 
-    func workoutSession(_: HKWorkoutSession, didFailWithError error: Error) {
-        reportEnd(error.localizedDescription)
+    func workoutSession(_ workoutSession: HKWorkoutSession, didFailWithError error: Error) {
+        reportEnd(workoutSession, error.localizedDescription)
     }
 
     func workoutBuilderDidCollectEvent(_: HKLiveWorkoutBuilder) {}
 
     func workoutBuilder(_: HKLiveWorkoutBuilder, didCollectDataOf _: Set<HKSampleType>) {}
 
-    private func reportEnd(_ reason: String) {
+    private func reportEnd(_ ended: HKWorkoutSession, _ reason: String) {
+        // An old session that we ended ourselves, or that was already replaced, must not trigger a restart.
+        guard let current = session, current === ended else { return }
         if ignoreEnd {
             ignoreEnd = false
             return
