@@ -99,34 +99,46 @@ public enum HandyFreiLoop {
         guard let newest = points.max(by: { $0.dateString < $1.dateString }) else { return empty }
         let glucoseIsStale = now.timeIntervalSince(newest.dateString) > 12 * 60
         do {
-            let preferences: Preferences = try decode(files, "preferences", "Einstellungen")
+            var preferences: Preferences = try decode(files, "preferences", "Einstellungen")
             let settings: PumpSettings = try decode(files, "settings", "Pumpeneinstellungen")
+            let mode = dosingMode(files)
+            preferences = clampedPreferences(preferences, mode: mode)
+            if files["tddSufficient"] == "false", preferences.useNewFormula {
+                preferences.useNewFormula = false
+                preferences.sigmoid = false
+            }
+            if preferences.lowTemptargetLowersSensitivity, preferences.autosensMax <= 1 {
+                preferences.lowTemptargetLowersSensitivity = false
+            }
+            let activeTargets = liveTempTargets(files, now: now)
+            if let active = activeTargets
+                .filter({ NSDecimalNumber(decimal: $0.duration).doubleValue > 0 })
+                .max(by: { $0.createdAt < $1.createdAt }),
+                let stored = active.halfBasalTarget, stored > 0
+            {
+                preferences.halfBasalExerciseTarget = stored
+            }
             var basal: [BasalProfileEntry] = try decode(files, "basal", "Basalprofil")
             let targets: BGTargets = try decode(files, "targets", "Zielwerte")
             var isf: InsulinSensitivities = try decode(files, "isf", "ISF")
             var carbRatios: CarbRatios = try decode(files, "carbRatios", "KE-Faktor")
-            let savedProfile: Profile? = {
-                guard let raw = files["profile"]?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return nil }
-                return try? JSONBridge.from(string: raw)
-            }()
-            if let scaled = savedProfile?.basalprofile, scaled.count > 1 {
-                // The saved profile keeps every basal slot. Lookup uses the clock, so midnight moves to the next slot.
-                basal = scaled
-            } else {
-                basal = scaleBasal(basal, rheosBasal, ceiling: settings.maxBasal)
-                isf = scaleISF(isf, rheosISF)
-                carbRatios = scaleCarb(carbRatios, rheosCarbRatio)
-            }
-            let profile = try ProfileGenerator.generate(
+            let saved = savedSchedules(files, basal: basal, isf: isf, carbRatios: carbRatios, rheosBasal: rheosBasal, rheosISF: rheosISF, rheosCarbRatio: rheosCarbRatio, maxBasal: settings.maxBasal)
+            basal = saved.basal
+            isf = saved.isf
+            carbRatios = saved.carbRatios
+            var profile = try ProfileGenerator.generate(
                 pumpSettings: settings,
                 bgTargets: targets,
                 basalProfile: basal,
                 isf: isf,
                 preferences: preferences,
                 carbRatios: carbRatios,
-                tempTargets: liveTempTargets(files, now: now),
+                tempTargets: activeTargets,
                 clock: now
             )
+            profile.suspendOnly = mode == "basalTesting"
+            let rates = supportedRates(files)
+            if !rates.isEmpty { profile.supportedBasalRates = rates }
             var history = try pumpHistory(files).removingDuplicateSuspendResumeEvents()
             history = history.filter { now.timeIntervalSince($0.timestamp) <= 24 * 3600 }
             let known = Set(history.map(\.id))
@@ -161,18 +173,20 @@ public enum HandyFreiLoop {
             }
             let iob = try IobGenerator.generate(history: history, profile: profile, clock: now, autosens: autosens)
             let currentIOB = NSDecimalNumber(decimal: iob.first?.iob ?? 0).doubleValue
+            let mealHours = NSDecimalNumber(decimal: preferences.maxMealAbsorptionTime).doubleValue + 0.5
+            let mealPoints = points.filter { now.timeIntervalSince($0.dateString) <= mealHours * 3600 }
             let meal = try MealGenerator.generate(
                 pumpHistory: history,
                 profile: profile,
                 basalProfile: basal,
                 clock: now,
                 carbHistory: carbs,
-                glucoseHistory: points
+                glucoseHistory: mealPoints
             )
             let currentCOB = NSDecimalNumber(decimal: meal?.mealCOB ?? 0).doubleValue
             if glucoseIsStale {
                 var stale = empty
-                stale.cancelTemp = true
+                stale.cancelTemp = mode != "open"
                 stale.iob = currentIOB
                 stale.cob = currentCOB
                 stale.maxIOB = NSDecimalNumber(decimal: preferences.maxIOB).doubleValue
@@ -192,13 +206,7 @@ public enum HandyFreiLoop {
                 basal: basal,
                 now: now
             )
-            let running = deliveries.last { $0.kind == "temp" && now.timeIntervalSince($0.date) < Double($0.minutes) * 60 }
-            let current = TempBasal(
-                duration: running.map { max(0, $0.minutes - Int(now.timeIntervalSince($0.date) / 60)) } ?? 0,
-                rate: running.map { Decimal($0.units) } ?? 0,
-                temp: .absolute,
-                timestamp: running?.date ?? now
-            )
+            let current = currentTemp(history: history, deliveries: deliveries, now: now)
             let determination = try DeterminationGenerator.generate(
                 profile: profile,
                 preferences: preferences,
@@ -210,7 +218,7 @@ public enum HandyFreiLoop {
                 ),
                 autosensData: autosens,
                 reservoirData: reservoir(files).units,
-                glucose: points,
+                glucose: mealPoints,
                 microBolusAllowed: true,
                 trioCustomOrefVariables: custom,
                 currentTime: now
@@ -223,9 +231,10 @@ public enum HandyFreiLoop {
             smb = min(smb, maxBolus)
             if currentIOB + smb > maxIOB { smb = 0 }
             let cancel = (determination?.rate ?? 0) == 0
+            let enact = mode != "open"
             return Outcome(
-                deliver: true,
-                cancelTemp: cancel,
+                deliver: enact,
+                cancelTemp: enact && cancel,
                 rate: max(0, rate),
                 minutes: max(0, minutes),
                 smb: max(0, smb),
@@ -569,7 +578,7 @@ public enum HandyFreiLoop {
                 timestamp: delivery.date,
                 amount: Decimal(delivery.units),
                 duration: 0,
-                isSMB: true,
+                isSMB: delivery.label != "Bolus",
                 isExternal: false
             )]
         }
@@ -723,19 +732,28 @@ public enum HandyFreiLoop {
         let preferences: Preferences
         let settings: PumpSettings
         let basal: [BasalProfileEntry]
-        do {
-            preferences = try decode(files, "preferences", "Einstellungen")
-            settings = try decode(files, "settings", "Pumpeneinstellungen")
-            basal = try decode(files, "basal", "Basalprofil")
-        } catch {
-            return nil
-        }
         let isf: InsulinSensitivities
         let carbRatios: CarbRatios
         let targets: BGTargets
         do {
-            isf = try decode(files, "isf", "ISF")
-            carbRatios = try decode(files, "carbRatios", "KE-Faktor")
+            var decoded: Preferences = try decode(files, "preferences", "Einstellungen")
+            decoded = clampedPreferences(decoded, mode: dosingMode(files))
+            if files["tddSufficient"] == "false", decoded.useNewFormula {
+                decoded.useNewFormula = false
+                decoded.sigmoid = false
+            }
+            preferences = decoded
+            settings = try decode(files, "settings", "Pumpeneinstellungen")
+            let rawBasal: [BasalProfileEntry] = try decode(files, "basal", "Basalprofil")
+            let rawISF: InsulinSensitivities = try decode(files, "isf", "ISF")
+            let rawRatios: CarbRatios = try decode(files, "carbRatios", "KE-Faktor")
+            let saved = savedSchedules(
+                files, basal: rawBasal, isf: rawISF, carbRatios: rawRatios,
+                rheosBasal: [], rheosISF: [], rheosCarbRatio: [], maxBasal: settings.maxBasal
+            )
+            basal = saved.basal
+            isf = saved.isf
+            carbRatios = saved.carbRatios
             targets = try decode(files, "targets", "Zielwerte")
         } catch {
             return nil
@@ -858,6 +876,116 @@ public enum HandyFreiLoop {
         encoder.outputFormatting = [.withoutEscapingSlashes]
         guard let data = try? encoder.encode(value), let text = String(data: data, encoding: .utf8) else { return "" }
         return text
+    }
+
+    /// Open Loop must not change the pump. Every other mode may.
+    public static func enactsInsulin(_ files: [String: String]) -> Bool {
+        dosingMode(files) != "open"
+    }
+
+    /// Closed is the default so an old snapshot that has no mode still doses.
+    private static func dosingMode(_ files: [String: String]) -> String {
+        guard let data = files["trioSettings"]?.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let raw = object["dosingMode"] as? String, !raw.isEmpty else { return "closed" }
+        return raw
+    }
+
+    /// Same limits the iPhone applies for Low Glucose Suspend and Basal Testing. The stored settings stay unchanged.
+    private static func clampedPreferences(_ preferences: Preferences, mode: String) -> Preferences {
+        var clamped = preferences
+        switch mode {
+        case "lowGlucoseSuspend":
+            clamped.maxIOB = 0
+        case "basalTesting":
+            clamped.maxIOB = 0
+            clamped.autosensMin = 1
+            clamped.autosensMax = 1
+            clamped.useNewFormula = false
+            clamped.sigmoid = false
+            if clamped.threshold_setting < 72 { clamped.threshold_setting = 72 }
+        default:
+            break
+        }
+        return clamped
+    }
+
+    /// The phone profile already contains the Rheos hourly basal, ISF and carb ratio.
+    /// A snapshot without that profile falls back to the factor arrays.
+    private static func savedSchedules(
+        _ files: [String: String],
+        basal: [BasalProfileEntry],
+        isf: InsulinSensitivities,
+        carbRatios: CarbRatios,
+        rheosBasal: [Double],
+        rheosISF: [Double],
+        rheosCarbRatio: [Double],
+        maxBasal: Decimal
+    ) -> (basal: [BasalProfileEntry], isf: InsulinSensitivities, carbRatios: CarbRatios) {
+        let saved: Profile? = {
+            guard let raw = files["profile"]?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return nil }
+            return try? JSONBridge.from(string: raw)
+        }()
+        if let scaled = saved?.basalprofile, scaled.count > 1 {
+            var chosenISF = isf
+            if let profileISF = saved?.isfProfile?.toInsulinSensitivities(), !profileISF.sensitivities.isEmpty {
+                chosenISF = profileISF
+            }
+            var chosenRatios = carbRatios
+            if let profileRatios = saved?.carbRatios, !profileRatios.schedule.isEmpty {
+                chosenRatios = profileRatios
+            }
+            return (scaled, chosenISF, chosenRatios)
+        }
+        return (
+            scaleBasal(basal, rheosBasal, ceiling: maxBasal),
+            scaleISF(isf, rheosISF),
+            scaleCarb(carbRatios, rheosCarbRatio)
+        )
+    }
+
+    private static func supportedRates(_ files: [String: String]) -> [Decimal] {
+        guard let data = files["supportedBasalRates"]?.data(using: .utf8) else { return [] }
+        if let numbers = try? JSONDecoder().decode([Double].self, from: data) {
+            return numbers.map { Decimal($0) }
+        }
+        if let numbers = try? JSONDecoder().decode([Decimal].self, from: data) {
+            return numbers
+        }
+        return []
+    }
+
+    /// The temp still running on the pump. A watch dose wins when it is newer than the copied history.
+    private static func currentTemp(history: [PumpHistoryEvent], deliveries: [Delivery], now: Date) -> TempBasal {
+        let idle = TempBasal(duration: 0, rate: 0, temp: .absolute, timestamp: now)
+        let fromDelivery: (date: Date, temp: TempBasal)? = deliveries.last(where: {
+            $0.kind == "temp" && now.timeIntervalSince($0.date) < Double(max($0.minutes, 0)) * 60
+        }).map { dose in
+            let elapsed = Int(now.timeIntervalSince(dose.date) / 60)
+            return (dose.date, TempBasal(duration: max(0, dose.minutes - elapsed), rate: Decimal(dose.units), temp: .absolute, timestamp: now))
+        }
+        let fromHistory = history
+            .filter { $0.type == .tempBasal && $0.isScheduledBasal != true }
+            .max(by: { $0.timestamp < $1.timestamp })
+            .flatMap { event -> (date: Date, temp: TempBasal)? in
+                let duration = history.first {
+                    $0.type == .tempBasalDuration && abs($0.timestamp.timeIntervalSince(event.timestamp)) < 2
+                }?.durationMin ?? event.durationMin ?? event.duration ?? 0
+                let elapsed = Int(now.timeIntervalSince(event.timestamp) / 60)
+                let left = duration - elapsed
+                guard left > 0 else { return nil }
+                return (event.timestamp, TempBasal(duration: left, rate: event.rate ?? 0, temp: .absolute, timestamp: now))
+            }
+        switch (fromDelivery, fromHistory) {
+        case let (delivery?, copied?):
+            return delivery.date >= copied.date ? delivery.temp : copied.temp
+        case let (delivery?, nil):
+            return delivery.temp
+        case let (nil, copied?):
+            return copied.temp
+        default:
+            return idle
+        }
     }
 
     private static func factor(_ factors: [Double], minutes: Int) -> Double {

@@ -569,6 +569,8 @@ final class HandyFreiSession {
                 }
             }
             guard Date().timeIntervalSince(newest) > 12 * 60 else { continue }
+            let files = await MainActor.run { state.handyFreiFiles }
+            guard HandyFreiLoop.enactsInsulin(files) else { continue }
             await mark(state, "Glukose älter als 12 Minuten. Kein Insulin.")
             let busy = await MainActor.run { () -> Bool in
                 if self.dosing { return true }

@@ -269,7 +269,7 @@ struct TrioMainWatchView: View {
             HandyFreiSession.shared.resumeIfNeeded(state)
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active || phase == .background {
+            if phase == .inactive || phase == .active || phase == .background {
                 HandyFreiSession.shared.wakeFromBackground()
             }
         }

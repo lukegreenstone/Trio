@@ -203,6 +203,7 @@ enum HandyFreiPhone {
         if !live.pump.isEmpty { files["pumpHistory"] = live.pump }
         if !live.carbs.isEmpty { files["carbHistory"] = live.carbs }
         if !live.glucose.isEmpty { files["glucoseHistory"] = live.glucose }
+        files["tddSufficient"] = hasEnoughTDD() ? "true" : "false"
         let presets = livePresets()
         files["overridePresets"] = presets.overrides
         files["tempTargetPresets"] = presets.targets
@@ -288,6 +289,23 @@ enum HandyFreiPhone {
         return (pump, carbs, glucose)
     }
 
+    /// Same 7-day, 75-percent rule the iPhone uses before it allows the dynamic ISF formula.
+    private static func hasEnoughTDD() -> Bool {
+        let context = CoreDataStack.shared.newTaskContext()
+        var enough = false
+        context.performAndWait {
+            let request = NSFetchRequest<NSFetchRequestResult>(entityName: "TDDStored")
+            request.predicate = NSPredicate(
+                format: "date > %@ AND total > 0",
+                Date().addingTimeInterval(-86400 * 7) as NSDate
+            )
+            request.resultType = .countResultType
+            let count = (try? context.count(for: request)) ?? 0
+            enough = count >= Int(Double(7 * 288) * 0.75)
+        }
+        return enough
+    }
+
     private static func orphanedResumeIDs(in context: NSManagedObjectContext) -> [NSManagedObjectID] {
         let request = PumpEventStored.fetchRequest()
         request.predicate = NSPredicate.pumpHistoryLast48h
@@ -366,6 +384,7 @@ enum HandyFreiPhone {
         snapshot.mealPresets = mealPresets()
         if let medtrum = pump as? MedtrumPumpManager {
             let state = medtrum.state
+            snapshot.loopFiles["supportedBasalRates"] = encodeJSON(medtrum.supportedBasalRates)
             snapshot.pumpSerial = state.pumpSN.base64EncodedString()
             snapshot.sessionToken = state.sessionToken.base64EncodedString()
             snapshot.backupSessionToken = state.backupSessionToken.base64EncodedString()

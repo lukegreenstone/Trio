@@ -10,5 +10,10 @@
 	<string>Eine Workout-Sitzung hält die Uhr wach, während Handy-frei Sensor und Pumpe steuert.</string>
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>Eine Workout-Sitzung hält die Uhr wach, während Handy-frei Sensor und Pumpe steuert.</string>
+	<key>WKBackgroundModes</key>
+	<array>
+		<string>workout-processing</string>
+		<string>bluetooth-central</string>
+	</array>
 </dict>
 </plist>
