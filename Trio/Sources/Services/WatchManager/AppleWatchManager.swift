@@ -795,9 +795,9 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
             }
             return
         }
-        if let log = message["handyFreiLog"] as? [[String: Any]] {
-            Task { @MainActor in
-                HandyFreiPhone.importLog(log, cgm: self.fetchGlucoseManager.cgmManager)
+        if message["handyFreiLog"] != nil {
+            Task { @MainActor [weak self] in
+                self?.importHandyFreiLog(message)
             }
             return
         }
@@ -943,9 +943,9 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
     }
 
     func session(_: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
-        if let log = userInfo["handyFreiLog"] as? [[String: Any]] {
-            Task { @MainActor in
-                HandyFreiPhone.importLog(log, cgm: self.fetchGlucoseManager.cgmManager)
+        if userInfo["handyFreiLog"] != nil {
+            Task { @MainActor [weak self] in
+                self?.importHandyFreiLog(userInfo)
             }
         }
         if let logs = userInfo["watchLogs"] as? String {
@@ -954,6 +954,38 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
 
         Task { @MainActor [weak self] in
             await self?.consumeCompanionCommand(userInfo)
+        }
+    }
+
+    /// Stores the watch session, then reads the pump's own history before the phone may dose again.
+    @MainActor private func importHandyFreiLog(_ message: [String: Any]) {
+        guard let log = message["handyFreiLog"] as? [[String: Any]] else { return }
+        let final = (message["handyFreiLogFinal"] as? Bool) == true
+            || (message["handyFreiLogFinal"] as? NSNumber)?.boolValue == true
+        let ids = HandyFreiPhone.importLog(log, cgm: fetchGlucoseManager.cgmManager)
+        acknowledgeHandyFreiLog(ids)
+        guard final, HandyFreiPhone.shouldReleaseLoopAfterLog else { return }
+        let cgm = fetchGlucoseManager.cgmManager
+        guard let pump = deviceDataManager.pumpManager else {
+            HandyFreiPhone.finishImport(cgm: cgm)
+            return
+        }
+        pump.ensureCurrentPumpData { _ in
+            Task { @MainActor in
+                HandyFreiPhone.finishImport(cgm: cgm)
+            }
+        }
+    }
+
+    private func acknowledgeHandyFreiLog(_ ids: [String]) {
+        guard !ids.isEmpty, let session else { return }
+        let message = ["handyFreiLogAck": ids]
+        if session.isReachable {
+            session.sendMessage(message, replyHandler: nil) { _ in
+                session.transferUserInfo(message)
+            }
+        } else {
+            session.transferUserInfo(message)
         }
     }
 

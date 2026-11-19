@@ -137,8 +137,8 @@ enum HandyFreiPhone {
         bluetoothIsOff()
     }
 
-    /// Stores the watch log, then lets the loop run again. Order is fixed: log first.
-    static func importLog(_ entries: [[String: Any]], cgm: Any? = nil) {
+    /// Stores the watch log. The loop stays paused until `finishImport`, and only when this batch is the hand-back.
+    static func importLog(_ entries: [[String: Any]], cgm _: Any? = nil) -> [String] {
         let data = try? JSONSerialization.data(withJSONObject: entries)
         if let data {
             UserDefaults.standard.set(data, forKey: logKey)
@@ -153,28 +153,63 @@ enum HandyFreiPhone {
         storeAdjustments(entries)
         lock.lock()
         logImported = true
+        lock.unlock()
+        if awaitingImport {
+            var session = pending
+            session?.note = "Protokoll der Uhr ist da. Pumpenverlauf wird gelesen. Bis dahin kein Insulin."
+            if let session {
+                lock.lock()
+                pending = session
+                lock.unlock()
+                store(session)
+            }
+        }
+        return entries.compactMap { $0["id"] as? String }
+    }
+
+    /// Radio is already back. This is the only place that lets the phone dose again after Handy-frei.
+    static func finishImport(cgm: Any? = nil) {
+        guard awaitingImport || HandyFreiGate.phoneLoopPaused else { return }
+        setAwaitingImport(false)
+        HandyFreiGate.setPhoneLoopPaused(false)
+        resumeLibreRadio(cgm)
+        lock.lock()
         let current = pending ?? HandyFrei.idle(fingerprint: HandyFrei.Fingerprint(
             pumpPeripheralID: nil, pumpSerial: nil, sensorSerial: nil, sensorPeripheralID: nil
         ))
         lock.unlock()
-        let session = HandyFrei.resumeAfterLog(current, logImported: true)
-        HandyFreiGate.setPhoneLoopPaused(false)
-        resumeLibreRadio(cgm)
+        var session = HandyFrei.resumeAfterLog(current, logImported: true)
+        session.note = "Handy-frei Protokoll übernommen. Loop auf dem iPhone."
         lock.lock()
         pending = session
         lock.unlock()
         store(session)
     }
 
+    static var shouldReleaseLoopAfterLog: Bool {
+        awaitingImport || HandyFreiGate.phoneLoopPaused
+    }
+
     static func stop(fingerprint: HandyFrei.Fingerprint, cgm: Any? = nil) -> HandyFrei.Session {
+        let waitingForLog = radioIsHandedOff || HandyFreiGate.phoneLoopPaused
         let (session, _) = HandyFrei.stop(HandyFrei.idle(fingerprint: fingerprint))
-        HandyFreiGate.setPhoneLoopPaused(false)
         resumeLibreRadio(cgm)
+        var waiting = session
+        if waitingForLog {
+            // The sensor may return. Insulin stays off until the watch log is stored.
+            HandyFreiGate.setPhoneLoopPaused(true)
+            setAwaitingImport(true)
+            waiting.note = "Protokoll der Uhr fehlt noch. Kein Insulin, bis es da ist."
+            requestWatchLog()
+        } else {
+            HandyFreiGate.setPhoneLoopPaused(false)
+            setAwaitingImport(false)
+        }
         lock.lock()
-        pending = session
+        pending = waiting
         lock.unlock()
-        store(session)
-        return session
+        store(waiting)
+        return waiting
     }
 
     /// The files the watch loop reads. Pump history, carbs and glucose come from the
@@ -516,9 +551,10 @@ enum HandyFreiPhone {
         let context = CoreDataStack.shared.newTaskContext()
         context.performAndWait {
             for entry in entries where (entry["kind"] as? String) == "glucose" {
-                let mgdl = (entry["mgdl"] as? NSNumber)?.intValue ?? 0
+                let mgdl = Int(number(entry["mgdl"]) ?? 0)
                 guard mgdl > 0 else { continue }
-                let date = Date(timeIntervalSince1970: (entry["date"] as? NSNumber)?.doubleValue ?? 0)
+                let date = Date(timeIntervalSince1970: number(entry["date"]) ?? 0)
+                guard date.timeIntervalSince1970 > 1 else { continue }
                 let near = GlucoseStored.fetchRequest()
                 near.predicate = NSPredicate(
                     format: "date >= %@ AND date <= %@",
@@ -530,6 +566,7 @@ enum HandyFreiPhone {
                 row.id = UUID()
                 row.date = date
                 row.glucose = Int16(mgdl)
+                row.direction = entry["direction"] as? String
                 row.isManual = false
                 row.isUploadedToNS = false
                 row.isUploadedToHealth = false
@@ -639,15 +676,16 @@ enum HandyFreiPhone {
             for entry in entries {
                 let kind = entry["kind"] as? String ?? ""
                 guard kind == "temp" || kind == "bolus" else { continue }
-                let date = Date(timeIntervalSince1970: (entry["date"] as? NSNumber)?.doubleValue ?? Date().timeIntervalSince1970)
-                let units = (entry["units"] as? NSNumber)?.doubleValue ?? 0
-                let minutes = (entry["minutes"] as? NSNumber)?.intValue ?? 0
-                let sync = "handyfrei-\(Int(date.timeIntervalSince1970))-\(kind)"
+                let date = Date(timeIntervalSince1970: number(entry["date"]) ?? Date().timeIntervalSince1970)
+                let units = number(entry["units"]) ?? 0
+                let minutes = Int(number(entry["minutes"]) ?? 0)
+                if kind == "bolus", units < 0.01 { continue }
+                let sync = (entry["id"] as? String) ?? "handyfrei-\(Int(date.timeIntervalSince1970))-\(kind)"
                 let request = PumpEventStored.fetchRequest()
                 request.predicate = NSPredicate(format: "syncIdentifier == %@", sync)
                 if let found = try? context.fetch(request), !found.isEmpty { continue }
-                let windowStart = date.addingTimeInterval(-180)
-                let windowEnd = date.addingTimeInterval(180)
+                let windowStart = date.addingTimeInterval(-90)
+                let windowEnd = date.addingTimeInterval(90)
                 if kind == "temp" {
                     let near = PumpEventStored.fetchRequest()
                     near.predicate = NSPredicate(
@@ -683,12 +721,16 @@ enum HandyFreiPhone {
                 row.isUploadedToHealth = false
                 row.isUploadedToTidepool = false
                 if kind == "bolus" {
-                    row.type = PumpEventStored.EventType.smb.rawValue
+                    let label = entry["label"] as? String ?? ""
+                    let smb = (entry["smb"] as? Bool) == true
+                        || (entry["smb"] as? NSNumber)?.boolValue == true
+                        || label == "SMB"
+                    row.type = smb ? PumpEventStored.EventType.smb.rawValue : PumpEventStored.EventType.bolus.rawValue
                     let bolus = BolusStored(context: context)
                     bolus.pumpEvent = row
                     bolus.amount = NSDecimalNumber(value: units)
                     bolus.programmedAmount = NSDecimalNumber(value: units)
-                    bolus.isSMB = true
+                    bolus.isSMB = smb
                     bolus.isExternal = false
                 } else {
                     row.type = PumpEventStored.EventType.tempBasal.rawValue
@@ -715,6 +757,7 @@ enum HandyFreiPhone {
     private static let heartbeatKey = "handyfrei.watchHeartbeat"
     private static let runningKey = "handyfrei.watchRunning"
     private static let unreachableSinceKey = "handyfrei.watchUnreachableSince"
+    private static let awaitingKey = "handyfrei.awaitingWatchLog"
     /// A missing or stale heartbeat, and a watch that stays unreachable, both give the sensor back.
     private static let silenceLimit: TimeInterval = 15 * 60
 
@@ -794,9 +837,32 @@ enum HandyFreiPhone {
             pumpPeripheralID: nil, pumpSerial: nil, sensorSerial: nil, sensorPeripheralID: nil
         ), cgm: cgm)
         var session = pending
-        session?.note = reason + " Sensor und Loop sind wieder auf dem iPhone. Ein späteres Protokoll wird nur einmal übernommen."
+        session?.note = reason + " Kein Insulin, bis das Protokoll der Uhr gespeichert ist."
         if let session {
             store(session)
+        }
+    }
+
+    static var awaitingImport: Bool {
+        UserDefaults.standard.bool(forKey: awaitingKey)
+    }
+
+    private static func setAwaitingImport(_ value: Bool) {
+        UserDefaults.standard.set(value, forKey: awaitingKey)
+    }
+
+    /// Queued, so it arrives after the watch has been out of range.
+    private static func requestWatchLog() {
+        guard WCSession.isSupported() else { return }
+        let link = WCSession.default
+        guard link.activationState == .activated else { return }
+        let message = ["handyFreiSendLog": true]
+        if link.isReachable {
+            link.sendMessage(message, replyHandler: nil) { _ in
+                link.transferUserInfo(message)
+            }
+        } else {
+            link.transferUserInfo(message)
         }
     }
 

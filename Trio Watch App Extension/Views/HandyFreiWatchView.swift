@@ -2,6 +2,7 @@ import HandyFreiDrivers
 import HealthKit
 import SwiftUI
 import Trio
+import WatchConnectivity
 import WatchKit
 
 /// Handy-frei on the watch. One start, sensor and pump together. No patch stop and no sensor activation.
@@ -184,6 +185,8 @@ final class HandyFreiSession {
     private var deliveries: [HandyFreiLoop.Delivery] = []
     private var readings: [(date: Date, mgdl: Int)] = []
     private var directions: [Double: String] = [:]
+    private var ackedLogIDs = Set(UserDefaults.standard.stringArray(forKey: "handyfrei.ackedLogIDs") ?? [])
+    private var lastOutboxFlush = Date.distantPast
     /// Bumped when the stretch ends so a glucose task already in flight cannot dose afterwards.
     private var doseEpoch = 0
     private var dosing = false
@@ -222,6 +225,7 @@ final class HandyFreiSession {
     private var sensorPeripheralID = ""
 
     func start(_ state: WatchState) {
+        bind(state)
         guard !state.handyFreiRunning else { return }
         state.handyFreiRunning = true
         doseEpoch += 1
@@ -322,7 +326,10 @@ final class HandyFreiSession {
             guard let self else { return }
             while state.handyFreiRunning, epoch == self.doseEpoch, !Task.isCancelled {
                 self.scheduleRefresh()
-                await MainActor.run { state.reportHandyFreiHeartbeat() }
+                await MainActor.run {
+                    state.reportHandyFreiHeartbeat()
+                    self.flushOutbox(final: false)
+                }
                 try? await Task.sleep(nanoseconds: 60_000_000_000)
             }
         }
@@ -1196,12 +1203,12 @@ final class HandyFreiSession {
     }
 
     func finish(_ state: WatchState) {
+        bind(state)
         log.append([
             "date": Date().timeIntervalSince1970,
             "kind": "stop",
             "text": "Temporäres Basal abbrechen, falls eines gesetzt wurde. Verbindung zu."
         ])
-        sendLog(state)
         doseEpoch += 1
         active = false
         HandyFreiDisk.save(session: self)
@@ -1214,6 +1221,7 @@ final class HandyFreiSession {
         }
         state.handyFreiStatus = "Handy-frei beendet. „Handy-frei aktivieren“ startet wieder, auch ohne iPhone."
         state.reportHandyFreiHeartbeat()
+        flushOutbox(final: true)
     }
 
     private func phoneReachable(_ state: WatchState) -> Bool {
@@ -1318,6 +1326,7 @@ final class HandyFreiSession {
     }
 
     private func fail(_ state: WatchState, _ text: String) {
+        bind(state)
         guard state.handyFreiRunning else { return }
         doseEpoch += 1
         state.handyFreiRunning = false
@@ -1328,10 +1337,10 @@ final class HandyFreiSession {
             "kind": "alarm",
             "text": text
         ])
-        sendLog(state)
         active = false
         HandyFreiDisk.save(session: self)
         state.reportHandyFreiHeartbeat()
+        flushOutbox(final: true)
         HandyFreiWorkout.shared.stop()
         HandyFreiLibreLink.stop()
         Task {
@@ -1340,14 +1349,90 @@ final class HandyFreiSession {
         }
     }
 
-    private func sendLog(_ state: WatchState) {
-        let message = ["handyFreiLog": log]
-        if let session = state.session, session.isReachable {
-            session.sendMessage(message, replyHandler: nil) { _ in
-                session.transferUserInfo(message)
+    /// Queued delivery of every dose, glucose and meal the phone does not have yet.
+    func flushOutbox(final: Bool) {
+        if !final, Date().timeIntervalSince(lastOutboxFlush) < 45 { return }
+        guard WCSession.isSupported() else { return }
+        let session = boundState?.session ?? WCSession.default
+        guard session.activationState == .activated else { return }
+        HandyFreiDisk.preload(self)
+        lastOutboxFlush = Date()
+        let rows = outboxRows()
+        if rows.isEmpty {
+            guard final else { return }
+            sendOutboxChunk([], final: true, session: session)
+            return
+        }
+        let size = 80
+        var index = 0
+        while index < rows.count {
+            let end = min(index + size, rows.count)
+            sendOutboxChunk(Array(rows[index ..< end]), final: final && end == rows.count, session: session)
+            index = end
+        }
+    }
+
+    func noteAck(_ ids: [String]) {
+        guard !ids.isEmpty else { return }
+        ackedLogIDs.formUnion(ids)
+        var stored = Array(ackedLogIDs)
+        if stored.count > 3000 { stored.removeFirst(stored.count - 2000) }
+        ackedLogIDs = Set(stored)
+        UserDefaults.standard.set(stored, forKey: "handyfrei.ackedLogIDs")
+    }
+
+    private func outboxRows() -> [[String: Any]] {
+        var rows: [[String: Any]] = []
+        for dose in deliveries {
+            let id = "d-\(Int(dose.date.timeIntervalSince1970))-\(dose.kind)-\(Int((dose.units * 100).rounded()))"
+            if ackedLogIDs.contains(id) { continue }
+            rows.append([
+                "id": id,
+                "date": dose.date.timeIntervalSince1970,
+                "kind": dose.kind,
+                "units": dose.units,
+                "minutes": dose.minutes,
+                "label": dose.label,
+                "smb": dose.label == "SMB"
+            ])
+        }
+        for reading in readings {
+            let id = "g-\(Int(reading.date.timeIntervalSince1970))"
+            if ackedLogIDs.contains(id) { continue }
+            var row: [String: Any] = [
+                "id": id,
+                "date": reading.date.timeIntervalSince1970,
+                "kind": "glucose",
+                "mgdl": reading.mgdl
+            ]
+            if let direction = directions[reading.date.timeIntervalSince1970] {
+                row["direction"] = direction
             }
-        } else {
-            state.session?.transferUserInfo(message)
+            rows.append(row)
+        }
+        for carb in carbs {
+            if ackedLogIDs.contains(carb.id) { continue }
+            rows.append([
+                "id": carb.id,
+                "date": carb.date,
+                "kind": carb.isFPU ? "fpu" : "carb",
+                "grams": carb.grams,
+                "units": carb.grams,
+                "fat": carb.fat,
+                "protein": carb.protein,
+                "name": carb.name,
+                "fpuID": carb.fpuID ?? ""
+            ])
+        }
+        return rows
+    }
+
+    private func sendOutboxChunk(_ rows: [[String: Any]], final: Bool, session: WCSession) {
+        var message: [String: Any] = ["handyFreiLog": rows]
+        if final { message["handyFreiLogFinal"] = true }
+        session.transferUserInfo(message)
+        if session.isReachable {
+            session.sendMessage(message, replyHandler: nil) { _ in }
         }
     }
 
@@ -1588,6 +1673,30 @@ final class HandyFreiSession {
             file.logJSON = (try? JSONSerialization.data(withJSONObject: session.log)) ?? file.logJSON
             file.active = session.active
             write(file)
+            session.flushOutbox(final: false)
+        }
+
+        static func preload(_ session: HandyFreiSession) {
+            guard session.deliveries.isEmpty, session.readings.isEmpty, session.carbs.isEmpty else { return }
+            guard let file = load() else { return }
+            session.deliveries = file.deliveries.map {
+                HandyFreiLoop.Delivery(
+                    kind: $0.kind,
+                    units: $0.units,
+                    minutes: $0.minutes,
+                    date: Date(timeIntervalSince1970: $0.date),
+                    label: $0.label
+                )
+            }
+            session.carbs = file.carbs
+            session.readings = file.readings.map { (date: Date(timeIntervalSince1970: $0.date), mgdl: $0.mgdl) }
+            var arrows: [Double: String] = [:]
+            for reading in file.readings {
+                if let direction = reading.direction, !direction.isEmpty {
+                    arrows[reading.date] = direction
+                }
+            }
+            session.directions = arrows
         }
 
         static func wasActive() -> Bool {

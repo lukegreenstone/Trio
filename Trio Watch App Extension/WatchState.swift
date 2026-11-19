@@ -259,6 +259,18 @@ struct WatchHistoryLine: Identifiable, Equatable {
     }
 
     func session(_: WCSession, didReceiveMessage message: [String: Any]) {
+        if (message["handyFreiSendLog"] as? Bool) == true || (message["handyFreiSendLog"] as? NSNumber)?.boolValue == true {
+            HandyFreiSession.shared.flushOutbox(final: true)
+            return
+        }
+        if let ack = message["handyFreiLogAck"] as? [String] {
+            HandyFreiSession.shared.noteAck(ack)
+            return
+        }
+        if let ack = message["handyFreiLogAck"] as? [Any] {
+            HandyFreiSession.shared.noteAck(ack.compactMap { $0 as? String })
+            return
+        }
         if message["handyFrei"] != nil {
             Task { await WatchLogger.shared.log("⌚️ Watch received Handy-frei") }
             absorbHandyFrei(message)
@@ -303,6 +315,18 @@ struct WatchHistoryLine: Identifiable, Equatable {
     }
 
     func session(_: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
+        if (userInfo["handyFreiSendLog"] as? Bool) == true || (userInfo["handyFreiSendLog"] as? NSNumber)?.boolValue == true {
+            HandyFreiSession.shared.flushOutbox(final: true)
+            return
+        }
+        if let ack = userInfo["handyFreiLogAck"] as? [String] {
+            HandyFreiSession.shared.noteAck(ack)
+            return
+        }
+        if let ack = userInfo["handyFreiLogAck"] as? [Any] {
+            HandyFreiSession.shared.noteAck(ack.compactMap { $0 as? String })
+            return
+        }
         if userInfo["handyFrei"] != nil {
             absorbHandyFrei(userInfo)
             return
