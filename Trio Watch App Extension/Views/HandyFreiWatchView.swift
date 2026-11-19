@@ -190,6 +190,7 @@ final class HandyFreiSession {
     private var pumpRetries = 0
     private var sensorRetries = 0
     private var workoutRestarts = 0
+    private var lastWorkoutRestart = Date.distantPast
     private var replacingSensor = false
     private var sensorGeneration = 0
     private var lastPacketAt: Date?
@@ -275,10 +276,10 @@ final class HandyFreiSession {
             guard state.handyFreiRunning, epoch == self.doseEpoch else { return }
             self.startLoopWatch(state, epoch: epoch)
             self.startAutosensRefresh(state, epoch: epoch)
-            let allowed = await HandyFreiWorkout.shared.prepare { ended in
+            let allowed = await HandyFreiWorkout.shared.prepare { endReason in
                 DispatchQueue.main.async {
-                    guard state.handyFreiRunning, ended else { return }
-                    Task { await self.keepAwake(state) }
+                    guard state.handyFreiRunning else { return }
+                    Task { await self.keepAwake(state, reason: endReason) }
                 }
             }
             guard allowed else {
@@ -580,17 +581,35 @@ final class HandyFreiSession {
         }
     }
 
-    private func keepAwake(_ state: WatchState) async {
+    /// Restarts the workout only after it has actually ended, and not more often than every 30 seconds.
+    private func keepAwake(_ state: WatchState, reason: String) async {
         guard state.handyFreiRunning else { return }
+        if HandyFreiWorkout.shared.isRunning { return }
+        let elapsed = Date().timeIntervalSince(lastWorkoutRestart)
+        if elapsed < 30 {
+            try? await Task.sleep(nanoseconds: UInt64((30 - elapsed) * 1_000_000_000))
+        }
+        guard state.handyFreiRunning, !HandyFreiWorkout.shared.isRunning else { return }
+        lastWorkoutRestart = Date()
         workoutRestarts += 1
-        await mark(state, "Workout erneut \(workoutRestarts). Die Uhr bleibt in Handy-frei.")
-        let allowed = await HandyFreiWorkout.shared.prepare { ended in
+        log.append([
+            "date": Date().timeIntervalSince1970,
+            "kind": "stage",
+            "text": "Workout neu \(workoutRestarts): \(reason)"
+        ])
+        let allowed = await HandyFreiWorkout.shared.prepare { endReason in
             DispatchQueue.main.async {
-                guard state.handyFreiRunning, ended else { return }
-                Task { await self.keepAwake(state) }
+                guard state.handyFreiRunning else { return }
+                Task { await self.keepAwake(state, reason: endReason) }
             }
         }
         guard allowed, state.handyFreiRunning else {
+            let detail = HandyFreiWorkout.shared.lastFailure
+            log.append([
+                "date": Date().timeIntervalSince1970,
+                "kind": "stage",
+                "text": detail.isEmpty ? "Workout nicht gestartet" : "Workout nicht gestartet: \(detail)"
+            ])
             await MainActor.run {
                 self.giveUpOrRetry(state, "HealthKit nicht erlaubt.")
             }
@@ -640,7 +659,7 @@ final class HandyFreiSession {
                 $0.kind == "bolus" && abs($0.units - units) < 0.051 && Date().timeIntervalSince($0.date) < 10 * 60
             }
             if !already {
-                deliveries.append(HandyFreiLoop.Delivery(kind: "bolus", units: units, minutes: 0, date: Date()))
+                deliveries.append(HandyFreiLoop.Delivery(kind: "bolus", units: units, minutes: 0, date: Date(), label: "Bolus"))
                 log.append([
                     "date": Date().timeIntervalSince1970,
                     "kind": "bolus",
@@ -836,6 +855,14 @@ final class HandyFreiSession {
         state.handyFreiLoopLine = line
     }
 
+    func insulinHistory(_ state: WatchState) -> [HandyFreiLoop.HistoryLine] {
+        HandyFreiLoop.insulinLines(files: state.handyFreiFiles, deliveries: deliveries, now: Date())
+    }
+
+    func mealHistory(_ state: WatchState) -> [HandyFreiLoop.HistoryLine] {
+        HandyFreiLoop.mealLines(files: state.handyFreiFiles, carbs: loopCarbs(), now: Date())
+    }
+
     private func loopCarbs() -> [HandyFreiLoop.WatchCarb] {
         carbs.map {
             HandyFreiLoop.WatchCarb(
@@ -1005,7 +1032,7 @@ final class HandyFreiSession {
             if bolusSent {
                 await MainActor.run {
                     self.bolusUncertain = false
-                    self.deliveries.append(HandyFreiLoop.Delivery(kind: "bolus", units: units, minutes: 0, date: Date()))
+                    self.deliveries.append(HandyFreiLoop.Delivery(kind: "bolus", units: units, minutes: 0, date: Date(), label: "SMB"))
                     self.log.append(["date": Date().timeIntervalSince1970, "kind": "bolus", "units": units, "minutes": 0])
                     HandyFreiDisk.save(session: self)
                 }
@@ -1014,7 +1041,7 @@ final class HandyFreiSession {
             } else {
                 await MainActor.run {
                     self.bolusUncertain = true
-                    self.deliveries.append(HandyFreiLoop.Delivery(kind: "bolus", units: units, minutes: 0, date: Date()))
+                    self.deliveries.append(HandyFreiLoop.Delivery(kind: "bolus", units: units, minutes: 0, date: Date(), label: "SMB"))
                     self.log.append(["date": Date().timeIntervalSince1970, "kind": "bolus", "units": units, "minutes": 0, "text": "SMB unsicher"])
                     HandyFreiDisk.save(session: self)
                 }
@@ -1090,14 +1117,14 @@ final class HandyFreiSession {
         await MainActor.run {
             self.dosing = false
             if sent {
-                self.deliveries.append(HandyFreiLoop.Delivery(kind: "bolus", units: amount, minutes: 0, date: Date()))
+                self.deliveries.append(HandyFreiLoop.Delivery(kind: "bolus", units: amount, minutes: 0, date: Date(), label: "Bolus"))
                 self.log.append(["date": Date().timeIntervalSince1970, "kind": "bolus", "units": amount, "minutes": 0])
                 HandyFreiDisk.save(session: self)
                 state.handyFreiLoopLine = "\(Self.clock()) Bolus \(String(format: "%.2f", amount)) U · Pumpe ok"
                 state.handleAcknowledgment(success: true, message: "Bolus \(String(format: "%.2f", amount)) U")
             } else {
                 self.bolusUncertain = true
-                self.deliveries.append(HandyFreiLoop.Delivery(kind: "bolus", units: amount, minutes: 0, date: Date()))
+                self.deliveries.append(HandyFreiLoop.Delivery(kind: "bolus", units: amount, minutes: 0, date: Date(), label: "Bolus"))
                 self.log.append([
                     "date": Date().timeIntervalSince1970,
                     "kind": "bolus",
@@ -1248,7 +1275,7 @@ final class HandyFreiSession {
                 self.sensorRetries = 0
                 self.pumpRetries = 0
                 self.stallAttempts = 0
-                await self.keepAwake(state)
+                await self.keepAwake(state, reason: "Verbindung neu")
                 do {
                     try await self.openPump(state, attempt: 1)
                     guard state.handyFreiRunning, epoch == self.doseEpoch else { return }
@@ -1283,7 +1310,9 @@ final class HandyFreiSession {
         scheduleRefresh()
         guard let state = boundState else { return }
         if state.handyFreiRunning {
-            Task { await self.keepAwake(state) }
+            if !HandyFreiWorkout.shared.isRunning {
+                Task { await self.keepAwake(state, reason: "Hintergrund") }
+            }
         } else {
             resumeIfNeeded(state)
         }
@@ -1397,6 +1426,37 @@ final class HandyFreiSession {
             var units: Double
             var minutes: Int
             var date: TimeInterval
+            var label: String
+
+            init(kind: String, units: Double, minutes: Int, date: TimeInterval, label: String = "") {
+                self.kind = kind
+                self.units = units
+                self.minutes = minutes
+                self.date = date
+                self.label = label
+            }
+
+            private enum CodingKeys: String, CodingKey {
+                case kind, units, minutes, date, label
+            }
+
+            init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                kind = try container.decode(String.self, forKey: .kind)
+                units = try container.decode(Double.self, forKey: .units)
+                minutes = try container.decode(Int.self, forKey: .minutes)
+                date = try container.decode(TimeInterval.self, forKey: .date)
+                label = try container.decodeIfPresent(String.self, forKey: .label) ?? ""
+            }
+
+            func encode(to encoder: Encoder) throws {
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                try container.encode(kind, forKey: .kind)
+                try container.encode(units, forKey: .units)
+                try container.encode(minutes, forKey: .minutes)
+                try container.encode(date, forKey: .date)
+                try container.encode(label, forKey: .label)
+            }
         }
 
         struct Reading: Codable {
@@ -1511,7 +1571,7 @@ final class HandyFreiSession {
         static func save(session: HandyFreiSession) {
             var file = load() ?? File()
             file.deliveries = session.deliveries.map {
-                StoredDelivery(kind: $0.kind, units: $0.units, minutes: $0.minutes, date: $0.date.timeIntervalSince1970)
+                StoredDelivery(kind: $0.kind, units: $0.units, minutes: $0.minutes, date: $0.date.timeIntervalSince1970, label: $0.label)
             }
             file.carbs = session.carbs
             file.readings = session.readings.map { Reading(date: $0.date.timeIntervalSince1970, mgdl: $0.mgdl) }
@@ -1568,7 +1628,8 @@ final class HandyFreiSession {
                     kind: $0.kind,
                     units: $0.units,
                     minutes: $0.minutes,
-                    date: Date(timeIntervalSince1970: $0.date)
+                    date: Date(timeIntervalSince1970: $0.date),
+                    label: $0.label
                 )
             }
             session.carbs = file.carbs
@@ -1606,16 +1667,29 @@ final class HandyFreiSession {
     }
 }
 
-/// Workout session keeps the watch app awake. It does not dose.
+/// One workout session keeps the watch app awake. It does not dose.
+/// A second start is not issued while this one is still running.
 final class HandyFreiWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutBuilderDelegate {
     static let shared = HandyFreiWorkout()
     private let store = HKHealthStore()
     private var session: HKWorkoutSession?
     private var builder: HKLiveWorkoutBuilder?
-    private var onEnd: ((Bool) -> Void)?
+    private var onEnd: ((String) -> Void)?
+    private var ignoreEnd = false
+    private(set) var lastFailure = ""
 
-    func prepare(onEnd: @escaping (Bool) -> Void) async -> Bool {
+    var isRunning: Bool {
+        switch session?.state {
+        case .running, .paused, .prepared:
+            return true
+        default:
+            return false
+        }
+    }
+
+    func prepare(onEnd: @escaping (String) -> Void) async -> Bool {
         self.onEnd = onEnd
+        if isRunning { return true }
         let workout = HKObjectType.workoutType()
         do {
             try await store.requestAuthorization(toShare: [workout], read: [workout])
@@ -1625,7 +1699,7 @@ final class HandyFreiWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutB
         guard store.authorizationStatus(for: workout) == .sharingAuthorized else { return false }
         let configuration = HKWorkoutConfiguration()
         configuration.activityType = .other
-        configuration.locationType = .unknown
+        configuration.locationType = .indoor
         do {
             let session = try HKWorkoutSession(healthStore: store, configuration: configuration)
             let builder = session.associatedWorkoutBuilder()
@@ -1634,8 +1708,19 @@ final class HandyFreiWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutB
             session.delegate = self
             self.session = session
             self.builder = builder
-            session.startActivity(with: Date())
-            try? await builder.beginCollection(at: Date())
+            let started = Date()
+            session.startActivity(with: started)
+            do {
+                try await builder.beginCollection(at: started)
+            } catch {
+                lastFailure = "Sammlung: \(error.localizedDescription)"
+                ignoreEnd = true
+                onEnd = nil
+                self.session = nil
+                self.builder = nil
+                session.end()
+                return false
+            }
             return true
         } catch {
             return false
@@ -1643,24 +1728,44 @@ final class HandyFreiWorkout: NSObject, HKWorkoutSessionDelegate, HKLiveWorkoutB
     }
 
     func stop() {
+        ignoreEnd = true
+        onEnd = nil
         let collected = builder
+        let ending = session
         builder = nil
-        collected?.endCollection(withEnd: Date()) { _, _ in }
-        session?.end()
         session = nil
+        collected?.endCollection(withEnd: Date()) { _, _ in }
+        ending?.end()
     }
 
-    func workoutSession(_: HKWorkoutSession, didChangeTo toState: HKWorkoutSessionState, from _: HKWorkoutSessionState, date _: Date) {
-        if toState == .ended || toState == .stopped {
-            onEnd?(true)
-        }
+    func workoutSession(
+        _: HKWorkoutSession,
+        didChangeTo toState: HKWorkoutSessionState,
+        from fromState: HKWorkoutSessionState,
+        date _: Date
+    ) {
+        // .paused and .stopped are not a new session. Only a finished one is.
+        guard toState == .ended else { return }
+        reportEnd("beendet (\(String(describing: fromState)))")
     }
 
-    func workoutSession(_: HKWorkoutSession, didFailWithError _: Error) {
-        onEnd?(true)
+    func workoutSession(_: HKWorkoutSession, didFailWithError error: Error) {
+        reportEnd(error.localizedDescription)
     }
 
     func workoutBuilderDidCollectEvent(_: HKLiveWorkoutBuilder) {}
 
     func workoutBuilder(_: HKLiveWorkoutBuilder, didCollectDataOf _: Set<HKSampleType>) {}
+
+    private func reportEnd(_ reason: String) {
+        if ignoreEnd {
+            ignoreEnd = false
+            return
+        }
+        let callback = onEnd
+        onEnd = nil
+        session = nil
+        builder = nil
+        callback?(reason)
+    }
 }

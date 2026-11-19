@@ -15,6 +15,8 @@ struct TrioMainWatchView: View {
     @State private var showingTreatmentMenuSheet: Bool = false
     @State private var showingHandyFrei = false
     @State private var showingOverrideSheet: Bool = false
+    @State private var showingInsulinHistory = false
+    @State private var showingMealHistory = false
     // navigation flag for meal bolus combo
     @State private var continueToBolus = false
     @State private var navigationPath = NavigationPath()
@@ -122,27 +124,35 @@ struct TrioMainWatchView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    VStack {
-                        Image(systemName: "syringe.fill")
-                            .foregroundStyle(Color.insulin)
-
-                        Text(shownIOB)
-                            .foregroundStyle(isWatchStateDated ? Color.secondary : Color.white)
-                            .frame(alignment: .leading)
-                            .minimumScaleFactor(0.5)
-                    }.font(.caption2)
+                    Button {
+                        showingInsulinHistory = true
+                    } label: {
+                        VStack {
+                            Image(systemName: "syringe.fill")
+                                .foregroundStyle(Color.insulin)
+                            Text(shownIOB)
+                                .foregroundStyle(isWatchStateDated ? Color.secondary : Color.white)
+                                .frame(alignment: .leading)
+                                .minimumScaleFactor(0.5)
+                        }.font(.caption2)
+                    }
+                    .buttonStyle(.plain)
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
-                    VStack {
-                        Image(systemName: "fork.knife")
-                            .foregroundStyle(Color.orange)
-
-                        Text(shownCOB)
-                            .foregroundStyle(isWatchStateDated || isSessionUnreachable ? Color.secondary : Color.white)
-                            .frame(alignment: .trailing)
-                            .minimumScaleFactor(0.5)
-                    }.font(.caption2)
+                    Button {
+                        showingMealHistory = true
+                    } label: {
+                        VStack {
+                            Image(systemName: "fork.knife")
+                                .foregroundStyle(Color.orange)
+                            Text(shownCOB)
+                                .foregroundStyle(isWatchStateDated || isSessionUnreachable ? Color.secondary : Color.white)
+                                .frame(alignment: .trailing)
+                                .minimumScaleFactor(0.5)
+                        }.font(.caption2)
+                    }
+                    .buttonStyle(.plain)
                 }
 
                 ToolbarItemGroup(placement: .bottomBar) {
@@ -249,6 +259,12 @@ struct TrioMainWatchView: View {
             }
         }
         .ignoresSafeArea()
+        .sheet(isPresented: $showingInsulinHistory) {
+            WatchHistorySheet(title: "Insulin", lines: insulinLines)
+        }
+        .sheet(isPresented: $showingMealHistory) {
+            WatchHistorySheet(title: "Mahlzeiten", lines: mealLines)
+        }
         .onAppear {
             HandyFreiSession.shared.resumeIfNeeded(state)
         }
@@ -257,6 +273,24 @@ struct TrioMainWatchView: View {
                 HandyFreiSession.shared.wakeFromBackground()
             }
         }
+    }
+
+    private var insulinLines: [WatchHistoryLine] {
+        if state.handyFreiRunning {
+            return HandyFreiSession.shared.insulinHistory(state).map {
+                WatchHistoryLine(id: $0.id, date: $0.date, title: $0.title, detail: $0.detail, isFPU: $0.isFPU)
+            }
+        }
+        return state.phoneInsulinHistory
+    }
+
+    private var mealLines: [WatchHistoryLine] {
+        if state.handyFreiRunning {
+            return HandyFreiSession.shared.mealHistory(state).map {
+                WatchHistoryLine(id: $0.id, date: $0.date, title: $0.title, detail: $0.detail, isFPU: $0.isFPU)
+            }
+        }
+        return state.phoneMealHistory
     }
 
     private var shownIOB: String {
@@ -306,6 +340,35 @@ struct TrioMainWatchView: View {
             continueToBolus = true // Explicitely set subsequent view navigation
             navigationPath.append(NavigationDestinations.carbsInput)
         }
+    }
+}
+
+struct WatchHistorySheet: View {
+    let title: String
+    let lines: [WatchHistoryLine]
+
+    var body: some View {
+        List {
+            if lines.isEmpty {
+                Text("Keine Einträge der letzten 24 Stunden.")
+                    .font(.footnote)
+            }
+            ForEach(lines) { line in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(line.isFPU ? "FPU \(Self.clock(line.date))" : "\(line.title) \(Self.clock(line.date))")
+                        .font(.headline)
+                    Text(line.detail)
+                        .font(.footnote)
+                        .foregroundStyle(line.isFPU ? Color.orange : Color.secondary)
+                }
+            }
+        }
+        .navigationTitle(title)
+    }
+
+    private static func clock(_ date: Date) -> String {
+        let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
+        return String(format: "%02d:%02d", parts.hour ?? 0, parts.minute ?? 0)
     }
 }
 

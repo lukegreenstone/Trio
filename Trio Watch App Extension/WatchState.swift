@@ -3,6 +3,14 @@ import SwiftUI
 import Trio
 import WatchConnectivity
 
+struct WatchHistoryLine: Identifiable, Equatable {
+    var id: String
+    var date: Date
+    var title: String
+    var detail: String
+    var isFPU: Bool
+}
+
 /// WatchState manages the communication between the Watch app and the iPhone app using WatchConnectivity.
 /// It handles glucose data synchronization and sending treatment requests (bolus, carbs) to the phone.
 @Observable final class WatchState: NSObject, WCSessionDelegate {
@@ -25,6 +33,8 @@ import WatchConnectivity
     var maxYAxisValue: Decimal = 200
     var cob: String? = "--"
     var iob: String? = "--"
+    var phoneInsulinHistory: [WatchHistoryLine] = []
+    var phoneMealHistory: [WatchHistoryLine] = []
     var lastLoopTime: String? = "--"
     var overridePresets: [OverridePresetWatch] = []
     var tempTargetPresets: [TempTargetPresetWatch] = []
@@ -623,6 +633,13 @@ import WatchConnectivity
             self.cob = cob
         }
 
+        if let insulin = message[WatchMessageKeys.insulinHistory] as? [[String: Any]] {
+            phoneInsulinHistory = Self.historyLines(insulin)
+        }
+        if let meals = message[WatchMessageKeys.mealHistory] as? [[String: Any]] {
+            phoneMealHistory = Self.historyLines(meals)
+        }
+
         if let lastLoopTime = message[WatchMessageKeys.lastLoopTime] as? String {
             self.lastLoopTime = lastLoopTime
         }
@@ -754,6 +771,21 @@ import WatchConnectivity
         proteinAmount = min(proteinCap, Int(preset.protein.rounded()))
         pendingMealName = preset.name
         bolusAmount = 0
+    }
+
+    private static func historyLines(_ rows: [[String: Any]]) -> [WatchHistoryLine] {
+        rows.compactMap { row in
+            guard let title = row["title"] as? String else { return nil }
+            let stamp = (row["date"] as? NSNumber)?.doubleValue ?? 0
+            guard stamp > 0 else { return nil }
+            return WatchHistoryLine(
+                id: row["id"] as? String ?? "\(stamp)-\(title)",
+                date: Date(timeIntervalSince1970: stamp),
+                title: title,
+                detail: row["detail"] as? String ?? "",
+                isFPU: (row["isFPU"] as? NSNumber)?.boolValue ?? (row["isFPU"] as? Bool ?? false)
+            )
+        }
     }
 
     private static func doubles(_ value: Any?) -> [Double] {

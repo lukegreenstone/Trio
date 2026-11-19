@@ -527,6 +527,8 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
             WatchMessageKeys.delta: state.delta ?? "",
             WatchMessageKeys.iob: state.iob ?? "",
             WatchMessageKeys.cob: state.cob ?? "",
+            WatchMessageKeys.insulinHistory: recentInsulinRows(),
+            WatchMessageKeys.mealHistory: recentMealRows(),
             WatchMessageKeys.lastLoopTime: state.lastLoopTime ?? "",
             WatchMessageKeys.glucoseValues: state.glucoseValues.map { value in
                 [
@@ -598,6 +600,89 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
 
         dictionary[WatchMessageKeys.forecastData] = forecastData
         return dictionary
+    }
+
+    /// Last day of pump events for the watch insulin list. This does not change dosing.
+    private func recentInsulinRows() -> [[String: Any]] {
+        let context = CoreDataStack.shared.newTaskContext()
+        let cutoff = Date().addingTimeInterval(-24 * 3600)
+        var rows: [(date: Date, row: [String: Any])] = []
+        context.performAndWait {
+            let request = PumpEventStored.fetchRequest()
+            request.predicate = NSPredicate(format: "timestamp >= %@", cutoff as NSDate)
+            let events = (try? context.fetch(request)) ?? []
+            for event in events {
+                guard let date = event.timestamp, let type = event.type else { continue }
+                let id = event.id ?? "\(date.timeIntervalSince1970)-\(type)"
+                switch type {
+                case "Bolus", "SMB":
+                    let units = event.bolus?.amount?.doubleValue ?? 0
+                    guard units >= 0.01 else { continue }
+                    let smb = type == "SMB" || event.bolus?.isSMB == true
+                    rows.append((date, [
+                        "id": id, "date": date.timeIntervalSince1970,
+                        "title": smb ? "SMB" : "Bolus",
+                        "detail": String(format: "%.2f U", units),
+                        "isFPU": false
+                    ]))
+                case "TempBasal":
+                    if event.tempBasal?.isScheduledBasal == true { continue }
+                    let rate = event.tempBasal?.rate?.doubleValue ?? 0
+                    let minutes = Int(event.tempBasal?.duration ?? 0)
+                    rows.append((date, [
+                        "id": id, "date": date.timeIntervalSince1970,
+                        "title": "Temp",
+                        "detail": String(format: "%.2f U/h · %d min", rate, minutes),
+                        "isFPU": false
+                    ]))
+                case "PumpSuspend":
+                    rows.append((date, [
+                        "id": id, "date": date.timeIntervalSince1970,
+                        "title": "Stopp", "detail": "Basal aus", "isFPU": false
+                    ]))
+                case "PumpResume":
+                    rows.append((date, [
+                        "id": id, "date": date.timeIntervalSince1970,
+                        "title": "Weiter", "detail": "Basal an", "isFPU": false
+                    ]))
+                default:
+                    continue
+                }
+            }
+        }
+        return rows.sorted { $0.date > $1.date }.prefix(60).map(\.row)
+    }
+
+    /// Last day of meals, including delayed fat-protein rows that are still in the future.
+    private func recentMealRows() -> [[String: Any]] {
+        let context = CoreDataStack.shared.newTaskContext()
+        let cutoff = Date().addingTimeInterval(-24 * 3600)
+        var rows: [(date: Date, row: [String: Any])] = []
+        context.performAndWait {
+            let request = CarbEntryStored.fetchRequest()
+            request.predicate = NSPredicate(format: "date >= %@", cutoff as NSDate)
+            let entries = (try? context.fetch(request)) ?? []
+            for entry in entries {
+                guard let date = entry.date else { continue }
+                let id = entry.id?.uuidString ?? "\(date.timeIntervalSince1970)"
+                if entry.isFPU {
+                    rows.append((date, [
+                        "id": id, "date": date.timeIntervalSince1970,
+                        "title": "FPU",
+                        "detail": String(format: "%.0f g KH, verzögert", entry.carbs),
+                        "isFPU": true
+                    ]))
+                } else if entry.carbs > 0 || entry.fat > 0 || entry.protein > 0 {
+                    rows.append((date, [
+                        "id": id, "date": date.timeIntervalSince1970,
+                        "title": "Mahlzeit",
+                        "detail": String(format: "%.0f g KH · %.0f g Fett · %.0f g Eiweiß", entry.carbs, entry.fat, entry.protein),
+                        "isFPU": false
+                    ]))
+                }
+            }
+        }
+        return rows.sorted { $0.date > $1.date }.prefix(60).map(\.row)
     }
 
     /// Sends the state of type WatchState to the connected Watch

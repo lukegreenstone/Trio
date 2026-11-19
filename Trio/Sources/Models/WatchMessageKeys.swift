@@ -37,6 +37,8 @@ enum WatchMessageKeys {
     static let delta = "delta"
     static let iob = "iob"
     static let cob = "cob"
+    static let insulinHistory = "insulinHistory"
+    static let mealHistory = "mealHistory"
     static let lastLoopTime = "lastLoopTime"
     static let glucoseValues = "glucoseValues"
     static let minYAxisValue = "minYAxisValue"

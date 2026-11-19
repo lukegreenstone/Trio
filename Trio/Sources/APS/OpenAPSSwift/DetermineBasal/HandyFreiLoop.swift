@@ -53,12 +53,31 @@ public enum HandyFreiLoop {
         public var units: Double
         public var minutes: Int
         public var date: Date
+        /// Shown in the history. Empty keeps the old "bolus" or "temp" wording.
+        public var label: String
 
-        public init(kind: String, units: Double, minutes: Int, date: Date) {
+        public init(kind: String, units: Double, minutes: Int, date: Date, label: String = "") {
             self.kind = kind
             self.units = units
             self.minutes = minutes
             self.date = date
+            self.label = label
+        }
+    }
+
+    public struct HistoryLine: Identifiable, Equatable {
+        public var id: String
+        public var date: Date
+        public var title: String
+        public var detail: String
+        public var isFPU: Bool
+
+        public init(id: String, date: Date, title: String, detail: String, isFPU: Bool = false) {
+            self.id = id
+            self.date = date
+            self.title = title
+            self.detail = detail
+            self.isFPU = isFPU
         }
     }
 
@@ -762,6 +781,75 @@ public enum HandyFreiLoop {
         var chosen = ratio8.ratio < ratio24.ratio ? ratio8 : ratio24
         chosen.timestamp = now
         return encodeModel(chosen)
+    }
+
+    /// Insulin lines for the watch history. Snapshot pump history plus doses given on the watch.
+    public static func insulinLines(files: [String: String], deliveries: [Delivery], now: Date) -> [HistoryLine] {
+        let cutoff = now.addingTimeInterval(-24 * 3600)
+        let events = ((try? pumpHistory(files)) ?? []).filter { $0.timestamp >= cutoff }
+        let fresh = deliveries.filter { $0.date >= cutoff && !alreadyRecorded($0, events) }
+        var lines = events.compactMap { insulinLine($0) }
+        lines.append(contentsOf: fresh.map { dose in
+            let title = dose.label.isEmpty ? (dose.kind == "temp" ? "Temp" : "Bolus") : dose.label
+            let detail = dose.kind == "temp"
+                ? String(format: "%.2f U/h · %d min", dose.units, dose.minutes)
+                : String(format: "%.2f U", dose.units)
+            return HistoryLine(id: "watch-\(dose.kind)-\(Int(dose.date.timeIntervalSince1970))", date: dose.date, title: title, detail: detail)
+        })
+        return Array(lines.sorted { $0.date > $1.date }.prefix(60))
+    }
+
+    /// Meal lines, including delayed fat-protein rows, newest time first.
+    public static func mealLines(files: [String: String], carbs: [WatchCarb], now: Date) -> [HistoryLine] {
+        let cutoff = now.addingTimeInterval(-24 * 3600)
+        var rows: [CarbsEntry] = (try? JSONBridge.from(string: files["carbHistory"] ?? "[]")) ?? []
+        let ids = Set(rows.compactMap(\.id))
+        rows.append(contentsOf: carbs.filter { !ids.contains($0.id) }.map { carbEntry($0) })
+        let lines: [HistoryLine] = rows.compactMap { entry in
+            let when = entry.actualDate ?? entry.createdAt
+            guard when >= cutoff else { return nil }
+            let grams = NSDecimalNumber(decimal: entry.carbs).doubleValue
+            let fat = NSDecimalNumber(decimal: entry.fat ?? 0).doubleValue
+            let protein = NSDecimalNumber(decimal: entry.protein ?? 0).doubleValue
+            if entry.isFPU == true {
+                return HistoryLine(
+                    id: entry.id ?? UUID().uuidString,
+                    date: when,
+                    title: "FPU",
+                    detail: String(format: "%.0f g KH, verzögert", grams),
+                    isFPU: true
+                )
+            }
+            guard grams > 0 || fat > 0 || protein > 0 else { return nil }
+            return HistoryLine(
+                id: entry.id ?? UUID().uuidString,
+                date: when,
+                title: "Mahlzeit",
+                detail: String(format: "%.0f g KH · %.0f g Fett · %.0f g Eiweiß", grams, fat, protein)
+            )
+        }
+        return Array(lines.sorted { $0.date > $1.date }.prefix(60))
+    }
+
+    private static func insulinLine(_ event: PumpHistoryEvent) -> HistoryLine? {
+        switch event.type {
+        case .bolus, .smb:
+            let units = NSDecimalNumber(decimal: event.amount ?? 0).doubleValue
+            guard units >= 0.01 else { return nil }
+            let smb = event.type == .smb || event.isSMB == true
+            return HistoryLine(id: event.id, date: event.timestamp, title: smb ? "SMB" : "Bolus", detail: String(format: "%.2f U", units))
+        case .tempBasal:
+            if event.isScheduledBasal == true { return nil }
+            let rate = NSDecimalNumber(decimal: event.rate ?? 0).doubleValue
+            let minutes = event.durationMin ?? event.duration ?? 0
+            return HistoryLine(id: event.id, date: event.timestamp, title: "Temp", detail: String(format: "%.2f U/h · %d min", rate, minutes))
+        case .pumpSuspend:
+            return HistoryLine(id: event.id, date: event.timestamp, title: "Stopp", detail: "Basal aus")
+        case .pumpResume:
+            return HistoryLine(id: event.id, date: event.timestamp, title: "Weiter", detail: "Basal an")
+        default:
+            return nil
+        }
     }
 
     private static func encodeModel<T: Encodable>(_ value: T) -> String {
