@@ -46,6 +46,7 @@ let algorithmHelpers = [
     "JSON",
     "Rounding",
     "String+Extensions",
+    "TempTargetCalculations",
     "TherapySettingsUtil",
     "TimeInterval+Convenience"
 ].map { "Helpers/\($0).swift" }

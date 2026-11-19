@@ -28,6 +28,11 @@ public final class HandyFreiMedtrumLink: NSObject, CBCentralManagerDelegate, CBP
     private var patchState: PatchState = .none
     private var basalIsTemp = false
     private var basalKnown = false
+    private let basalLock = NSLock()
+    private var liveKnown = false
+    private var liveIsTemp = false
+    private var liveRate = 0.0
+    private var liveStarted = Date.distantPast
     private let queue = DispatchQueue(label: "handyfrei.medtrum")
     /// Fired once when the pump link drops on its own. Not fired when `stop()` closes it.
     public var onConnectionLost: (@Sendable () -> Void)?
@@ -137,6 +142,7 @@ public final class HandyFreiMedtrumLink: NSObject, CBCentralManagerDelegate, CBP
         if rate <= 0 || minutes <= 0 {
             guard cancelFirst else { return }
             try await send(.cancelTempBasal)
+            storeLiveBasal(known: true, isTemp: false, rate: 0, started: Date())
             return
         }
         if cancelFirst {
@@ -145,9 +151,12 @@ public final class HandyFreiMedtrumLink: NSObject, CBCentralManagerDelegate, CBP
             } catch {
                 throw HandyFreiLinkError.pumpRefused("cancelTempBasal gesendet. \(error.localizedDescription)")
             }
+            storeLiveBasal(known: true, isTemp: false, rate: 0, started: Date())
         }
+        if rate <= 0 || minutes <= 0 { return }
         do {
             try await send(.setTempBasal(rate: rate, minutes: minutes))
+            storeLiveBasal(known: true, isTemp: true, rate: rate, started: Date())
         } catch {
             let prefix = cancelFirst ? "cancelTempBasal ausgeführt. " : ""
             throw HandyFreiLinkError.pumpRefused("\(prefix)setTempBasal gesendet. \(error.localizedDescription)")
@@ -373,10 +382,33 @@ public final class HandyFreiMedtrumLink: NSObject, CBCentralManagerDelegate, CBP
         if response.state.isDeliveryHalted || response.basal?.type.isSuspendedByPump() == true {
             basalKnown = true
             basalIsTemp = false
+            storeLiveBasal(known: true, isTemp: false, rate: 0, started: Date())
         } else if let basal = response.basal {
             basalKnown = true
             basalIsTemp = basal.type.isTempBasal()
+            storeLiveBasal(
+                known: true,
+                isTemp: basal.type.isTempBasal(),
+                rate: basal.rate,
+                started: basal.startTime
+            )
         }
+    }
+
+    /// The pump's own basal report. The iPhone prefers this over pump history.
+    public func liveBasal() -> (known: Bool, isTemp: Bool, rate: Double, started: Date) {
+        basalLock.lock()
+        defer { basalLock.unlock() }
+        return (liveKnown, liveIsTemp, liveRate, liveStarted)
+    }
+
+    private func storeLiveBasal(known: Bool, isTemp: Bool, rate: Double, started: Date) {
+        basalLock.lock()
+        liveKnown = known
+        liveIsTemp = isTemp
+        liveRate = rate
+        liveStarted = started
+        basalLock.unlock()
     }
 
     private static func dosingBlock(_ state: PatchState) -> String? {

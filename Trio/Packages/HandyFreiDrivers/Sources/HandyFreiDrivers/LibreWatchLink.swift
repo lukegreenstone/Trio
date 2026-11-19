@@ -18,7 +18,7 @@ public enum HandyFreiLibreLink {
         blePIN: Data,
         phase5RawKey: Data,
         peripheralID: UUID? = nil,
-        onGlucose: @escaping @Sendable (Int) -> Void,
+        onGlucose: @escaping @Sendable (Int, String) -> Void,
         onDisconnect: @escaping @Sendable () -> Void = {},
         onStatus: @escaping @Sendable (String) -> Void = { _ in }
     ) async throws {
@@ -205,7 +205,7 @@ public enum HandyFreiLibreLink {
                         let parts = Calendar.current.dateComponents([.hour, .minute, .second], from: Date())
                         let stamp = String(format: "%02d:%02d:%02d", parts.hour ?? 0, parts.minute ?? 0, parts.second ?? 0)
                         onStatus("Sensor: \(mgdl) mg/dL · \(stamp)")
-                        onGlucose(mgdl)
+                        onGlucose(mgdl, Self.directionName(sample.trend))
                     },
                     onDisconnect: onDisconnect,
                     onStatus: onStatus
@@ -252,6 +252,24 @@ public enum HandyFreiLibreLink {
             index = next
         }
         return bytes.reversed().joined()
+    }
+
+    /// Same arrows Trio stores for a Libre reading.
+    private static func directionName(_ trend: LibreLoopGlucoseSample.Trend) -> String {
+        switch trend {
+        case .notDetermined:
+            return "NOT COMPUTABLE"
+        case .fallingQuickly:
+            return "SingleDown"
+        case .falling:
+            return "FortyFiveDown"
+        case .stable:
+            return "Flat"
+        case .rising:
+            return "FortyFiveUp"
+        case .risingQuickly:
+            return "SingleUp"
+        }
     }
 }
 

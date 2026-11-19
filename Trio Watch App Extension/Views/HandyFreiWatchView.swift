@@ -183,6 +183,7 @@ final class HandyFreiSession {
     private var log: [[String: Any]] = []
     private var deliveries: [HandyFreiLoop.Delivery] = []
     private var readings: [(date: Date, mgdl: Int)] = []
+    private var directions: [Double: String] = [:]
     /// Bumped when the stretch ends so a glucose task already in flight cannot dose afterwards.
     private var doseEpoch = 0
     private var dosing = false
@@ -314,7 +315,7 @@ final class HandyFreiSession {
         loopWatchTask = Task { await self.watchLoop(state, epoch: epoch) }
     }
 
-    /// Recalculates autosens off the loop. It waits until the snapshot ratio is half an hour old.
+    /// Keeps the phone heartbeat. Autosens itself runs inside every loop.
     private func startAutosensRefresh(_ state: WatchState, epoch: Int) {
         autosensTask?.cancel()
         autosensTask = Task { [weak self] in
@@ -323,29 +324,6 @@ final class HandyFreiSession {
                 self.scheduleRefresh()
                 await MainActor.run { state.reportHandyFreiHeartbeat() }
                 try? await Task.sleep(nanoseconds: 60_000_000_000)
-                guard state.handyFreiRunning, epoch == self.doseEpoch else { return }
-                let snapshot = await MainActor.run { () -> (
-                    files: [String: String], readings: [(date: Date, mgdl: Int)],
-                    deliveries: [HandyFreiLoop.Delivery], carbs: [HandyFreiLoop.WatchCarb]
-                ) in
-                    (state.handyFreiFiles, self.readings, self.deliveries, self.loopCarbs())
-                }
-                let age = HandyFreiLoop.autosensAgeMinutes(snapshot.files, now: Date())
-                guard age == nil || (age ?? 0) >= 30 else { continue }
-                let files = snapshot.files
-                let readings = snapshot.readings
-                let deliveries = snapshot.deliveries
-                let carbs = snapshot.carbs
-                let json = await Task.detached(priority: .utility) {
-                    HandyFreiLoop.recomputeAutosens(
-                        files: files, glucose: readings, deliveries: deliveries, watchCarbs: carbs, now: Date()
-                    )
-                }.value
-                guard let json, !json.isEmpty else { continue }
-                await MainActor.run {
-                    state.handyFreiFiles["autosens"] = json
-                    state.handyFreiStatus = "\(Self.clock()) Autosens neu berechnet."
-                }
             }
         }
     }
@@ -435,16 +413,7 @@ final class HandyFreiSession {
 
     private func showSnapshotTotals(_ state: WatchState) {
         guard let mgdl = readings.max(by: { $0.date < $1.date })?.mgdl else { return }
-        let outcome = HandyFreiLoop.tick(
-            files: state.handyFreiFiles,
-            rheosBasal: state.handyFreiBasal,
-            rheosISF: state.handyFreiISF,
-            rheosCarbRatio: state.handyFreiCarbRatio,
-            glucose: readings,
-            deliveries: deliveries,
-            watchCarbs: loopCarbs(),
-            now: Date()
-        )
+        let outcome = tickNow(state)
         guard !outcome.failed else { return }
         lastIOB = outcome.iob
         lastCOB = outcome.cob
@@ -528,16 +497,7 @@ final class HandyFreiSession {
         state.handyFreiStatus = saved
         state.handyFreiLoopLine = saved
         guard let mgdl = readings.max(by: { $0.date < $1.date })?.mgdl else { return }
-        let outcome = HandyFreiLoop.tick(
-            files: state.handyFreiFiles,
-            rheosBasal: state.handyFreiBasal,
-            rheosISF: state.handyFreiISF,
-            rheosCarbRatio: state.handyFreiCarbRatio,
-            glucose: readings,
-            deliveries: deliveries,
-            watchCarbs: loopCarbs(),
-            now: Date()
-        )
+        let outcome = tickNow(state)
         guard revision == mealRevision, !outcome.failed else { return }
         lastIOB = outcome.iob
         lastCOB = outcome.cob
@@ -708,9 +668,9 @@ final class HandyFreiSession {
             blePIN: pin,
             phase5RawKey: phase5,
             peripheralID: UUID(uuidString: sensorPeripheralID),
-            onGlucose: { mgdl in
+            onGlucose: { mgdl, direction in
                 DispatchQueue.main.async {
-                    self.absorb(state, mgdl)
+                    self.absorb(state, mgdl, direction: direction)
                 }
             },
             onDisconnect: { [weak self] in
@@ -832,7 +792,7 @@ final class HandyFreiSession {
         return "\(headline). \(error.localizedDescription). Die Uhr sucht weiter."
     }
 
-    private func absorb(_ state: WatchState, _ mgdl: Int) {
+    private func absorb(_ state: WatchState, _ mgdl: Int, direction: String) {
         guard state.handyFreiRunning else { return }
         let device = WKInterfaceDevice.current()
         device.isBatteryMonitoringEnabled = true
@@ -841,7 +801,7 @@ final class HandyFreiSession {
             state.handyFreiLoopLine = state.handyFreiStatus
             return
         }
-        evaluate(state, mgdl: mgdl, appendReading: true)
+        evaluate(state, mgdl: mgdl, appendReading: true, direction: direction)
     }
 
     private func secondsUntilLoop() -> Int {
@@ -865,6 +825,38 @@ final class HandyFreiSession {
         HandyFreiLoop.mealLines(files: state.handyFreiFiles, carbs: loopCarbs(), now: Date())
     }
 
+    private func prepareFiles(_ state: WatchState) {
+        state.handyFreiFiles = HandyFreiLoop.prepareLoopFiles(
+            files: state.handyFreiFiles,
+            rheosBasal: state.handyFreiBasal,
+            rheosISF: state.handyFreiISF,
+            rheosCarbRatio: state.handyFreiCarbRatio,
+            glucose: readings,
+            deliveries: deliveries,
+            watchCarbs: loopCarbs(),
+            now: Date()
+        )
+    }
+
+    private func tickNow(_ state: WatchState) -> HandyFreiLoop.Outcome {
+        let live = HandyFreiMedtrumLink.shared.liveBasal()
+        return HandyFreiLoop.tick(
+            files: state.handyFreiFiles,
+            rheosBasal: state.handyFreiBasal,
+            rheosISF: state.handyFreiISF,
+            rheosCarbRatio: state.handyFreiCarbRatio,
+            glucose: readings,
+            deliveries: deliveries,
+            watchCarbs: loopCarbs(),
+            now: Date(),
+            directions: directions,
+            liveBasalKnown: live.known,
+            liveBasalIsTemp: live.isTemp,
+            liveBasalRate: live.rate,
+            liveBasalStarted: live.started
+        )
+    }
+
     private func loopCarbs() -> [HandyFreiLoop.WatchCarb] {
         carbs.map {
             HandyFreiLoop.WatchCarb(
@@ -886,13 +878,17 @@ final class HandyFreiSession {
         if readings.count > 1500 { readings.removeFirst(readings.count - 1500) }
         deliveries.removeAll { $0.date.timeIntervalSince1970 < cutoff }
         carbs.removeAll { $0.date < cutoff }
+        directions = directions.filter { $0.key >= cutoff }
         if log.count > 4000 { log.removeFirst(log.count - 4000) }
     }
 
     /// One loop pass. A minute that arrives while a run is in progress, or before five minutes are up, does not start another determination.
-    private func evaluate(_ state: WatchState, mgdl: Int, appendReading: Bool, force: Bool = false) {
+    private func evaluate(_ state: WatchState, mgdl: Int, appendReading: Bool, force: Bool = false, direction: String = "") {
         if appendReading {
-            readings.append((Date(), mgdl))
+            let stamp = Date()
+            readings.append((stamp, mgdl))
+            if !direction.isEmpty { directions[stamp.timeIntervalSince1970] = direction }
+            state.trend = direction.isEmpty ? state.trend : direction
             stallAttempts = 0
             prune()
             log.append(["date": Date().timeIntervalSince1970, "kind": "glucose", "mgdl": mgdl])
@@ -919,16 +915,8 @@ final class HandyFreiSession {
             return
         }
         determining = true
-        let outcome = HandyFreiLoop.tick(
-            files: state.handyFreiFiles,
-            rheosBasal: state.handyFreiBasal,
-            rheosISF: state.handyFreiISF,
-            rheosCarbRatio: state.handyFreiCarbRatio,
-            glucose: readings,
-            deliveries: deliveries,
-            watchCarbs: loopCarbs(),
-            now: Date()
-        )
+        prepareFiles(state)
+        let outcome = tickNow(state)
         determining = false
         guard revision == mealRevision else { return }
         lastLoopAt = Date()
@@ -1069,16 +1057,7 @@ final class HandyFreiSession {
     }
 
     private func refreshTotals(_ state: WatchState, mgdl: Int, line: String) async {
-        let outcome = HandyFreiLoop.tick(
-            files: state.handyFreiFiles,
-            rheosBasal: state.handyFreiBasal,
-            rheosISF: state.handyFreiISF,
-            rheosCarbRatio: state.handyFreiCarbRatio,
-            glucose: readings,
-            deliveries: deliveries,
-            watchCarbs: loopCarbs(),
-            now: Date()
-        )
+        let outcome = tickNow(state)
         guard !outcome.failed else { return }
         await MainActor.run {
             self.lastIOB = outcome.iob
@@ -1464,6 +1443,29 @@ final class HandyFreiSession {
         struct Reading: Codable {
             var date: TimeInterval
             var mgdl: Int
+            var direction: String?
+
+            init(date: TimeInterval, mgdl: Int, direction: String? = nil) {
+                self.date = date
+                self.mgdl = mgdl
+                self.direction = direction
+            }
+
+            private enum CodingKeys: String, CodingKey { case date, mgdl, direction }
+
+            init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                date = try container.decode(TimeInterval.self, forKey: .date)
+                mgdl = try container.decode(Int.self, forKey: .mgdl)
+                direction = try container.decodeIfPresent(String.self, forKey: .direction)
+            }
+
+            func encode(to encoder: Encoder) throws {
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                try container.encode(date, forKey: .date)
+                try container.encode(mgdl, forKey: .mgdl)
+                try container.encodeIfPresent(direction, forKey: .direction)
+            }
         }
 
         struct File: Codable {
@@ -1576,7 +1578,9 @@ final class HandyFreiSession {
                 StoredDelivery(kind: $0.kind, units: $0.units, minutes: $0.minutes, date: $0.date.timeIntervalSince1970, label: $0.label)
             }
             file.carbs = session.carbs
-            file.readings = session.readings.map { Reading(date: $0.date.timeIntervalSince1970, mgdl: $0.mgdl) }
+            file.readings = session.readings.map {
+                Reading(date: $0.date.timeIntervalSince1970, mgdl: $0.mgdl, direction: session.directions[$0.date.timeIntervalSince1970])
+            }
             file.lastSuccess = session.lastSuccess.timeIntervalSince1970
             file.lastReason = session.lastReason
             file.lastIOB = session.lastIOB
@@ -1636,6 +1640,13 @@ final class HandyFreiSession {
             }
             session.carbs = file.carbs
             session.readings = file.readings.map { (date: Date(timeIntervalSince1970: $0.date), mgdl: $0.mgdl) }
+            var arrows: [Double: String] = [:]
+            for reading in file.readings {
+                if let direction = reading.direction, !direction.isEmpty {
+                    arrows[reading.date] = direction
+                }
+            }
+            session.directions = arrows
             if file.lastSuccess > 1_000_000_000 {
                 session.lastSuccess = Date(timeIntervalSince1970: file.lastSuccess)
                 session.lastDose = session.lastSuccess

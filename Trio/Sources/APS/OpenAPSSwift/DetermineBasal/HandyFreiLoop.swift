@@ -89,13 +89,18 @@ public enum HandyFreiLoop {
         glucose: [(date: Date, mgdl: Int)],
         deliveries: [Delivery],
         watchCarbs: [WatchCarb] = [],
-        now: Date
+        now: Date,
+        directions: [Double: String] = [:],
+        liveBasalKnown: Bool = false,
+        liveBasalIsTemp: Bool = false,
+        liveBasalRate: Double = 0,
+        liveBasalStarted: Date = .distantPast
     ) -> Outcome {
         let empty = Outcome(
             deliver: false, cancelTemp: false, rate: 0, minutes: 0, smb: 0,
             reason: "Schatten. Eingaben fehlen.", iob: 0, maxIOB: 0, maxBolus: 0, maxBasal: 0, cob: 0, failed: false
         )
-        let points = combinedGlucose(files: files, watch: glucose)
+        let points = combinedGlucose(files: files, watch: glucose, directions: directions)
         guard let newest = points.max(by: { $0.dateString < $1.dateString }) else { return empty }
         let glucoseIsStale = now.timeIntervalSince(newest.dateString) > 12 * 60
         do {
@@ -113,10 +118,19 @@ public enum HandyFreiLoop {
             let activeTargets = liveTempTargets(files, now: now)
             if let active = activeTargets
                 .filter({ NSDecimalNumber(decimal: $0.duration).doubleValue > 0 })
-                .max(by: { $0.createdAt < $1.createdAt }),
-                let stored = active.halfBasalTarget, stored > 0
+                .max(by: { $0.createdAt < $1.createdAt })
             {
-                preferences.halfBasalExerciseTarget = stored
+                let target = active.targetBottom ?? active.targetTop ?? 0
+                if target > 0,
+                   let effective = TempTargetCalculations.computeEffectiveHBT(
+                       tempTargetHalfBasalTarget: active.halfBasalTarget,
+                       settingHalfBasalTarget: preferences.halfBasalExerciseTarget,
+                       target: target,
+                       autosensMax: preferences.autosensMax
+                   )
+                {
+                    preferences.halfBasalExerciseTarget = effective
+                }
             }
             var basal: [BasalProfileEntry] = try decode(files, "basal", "Basalprofil")
             let targets: BGTargets = try decode(files, "targets", "Zielwerte")
@@ -204,9 +218,18 @@ public enum HandyFreiLoop {
                 ),
                 deliveries: deliveries,
                 basal: basal,
-                now: now
+                now: now,
+                preserveTDD: !(files["tddSeries"] ?? "").isEmpty
             )
-            let current = currentTemp(history: history, deliveries: deliveries, now: now)
+            let current = currentTemp(
+                history: history,
+                deliveries: deliveries,
+                now: now,
+                liveBasalKnown: liveBasalKnown,
+                liveBasalIsTemp: liveBasalIsTemp,
+                liveBasalRate: liveBasalRate,
+                liveBasalStarted: liveBasalStarted
+            )
             let determination = try DeterminationGenerator.generate(
                 profile: profile,
                 preferences: preferences,
@@ -224,12 +247,10 @@ public enum HandyFreiLoop {
                 currentTime: now
             )
             let rate = min(NSDecimalNumber(decimal: determination?.rate ?? 0).doubleValue, NSDecimalNumber(decimal: settings.maxBasal).doubleValue)
-            let minutes = min(30, Int(NSDecimalNumber(decimal: determination?.duration ?? 0).doubleValue))
-            var smb = NSDecimalNumber(decimal: determination?.units ?? 0).doubleValue
+            let minutes = max(0, Int(NSDecimalNumber(decimal: determination?.duration ?? 0).doubleValue))
+            let smb = max(0, NSDecimalNumber(decimal: determination?.units ?? 0).doubleValue)
             let maxBolus = NSDecimalNumber(decimal: settings.maxBolus).doubleValue
             let maxIOB = NSDecimalNumber(decimal: preferences.maxIOB).doubleValue
-            smb = min(smb, maxBolus)
-            if currentIOB + smb > maxIOB { smb = 0 }
             let cancel = (determination?.rate ?? 0) == 0
             let enact = mode != "open"
             return Outcome(
@@ -267,24 +288,28 @@ public enum HandyFreiLoop {
     /// the same gap the iPhone uses when it backfills.
     private static func combinedGlucose(
         files: [String: String],
-        watch: [(date: Date, mgdl: Int)]
+        watch: [(date: Date, mgdl: Int)],
+        directions: [Double: String] = [:]
     ) -> [BloodGlucose] {
         var points: [BloodGlucose] = []
         if let raw = files["glucoseHistory"]?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
             points = (try? JSONBridge.from(string: raw)) ?? []
         }
+        let smoothed = smoothGlucose(files) ? smoothedValues(watch) : [:]
         for sample in watch.sorted(by: { $0.date < $1.date }) {
             if points.contains(where: { abs($0.dateString.timeIntervalSince(sample.date)) < 3.5 * 60 }) { continue }
+            let mgdl = smoothed[sample.date] ?? sample.mgdl
+            let arrow = directions[sample.date.timeIntervalSince1970].flatMap { BloodGlucose.Direction(rawValue: $0) }
             points.append(BloodGlucose(
                 id: "watch-\(Int(sample.date.timeIntervalSince1970))",
-                sgv: sample.mgdl,
-                direction: nil,
+                sgv: mgdl,
+                direction: arrow,
                 date: Decimal(Int64(sample.date.timeIntervalSince1970 * 1000)),
                 dateString: sample.date,
                 unfiltered: nil,
                 filtered: nil,
                 noise: nil,
-                glucose: sample.mgdl,
+                glucose: mgdl,
                 type: "sgv"
             ))
         }
@@ -346,8 +371,10 @@ public enum HandyFreiLoop {
         _ variables: TrioCustomOrefVariables,
         deliveries: [Delivery],
         basal: [BasalProfileEntry],
-        now: Date
+        now: Date,
+        preserveTDD: Bool
     ) -> TrioCustomOrefVariables {
+        if preserveTDD { return variables }
         var copy = variables
         let elapsedHours = max(0, now.timeIntervalSince(variables.date) / 3600)
         let kept = max(0, (24 - elapsedHours) / 24)
@@ -722,6 +749,9 @@ public enum HandyFreiLoop {
     /// Same two-window autosens as the iPhone. Returns nil when there is not enough glucose.
     public static func recomputeAutosens(
         files: [String: String],
+        rheosBasal: [Double] = [],
+        rheosISF: [Double] = [],
+        rheosCarbRatio: [Double] = [],
         glucose: [(date: Date, mgdl: Int)],
         deliveries: [Delivery],
         watchCarbs: [WatchCarb],
@@ -749,7 +779,7 @@ public enum HandyFreiLoop {
             let rawRatios: CarbRatios = try decode(files, "carbRatios", "KE-Faktor")
             let saved = savedSchedules(
                 files, basal: rawBasal, isf: rawISF, carbRatios: rawRatios,
-                rheosBasal: [], rheosISF: [], rheosCarbRatio: [], maxBasal: settings.maxBasal
+                rheosBasal: rheosBasal, rheosISF: rheosISF, rheosCarbRatio: rheosCarbRatio, maxBasal: settings.maxBasal
             )
             basal = saved.basal
             isf = saved.isf
@@ -956,8 +986,23 @@ public enum HandyFreiLoop {
     }
 
     /// The temp still running on the pump. A watch dose wins when it is newer than the copied history.
-    private static func currentTemp(history: [PumpHistoryEvent], deliveries: [Delivery], now: Date) -> TempBasal {
+    private static func currentTemp(
+        history: [PumpHistoryEvent],
+        deliveries: [Delivery],
+        now: Date,
+        liveBasalKnown: Bool = false,
+        liveBasalIsTemp: Bool = false,
+        liveBasalRate: Double = 0,
+        liveBasalStarted: Date = .distantPast
+    ) -> TempBasal {
         let idle = TempBasal(duration: 0, rate: 0, temp: .absolute, timestamp: now)
+        if liveBasalKnown, !liveBasalIsTemp { return idle }
+        if liveBasalKnown, liveBasalIsTemp {
+            let left = remainingMinutes(
+                history: history, deliveries: deliveries, now: now, started: liveBasalStarted
+            )
+            return TempBasal(duration: max(1, left), rate: Decimal(liveBasalRate), temp: .absolute, timestamp: now)
+        }
         let fromDelivery: (date: Date, temp: TempBasal)? = deliveries.last(where: {
             $0.kind == "temp" && now.timeIntervalSince($0.date) < Double(max($0.minutes, 0)) * 60
         }).map { dose in
@@ -986,6 +1031,316 @@ public enum HandyFreiLoop {
         default:
             return idle
         }
+    }
+
+    private static func remainingMinutes(
+        history: [PumpHistoryEvent],
+        deliveries: [Delivery],
+        now: Date,
+        started: Date
+    ) -> Int {
+        if let dose = deliveries.last(where: {
+            $0.kind == "temp" && abs($0.date.timeIntervalSince(started)) < 180
+        }) {
+            return max(0, dose.minutes - Int(now.timeIntervalSince(dose.date) / 60))
+        }
+        if let event = history.filter({
+            $0.type == .tempBasal && abs($0.timestamp.timeIntervalSince(started)) < 180
+        }).max(by: { $0.timestamp < $1.timestamp }) {
+            let duration = history.first {
+                $0.type == .tempBasalDuration && abs($0.timestamp.timeIntervalSince(event.timestamp)) < 2
+            }?.durationMin ?? event.durationMin ?? event.duration ?? 0
+            return max(0, duration - Int(now.timeIntervalSince(event.timestamp) / 60))
+        }
+        guard started > .distantPast else { return 30 }
+        return max(0, 30 - Int(now.timeIntervalSince(started) / 60))
+    }
+
+    /// Fresh autosens and a new 5-minute TDD point, then the same weighted average the iPhone stores.
+    public static func prepareLoopFiles(
+        files: [String: String],
+        rheosBasal: [Double],
+        rheosISF: [Double],
+        rheosCarbRatio: [Double],
+        glucose: [(date: Date, mgdl: Int)],
+        deliveries: [Delivery],
+        watchCarbs: [WatchCarb],
+        now: Date
+    ) -> [String: String] {
+        var files = files
+        if let json = recomputeAutosens(
+            files: files,
+            rheosBasal: rheosBasal,
+            rheosISF: rheosISF,
+            rheosCarbRatio: rheosCarbRatio,
+            glucose: glucose,
+            deliveries: deliveries,
+            watchCarbs: watchCarbs,
+            now: now
+        ), !json.isEmpty {
+            files["autosens"] = json
+        }
+        refreshTDD(&files, deliveries: deliveries, now: now)
+        return files
+    }
+
+    private struct TDDPoint: Codable {
+        var date: TimeInterval
+        var total: Double
+    }
+
+    private static func refreshTDD(_ files: inout [String: String], deliveries: [Delivery], now: Date) {
+        let basal: [BasalProfileEntry] = (try? decode(files, "basal", "Basalprofil")) ?? []
+        var history = (try? pumpHistory(files)) ?? []
+        history = history.filter { now.timeIntervalSince($0.timestamp) <= 24 * 3600 }
+        let known = Set(history.map(\.id))
+        history.append(contentsOf: deliveries.filter { !alreadyRecorded($0, history) }.flatMap(events).filter { !known.contains($0.id) })
+        let total = tddTotal(history: history, basal: basal, rates: supportedRates(files), now: now)
+        guard total > 0 else { return }
+        var series = tddSeries(files)
+        let tenDays = now.addingTimeInterval(-10 * 24 * 3600).timeIntervalSince1970
+        series = series.filter { $0.date >= tenDays }
+        if series.last.map({ now.timeIntervalSince1970 - $0.date >= 4 * 60 }) ?? true {
+            series.append(TDDPoint(date: now.timeIntervalSince1970, total: total))
+        }
+        let text = encodeModel(series)
+        if !text.isEmpty { files["tddSeries"] = text }
+        let week = now.addingTimeInterval(-7 * 24 * 3600).timeIntervalSince1970
+        let recentCount = series.filter { $0.date > week && $0.total > 0 }.count
+        files["tddSufficient"] = recentCount >= Int(Double(7 * 288) * 0.75) ? "true" : "false"
+        guard var variables = trioVariables(files), let last = series.last, last.total > 0 else { return }
+        let historical = series.reduce(Decimal(0)) { $0 + Decimal($1.total) }
+        let historicalCount = max(series.count, 1)
+        let twoHours = now.addingTimeInterval(-2 * 3600).timeIntervalSince1970
+        let recent = series.filter { $0.date >= twoHours }
+        let recentSum = recent.reduce(Decimal(0)) { $0 + Decimal($1.total) }
+        let recentDivisor = max(recent.count, 1)
+        let weight: Decimal
+        if let preferences: Preferences = try? decode(files, "preferences", "Einstellungen") {
+            weight = preferences.weightPercentage
+        } else {
+            weight = 1
+        }
+        let tenDayAverage = historical / Decimal(historicalCount)
+        let twoHourAverage = recentSum / Decimal(recentDivisor)
+        variables.currentTDD = Decimal(last.total)
+        variables.average_total_data = tenDayAverage
+        variables.past2hoursAverage = twoHourAverage
+        variables.weightedAverage = weight * twoHourAverage + (1 - weight) * tenDayAverage
+        files["trioVariables"] = encodeModel(variables)
+    }
+
+    private static func tddSeries(_ files: [String: String]) -> [TDDPoint] {
+        guard let raw = files["tddSeries"]?.data(using: .utf8) else { return [] }
+        return (try? JSONDecoder().decode([TDDPoint].self, from: raw)) ?? []
+    }
+
+    /// Bolus plus temp plus scheduled basal, the same three parts `TDDStorage.calculateTDD` adds.
+    private static func tddTotal(
+        history: [PumpHistoryEvent],
+        basal: [BasalProfileEntry],
+        rates: [Decimal],
+        now: Date
+    ) -> Double {
+        let bolus = history.reduce(Decimal(0)) { sum, event in
+            guard event.type == .bolus || event.type == .smb else { return sum }
+            return sum + (event.amount ?? 0)
+        }
+        let spans = suspensionSpans(history, now: now)
+        var temps: [(start: Date, end: Date, rate: Decimal)] = []
+        for event in history where event.type == .tempBasal && event.isScheduledBasal != true {
+            let minutes = history.first {
+                $0.type == .tempBasalDuration && abs($0.timestamp.timeIntervalSince(event.timestamp)) < 2
+            }?.durationMin ?? event.duration ?? 0
+            let rate = event.rate ?? event.amount ?? 0
+            guard minutes > 0 else { continue }
+            temps.append((event.timestamp, event.timestamp.addingTimeInterval(TimeInterval(minutes * 60)), rate))
+        }
+        temps.sort { $0.start < $1.start }
+        var tempInsulin = Decimal(0)
+        for (index, event) in temps.enumerated() {
+            var end = min(event.end, now)
+            if index + 1 < temps.count { end = min(end, temps[index + 1].start) }
+            guard end > event.start else { continue }
+            let suspended = spans.reduce(0.0) { total, span in
+                total + max(0, min(end, span.end).timeIntervalSince(max(event.start, span.start)))
+            }
+            let hours = Decimal(max(0, (end.timeIntervalSince(event.start) - suspended) / 3600))
+            let units = floorToPump(event.rate * hours, rates: rates)
+            if units > 0 { tempInsulin += units }
+        }
+        let scheduled = scheduledInsulin(history: history, basal: basal, now: now, rates: rates)
+        return NSDecimalNumber(decimal: bolus + tempInsulin + scheduled).doubleValue
+    }
+
+    private static func floorToPump(_ units: Decimal, rates: [Decimal]) -> Decimal {
+        guard units > 0 else { return 0 }
+        guard !rates.isEmpty else { return units }
+        return rates.filter { $0 <= units }.max() ?? 0
+    }
+
+    private static func suspensionSpans(_ history: [PumpHistoryEvent], now: Date) -> [(start: Date, end: Date)] {
+        let suspends = history.filter { $0.type == .pumpSuspend }.map(\.timestamp).sorted()
+        let resumes = history.filter { $0.type == .pumpResume }.map(\.timestamp).sorted()
+        var spans: [(start: Date, end: Date)] = []
+        var next = resumes.startIndex
+        for suspend in suspends {
+            while next < resumes.endIndex, resumes[next] <= suspend { next += 1 }
+            guard next < resumes.endIndex else {
+                if suspend < now { spans.append((suspend, now)) }
+                break
+            }
+            spans.append((suspend, resumes[next]))
+            next += 1
+        }
+        return spans
+    }
+
+    private static func scheduledInsulin(
+        history: [PumpHistoryEvent],
+        basal: [BasalProfileEntry],
+        now: Date,
+        rates: [Decimal]
+    ) -> Decimal {
+        guard !basal.isEmpty, let first = history.map(\.timestamp).min(), first < now else { return 0 }
+        var covered = first
+        var suspended = false
+        if let firstKind = history
+            .filter({ $0.type == .pumpSuspend || $0.type == .pumpResume })
+            .min(by: { $0.timestamp < $1.timestamp })?.type
+        {
+            suspended = firstKind == .pumpResume
+        }
+        var events: [(date: Date, end: Date, kind: String)] = []
+        for event in history {
+            switch event.type {
+            case .tempBasal where event.isScheduledBasal != true:
+                let minutes = history.first {
+                    $0.type == .tempBasalDuration && abs($0.timestamp.timeIntervalSince(event.timestamp)) < 2
+                }?.durationMin ?? event.duration ?? 0
+                events.append((event.timestamp, event.timestamp.addingTimeInterval(TimeInterval(minutes * 60)), "temp"))
+            case .pumpSuspend:
+                events.append((event.timestamp, event.timestamp, "suspend"))
+            case .pumpResume:
+                events.append((event.timestamp, event.timestamp, "resume"))
+            default:
+                break
+            }
+        }
+        events.append((now, now, "now"))
+        events.sort { $0.date < $1.date }
+        var insulin = Decimal(0)
+        for pair in zip(events, events.dropFirst()) {
+            switch pair.0.kind {
+            case "suspend": suspended = true
+            case "resume": suspended = false
+            default: break
+            }
+            covered = max(covered, pair.0.end)
+            guard !suspended, pair.1.date.timeIntervalSince(covered) >= 60 else { continue }
+            var cursor = covered
+            while cursor < pair.1.date {
+                let parts = Calendar.current.dateComponents([.year, .month, .day, .hour], from: cursor)
+                let nextHour = Calendar.current.date(from: parts).flatMap {
+                    Calendar.current.date(byAdding: .hour, value: 1, to: $0)
+                } ?? pair.1.date
+                let sliceEnd = min(pair.1.date, nextHour)
+                if sliceEnd <= cursor { break }
+                if let rate = basalRate(at: minutesOfDay(cursor), profile: basal) {
+                    let hours = Decimal(sliceEnd.timeIntervalSince(cursor) / 3600)
+                    let units = floorToPump(rate * hours, rates: rates)
+                    if units > 0 { insulin += units }
+                }
+                cursor = sliceEnd
+            }
+        }
+        return insulin
+    }
+
+    private static func minutesOfDay(_ date: Date) -> Int {
+        let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
+        return (parts.hour ?? 0) * 60 + (parts.minute ?? 0)
+    }
+
+    private static func basalRate(at minute: Int, profile: [BasalProfileEntry]) -> Decimal? {
+        guard !profile.isEmpty else { return nil }
+        if profile.count == 1 { return profile[0].rate }
+        var left = 0
+        var right = profile.count - 1
+        while left <= right {
+            let mid = (left + right) / 2
+            let entry = profile[mid]
+            let next = mid + 1 < profile.count ? profile[mid + 1].minutes : 24 * 60
+            if minute >= entry.minutes, minute < next { return entry.rate }
+            if minute < entry.minutes { right = mid - 1 } else { left = mid + 1 }
+        }
+        return profile.last?.rate
+    }
+
+    private static func smoothGlucose(_ files: [String: String]) -> Bool {
+        guard let data = files["trioSettings"]?.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        if let value = object["smoothGlucose"] as? Bool { return value }
+        if let number = object["smoothGlucose"] as? NSNumber { return number.boolValue }
+        return false
+    }
+
+    /// AAPS exponential smoothing, the same weights `FetchGlucoseManager` stores.
+    private static func smoothedValues(_ samples: [(date: Date, mgdl: Int)]) -> [Date: Int] {
+        let data = samples.sorted { $0.date < $1.date }
+        guard !data.isEmpty else { return [:] }
+        var validWindowCount = max(data.count - 1, 0)
+        if data.count >= 2 {
+            for offset in 0 ..< (data.count - 1) {
+                let newer = data[data.count - 1 - offset]
+                let older = data[data.count - 2 - offset]
+                let gap = Int((newer.date.timeIntervalSince(older.date) / 60).rounded())
+                if gap >= 12 {
+                    validWindowCount = offset + 1
+                    break
+                }
+                if newer.mgdl == 38 {
+                    validWindowCount = offset
+                    break
+                }
+            }
+        }
+        var result: [Date: Int] = [:]
+        guard validWindowCount >= 4 else {
+            for sample in data.suffix(validWindowCount) {
+                result[sample.date] = max(sample.mgdl, 39)
+            }
+            return result
+        }
+        let window = Array(data.suffix(validWindowCount))
+        let alpha1 = Decimal(string: "0.5")!
+        let alpha2 = Decimal(string: "0.4")!
+        let beta2 = Decimal(1)
+        let weight = Decimal(string: "0.4")!
+        var first: [Decimal] = [Decimal(window[0].mgdl)]
+        var current = first[0]
+        for sample in window.dropFirst() {
+            let raw = Decimal(sample.mgdl)
+            current = current + alpha1 * (raw - current)
+            first.append(current)
+        }
+        var second: [Decimal] = [Decimal(window[0].mgdl)]
+        var previous = second[0]
+        var delta = Decimal(window[1].mgdl - window[0].mgdl)
+        for sample in window.dropFirst() {
+            let raw = Decimal(sample.mgdl)
+            let next = alpha2 * raw + (Decimal(1) - alpha2) * (previous + delta)
+            delta = beta2 * (next - previous) + (Decimal(1) - beta2) * delta
+            previous = next
+            second.append(next)
+        }
+        for (index, sample) in window.enumerated() {
+            let blended = weight * first[index] + (Decimal(1) - weight) * second[index]
+            let rounded = NSDecimalNumber(decimal: blended).doubleValue.rounded()
+            result[sample.date] = max(Int(rounded), 39)
+        }
+        return result
     }
 
     private static func factor(_ factors: [Double], minutes: Int) -> Double {

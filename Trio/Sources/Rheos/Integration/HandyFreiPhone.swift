@@ -204,6 +204,7 @@ enum HandyFreiPhone {
         if !live.carbs.isEmpty { files["carbHistory"] = live.carbs }
         if !live.glucose.isEmpty { files["glucoseHistory"] = live.glucose }
         files["tddSufficient"] = hasEnoughTDD() ? "true" : "false"
+        files["tddSeries"] = tddSeriesJSON()
         let presets = livePresets()
         files["overridePresets"] = presets.overrides
         files["tempTargetPresets"] = presets.targets
@@ -287,6 +288,25 @@ enum HandyFreiPhone {
             })
         }
         return (pump, carbs, glucose)
+    }
+
+    /// Ten days of 5-minute TDD points, the series the iPhone averages for dynamic ISF.
+    private static func tddSeriesJSON() -> String {
+        let context = CoreDataStack.shared.newTaskContext()
+        var rows: [[String: Any]] = []
+        context.performAndWait {
+            let request = TDDStored.fetchRequest()
+            let cutoff = Date().addingTimeInterval(-10 * 24 * 3600)
+            request.predicate = NSPredicate(format: "date >= %@ AND total != nil", cutoff as NSDate)
+            let found = (try? context.fetch(request)) ?? []
+            rows = found.compactMap { item in
+                guard let date = item.date, let total = item.total else { return nil }
+                return ["date": date.timeIntervalSince1970, "total": total.doubleValue]
+            }.sorted { (($0["date"] as? Double) ?? 0) < (($1["date"] as? Double) ?? 0) }
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: rows),
+              let text = String(data: data, encoding: .utf8) else { return "[]" }
+        return text
     }
 
     /// Same 7-day, 75-percent rule the iPhone uses before it allows the dynamic ISF formula.
