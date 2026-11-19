@@ -11,6 +11,8 @@ struct WatchConfigAppleWatchView: BaseView {
     @State var hintLabel: String?
     @State private var decimalPlaceholder: Decimal = 0.0
     @State private var booleanPlaceholder: Bool = false
+    @State private var handyFreiNote = ""
+    @State private var handyFreiReport = HandyFreiPhone.lastReport
 
     @Environment(\.colorScheme) var colorScheme
     @Environment(AppState.self) var appState
@@ -64,6 +66,70 @@ struct WatchConfigAppleWatchView: BaseView {
                 headerText: String(localized: "Apple Watch Configuration")
             )
 
+            Section {
+                Toggle("Handy-frei (experimentell)", isOn: Binding(
+                    get: { HandyFrei.isEnabled() },
+                    set: { HandyFrei.setEnabled($0) }
+                ))
+                Text("Aus, bis du es einschaltest. Sensor, Loop und Pumpe laufen dann auf der Uhr. Das iPhone trennt nichts selbst. Du schaltest Bluetooth in den Einstellungen aus. Die Kopplung bleibt liegen.")
+                    .font(.footnote)
+                Button("Handy-frei starten") {
+                    let document = RheosStore.shared.loadDocument()
+                    let learned = document.decision?.learnedFactors ?? document.applied?.factors
+                    let storage = resolver.resolve(FileStorage.self)
+                    let files = HandyFreiPhone.loopFiles(storage: storage)
+                    let session = HandyFreiPhone.prepare(
+                        fingerprint: HandyFrei.Fingerprint(
+                            pumpPeripheralID: nil,
+                            pumpSerial: nil,
+                            sensorSerial: nil,
+                            sensorPeripheralID: nil
+                        ),
+                        snapshot: HandyFreiPhone.collectSnapshot(
+                            pump: resolver.resolve(DeviceDataManager.self)?.pumpManager,
+                            cgm: resolver.resolve(FetchGlucoseManager.self)?.cgmManager,
+                            iob: 0,
+                            cob: 0,
+                            maxBolus: 0,
+                            maxIOB: 0,
+                            rheosBasal: learned?.basal ?? [],
+                            rheosISF: learned?.isf ?? [],
+                            rheosCarbRatio: learned?.carbRatio ?? [],
+                            loopFiles: files,
+                            glucose: nil
+                        )
+                    )
+                    handyFreiNote = session.note
+                }
+                .disabled(!HandyFrei.isEnabled())
+                Button("Sensor & Loop aufs iPhone zurückholen") {
+                    let cgm = resolver.resolve(FetchGlucoseManager.self)?.cgmManager
+                    let session = HandyFreiPhone.stop(
+                        fingerprint: HandyFrei.Fingerprint(
+                            pumpPeripheralID: nil,
+                            pumpSerial: nil,
+                            sensorSerial: nil,
+                            sensorPeripheralID: nil
+                        ),
+                        cgm: cgm
+                    )
+                    handyFreiNote = session.note.isEmpty
+                        ? "Sensor und Loop sind wieder auf dem iPhone. Ein späteres Protokoll wird nur einmal übernommen."
+                        : session.note
+                    handyFreiReport = HandyFreiPhone.lastReport
+                }
+                Text("Holt den Sensor und den Loop zurück, auch wenn die Uhr nicht antwortet. Eine spätere Übergabe der Uhr wird nur einmal gezählt.")
+                    .font(.footnote)
+                if !handyFreiNote.isEmpty {
+                    Text(handyFreiNote).font(.footnote)
+                }
+                if !handyFreiReport.isEmpty {
+                    Text(handyFreiReport).font(.footnote)
+                }
+            } header: {
+                Text("Handy-frei")
+            }
+
             Section(
                 header: Text("Contact Image"),
                 content: {
@@ -77,6 +143,7 @@ struct WatchConfigAppleWatchView: BaseView {
                 }
             ).listRowBackground(Color.chart)
         }
+        .onAppear { handyFreiReport = HandyFreiPhone.lastReport }
         .listSectionSpacing(sectionSpacing)
         .sheet(isPresented: $shouldDisplayHint) {
             SettingInputHintView(

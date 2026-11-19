@@ -152,3 +152,58 @@ extension ScheduledBasalInference {
         return .scheduled(rate)
     }
 }
+
+extension ScheduledBasalInference {
+    /// Insulin from the basal profile for spans no temp basal and no suspension cover.
+    /// Temp intervals are marked covered so they are not counted twice.
+    /// An anchor at `windowStart` lets an open loop with only boluses still count the schedule.
+    static func scheduledInsulinByHour(
+        windowStart: Date,
+        now: Date,
+        profile: [BasalProfileEntry],
+        tempIntervals: [(start: Date, end: Date)],
+        suspensions: [(start: Date, end: Date)],
+        calendar: Calendar = .current
+    ) -> [Date: Double] {
+        guard !profile.isEmpty, windowStart < now else { return [:] }
+        var events: [TimelineEvent] = [TimelineEvent(start: windowStart, kind: .profileRateChange)]
+        for interval in tempIntervals {
+            let start = max(interval.start, windowStart)
+            let end = min(interval.end, now)
+            guard end > start else { continue }
+            events.append(TimelineEvent(start: start, end: end, kind: .tempBasal))
+        }
+        for pair in suspensions {
+            let start = max(pair.start, windowStart)
+            let end = min(pair.end, now)
+            guard end > start else { continue }
+            events.append(TimelineEvent(start: start, kind: .suspend))
+            events.append(TimelineEvent(start: end, kind: .resume))
+        }
+        var byHour: [Date: Double] = [:]
+        for segment in segments(events: events, profile: profile, now: now) {
+            add(segment, into: &byHour, calendar: calendar)
+        }
+        return byHour
+    }
+
+    private static func add(_ segment: Segment, into byHour: inout [Date: Double], calendar: Calendar) {
+        var cursor = segment.start
+        let rate = NSDecimalNumber(decimal: segment.rate).doubleValue
+        var guardrail = 0
+        while cursor < segment.end, guardrail < 24 * 40 {
+            guardrail += 1
+            let components = calendar.dateComponents([.year, .month, .day, .hour], from: cursor)
+            guard let hourStart = calendar.date(from: components),
+                  let nextHour = calendar.date(byAdding: .hour, value: 1, to: hourStart)
+            else { return }
+            let sliceEnd = min(segment.end, nextHour)
+            let hours = sliceEnd.timeIntervalSince(cursor) / 3600
+            if hours > 0 {
+                byHour[hourStart, default: 0] += rate * hours
+            }
+            if sliceEnd <= cursor { return }
+            cursor = sliceEnd
+        }
+    }
+}

@@ -34,6 +34,8 @@ struct LoopStatusView: View {
                             .font(.subheadline)
                             .bold()
 
+                        RheosModeBanner()
+
                         // only meaningful next to an actual determination
                         if state.determinationsFromPersistence.first != nil, let enactmentSummary {
                             Text(enactmentSummary)

@@ -27,6 +27,10 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
     @Injected() private var bolusCalculationManager: BolusCalculationManager!
     @Injected() private var iobService: IOBService!
     @Injected() private var notificationsManager: UserNotificationsManager!
+    @Injected() private var rheosCoordinator: RheosCoordinator!
+    @Injected() private var deviceDataManager: DeviceDataManager!
+    @Injected() private var fetchGlucoseManager: FetchGlucoseManager!
+    @Injected() private var carbsStorage: CarbsStorage!
 
     private var units: GlucoseUnits = .mgdL
     private var glucoseColorScheme: GlucoseColorScheme = .staticColor
@@ -34,6 +38,7 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
     private var highGlucose: Decimal = 180.0
     private var currentGlucoseTarget: Decimal = 100.0
     private var activeBolusAmount: Double = 0.0
+    private var watchHandoffTimer: Timer?
 
     // Queue for handling Core Data change notifications
     private let queue = DispatchQueue(label: "BaseWatchManagerManager.queue", qos: .utility)
@@ -152,6 +157,12 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
             session.delegate = self
             session.activate()
             self.session = session
+            HandyFreiPhone.bindLibre(self.fetchGlucoseManager.cgmManager)
+            DispatchQueue.main.async { [weak self] in
+                self?.watchHandoffTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+                    self?.checkHandyFreiHandoff()
+                }
+            }
 
             debug(.watchManager, "📱 Phone session setup - isPaired: \(session.isPaired)")
         } else {
@@ -516,6 +527,8 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
             WatchMessageKeys.delta: state.delta ?? "",
             WatchMessageKeys.iob: state.iob ?? "",
             WatchMessageKeys.cob: state.cob ?? "",
+            WatchMessageKeys.insulinHistory: recentInsulinRows(),
+            WatchMessageKeys.mealHistory: recentMealRows(),
             WatchMessageKeys.lastLoopTime: state.lastLoopTime ?? "",
             WatchMessageKeys.glucoseValues: state.glucoseValues.map { value in
                 [
@@ -538,16 +551,42 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
                     "isEnabled": preset.isEnabled
                 ]
             },
+            WatchMessageKeys.mealPresets: HandyFreiPhone.mealPresets().map { preset in
+                [
+                    "id": preset.id,
+                    "name": preset.name,
+                    "carbs": preset.carbs,
+                    "fat": preset.fat,
+                    "protein": preset.protein
+                ]
+            },
             WatchMessageKeys.maxBolus: state.maxBolus,
             WatchMessageKeys.maxCarbs: state.maxCarbs,
             WatchMessageKeys.maxFat: state.maxFat,
             WatchMessageKeys.maxProtein: state.maxProtein,
             WatchMessageKeys.bolusIncrement: state.bolusIncrement,
             WatchMessageKeys.confirmBolusFaster: state.confirmBolusFaster,
+            "fattyMeals": self.settingsManager.settings.fattyMeals,
+            "fattyMealFactor": self.settingsManager.settings.fattyMealFactor,
+            "sweetMeals": self.settingsManager.settings.sweetMeals,
+            "sweetMealFactor": self.settingsManager.settings.sweetMealFactor,
+            "bolusFraction": self.settingsManager.settings.overrideFactor,
             WatchMessageKeys.units: state.units.rawValue,
             WatchMessageKeys.showForecastWatch: state.showForecast,
             WatchMessageKeys.isForecastCone: state.isForecastCone
         ]
+
+        let rheos = rheosCoordinator.watchSnapshot()
+        dictionary[WatchMessageKeys.rheosMode] = rheos.mode
+        dictionary[WatchMessageKeys.rheosChatReply] = rheos.chatReply
+        dictionary[WatchMessageKeys.rheosSuggestions] = rheos.suggestions.map { line in
+            [
+                "id": line.id,
+                "kind": line.kind,
+                "title": line.title,
+                "note": line.note
+            ]
+        }
 
         var forecastData: [String: Any] = [
             WatchMessageKeys.forecastConeMin: state.forecastConeMin,
@@ -561,6 +600,89 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
 
         dictionary[WatchMessageKeys.forecastData] = forecastData
         return dictionary
+    }
+
+    /// Last day of pump events for the watch insulin list. This does not change dosing.
+    private func recentInsulinRows() -> [[String: Any]] {
+        let context = CoreDataStack.shared.newTaskContext()
+        let cutoff = Date().addingTimeInterval(-24 * 3600)
+        var rows: [(date: Date, row: [String: Any])] = []
+        context.performAndWait {
+            let request = PumpEventStored.fetchRequest()
+            request.predicate = NSPredicate(format: "timestamp >= %@", cutoff as NSDate)
+            let events = (try? context.fetch(request)) ?? []
+            for event in events {
+                guard let date = event.timestamp, let type = event.type else { continue }
+                let id = event.id ?? "\(date.timeIntervalSince1970)-\(type)"
+                switch type {
+                case "Bolus", "SMB":
+                    let units = event.bolus?.amount?.doubleValue ?? 0
+                    guard units >= 0.01 else { continue }
+                    let smb = type == "SMB" || event.bolus?.isSMB == true
+                    rows.append((date, [
+                        "id": id, "date": date.timeIntervalSince1970,
+                        "title": smb ? "SMB" : "Bolus",
+                        "detail": String(format: "%.2f U", units),
+                        "isFPU": false
+                    ]))
+                case "TempBasal":
+                    if event.tempBasal?.isScheduledBasal == true { continue }
+                    let rate = event.tempBasal?.rate?.doubleValue ?? 0
+                    let minutes = Int(event.tempBasal?.duration ?? 0)
+                    rows.append((date, [
+                        "id": id, "date": date.timeIntervalSince1970,
+                        "title": "Temp",
+                        "detail": String(format: "%.2f U/h · %d min", rate, minutes),
+                        "isFPU": false
+                    ]))
+                case "PumpSuspend":
+                    rows.append((date, [
+                        "id": id, "date": date.timeIntervalSince1970,
+                        "title": "Stopp", "detail": "Basal aus", "isFPU": false
+                    ]))
+                case "PumpResume":
+                    rows.append((date, [
+                        "id": id, "date": date.timeIntervalSince1970,
+                        "title": "Weiter", "detail": "Basal an", "isFPU": false
+                    ]))
+                default:
+                    continue
+                }
+            }
+        }
+        return rows.sorted { $0.date > $1.date }.prefix(60).map(\.row)
+    }
+
+    /// Last day of meals, including delayed fat-protein rows that are still in the future.
+    private func recentMealRows() -> [[String: Any]] {
+        let context = CoreDataStack.shared.newTaskContext()
+        let cutoff = Date().addingTimeInterval(-24 * 3600)
+        var rows: [(date: Date, row: [String: Any])] = []
+        context.performAndWait {
+            let request = CarbEntryStored.fetchRequest()
+            request.predicate = NSPredicate(format: "date >= %@", cutoff as NSDate)
+            let entries = (try? context.fetch(request)) ?? []
+            for entry in entries {
+                guard let date = entry.date else { continue }
+                let id = entry.id?.uuidString ?? "\(date.timeIntervalSince1970)"
+                if entry.isFPU {
+                    rows.append((date, [
+                        "id": id, "date": date.timeIntervalSince1970,
+                        "title": "FPU",
+                        "detail": String(format: "%.0f g KH, verzögert", entry.carbs),
+                        "isFPU": true
+                    ]))
+                } else if entry.carbs > 0 || entry.fat > 0 || entry.protein > 0 {
+                    rows.append((date, [
+                        "id": id, "date": date.timeIntervalSince1970,
+                        "title": "Mahlzeit",
+                        "detail": String(format: "%.0f g KH · %.0f g Fett · %.0f g Eiweiß", entry.carbs, entry.fat, entry.protein),
+                        "isFPU": false
+                    ]))
+                }
+            }
+        }
+        return rows.sorted { $0.date > $1.date }.prefix(60).map(\.row)
     }
 
     /// Sends the state of type WatchState to the connected Watch
@@ -648,6 +770,38 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
             SimpleLogReporter.appendToWatchLog(logs)
         }
 
+        if message["handyFreiHeartbeat"] != nil || message["handyFreiRunning"] != nil {
+            Task { @MainActor [weak self] in
+                self?.recordHandyFreiWatch(message, reachable: true)
+            }
+            if message["handyFreiPhoneOff"] == nil, message["handyFreiActivate"] == nil, message["handyFreiLog"] == nil {
+                return
+            }
+        }
+        if message["handyFreiPhoneOff"] as? Bool == true {
+            Task { @MainActor in
+                HandyFreiPhone.watchSaysPhoneIsOff()
+            }
+            return
+        }
+        if message["handyFreiActivate"] as? Bool == true {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                HandyFreiPhone.activateFromWatch(
+                    pump: self.deviceDataManager.pumpManager,
+                    cgm: self.fetchGlucoseManager.cgmManager,
+                    storage: self.fileStorage
+                )
+            }
+            return
+        }
+        if message["handyFreiLog"] != nil {
+            Task { @MainActor [weak self] in
+                self?.importHandyFreiLog(message)
+            }
+            return
+        }
+
         Task { @MainActor [weak self] in
             guard let self else { return }
 
@@ -665,9 +819,7 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
                 return
             }
 
-            if let snoozeMinutes = message[WatchMessageKeys.snoozeDuration] as? Int {
-                debug(.watchManager, "📱 Received snooze request from watch: \(snoozeMinutes) minutes")
-                await self.notificationsManager.applySnooze(for: TimeInterval(snoozeMinutes * 60))
+            if await self.consumeCompanionCommand(message) {
                 return
             } else if let bolusAmount = message[WatchMessageKeys.bolus] as? Double,
                       message[WatchMessageKeys.carbs] == nil,
@@ -681,7 +833,14 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
             {
                 let date = Date(timeIntervalSince1970: timestamp)
                 debug(.watchManager, "📱 Received carbs request from watch: \(carbsAmount)g at \(date)")
-                self.handleCarbsRequest(carbsAmount, date)
+                self.handleCarbsRequest(
+                    carbsAmount,
+                    date,
+                    fat: (message[WatchMessageKeys.fat] as? NSNumber)?.doubleValue ?? 0,
+                    protein: (message[WatchMessageKeys.protein] as? NSNumber)?.doubleValue ?? 0,
+                    id: message[WatchMessageKeys.carbID] as? String,
+                    name: message[WatchMessageKeys.mealName] as? String ?? ""
+                )
             } else if let bolusAmount = message[WatchMessageKeys.bolus] as? Double,
                       let carbsAmount = message[WatchMessageKeys.carbs] as? Int,
                       let timestamp = message[WatchMessageKeys.date] as? TimeInterval
@@ -760,8 +919,8 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
                     // Get recommendation from BolusCalculationManager
                     let result = await bolusCalculationManager.handleBolusCalculation(
                         carbs: Decimal(carbs),
-                        useFattyMealCorrection: false,
-                        useSuperBolus: false,
+                        useFattyMealCorrection: message["useFattyMeal"] as? Bool ?? false,
+                        useSuperBolus: message["useSuperBolus"] as? Bool ?? false,
                         lastLoopDate: apsManager.lastLoopDate,
                         minPredBG: minPredBG,
                         simulatedCOB: nil,
@@ -784,17 +943,123 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
     }
 
     func session(_: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
+        if userInfo["handyFreiLog"] != nil {
+            Task { @MainActor [weak self] in
+                self?.importHandyFreiLog(userInfo)
+            }
+        }
         if let logs = userInfo["watchLogs"] as? String {
             SimpleLogReporter.appendToWatchLog(logs)
         }
 
-        if let snoozeMinutes = userInfo[WatchMessageKeys.snoozeDuration] as? Int {
-            debug(.watchManager, "📱 Received snooze userInfo from watch: \(snoozeMinutes) minutes")
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                await self.notificationsManager.applySnooze(for: TimeInterval(snoozeMinutes * 60))
+        Task { @MainActor [weak self] in
+            await self?.consumeCompanionCommand(userInfo)
+        }
+    }
+
+    /// Stores the watch session, then reads the pump's own history before the phone may dose again.
+    @MainActor private func importHandyFreiLog(_ message: [String: Any]) {
+        guard let log = message["handyFreiLog"] as? [[String: Any]] else { return }
+        let final = (message["handyFreiLogFinal"] as? Bool) == true
+            || (message["handyFreiLogFinal"] as? NSNumber)?.boolValue == true
+        let ids = HandyFreiPhone.importLog(log, cgm: fetchGlucoseManager.cgmManager)
+        acknowledgeHandyFreiLog(ids)
+        guard final, HandyFreiPhone.shouldReleaseLoopAfterLog else { return }
+        let cgm = fetchGlucoseManager.cgmManager
+        guard let pump = deviceDataManager.pumpManager else {
+            HandyFreiPhone.finishImport(cgm: cgm)
+            return
+        }
+        pump.ensureCurrentPumpData { _ in
+            Task { @MainActor in
+                HandyFreiPhone.finishImport(cgm: cgm)
             }
         }
+    }
+
+    private func acknowledgeHandyFreiLog(_ ids: [String]) {
+        guard !ids.isEmpty, let session else { return }
+        let message = ["handyFreiLogAck": ids]
+        if session.isReachable {
+            session.sendMessage(message, replyHandler: nil) { _ in
+                session.transferUserInfo(message)
+            }
+        } else {
+            session.transferUserInfo(message)
+        }
+    }
+
+    /// Snooze and Rheos notes from the watch. Bolus and carb messages are left
+    /// for the existing treatment handlers and are never turned into a note.
+    @MainActor private func consumeCompanionCommand(_ message: [String: Any]) async -> Bool {
+        let fields = RheosWatchFields(
+            snoozeMinutes: Self.intValue(message, WatchMessageKeys.snoozeDuration),
+            snoozeStyle: message[WatchMessageKeys.snoozeStyle] as? String,
+            decision: message[WatchMessageKeys.rheosDecision] as? String,
+            kind: message[WatchMessageKeys.rheosKind] as? String,
+            note: message[WatchMessageKeys.rheosNote] as? String,
+            suggestionID: message[WatchMessageKeys.rheosSuggestionID] as? String,
+            chat: message[WatchMessageKeys.rheosChat] as? String,
+            containsBolusOrCarbs: message[WatchMessageKeys.bolus] != nil || message[WatchMessageKeys.carbs] != nil
+        )
+        guard let action = RheosWatchMessages.action(fields) else { return false }
+        switch action {
+        case let .silence(minutes, style):
+            debug(.watchManager, "📱 Watch silence \(minutes) min, style \(style?.rawValue ?? "legacy")")
+            if minutes <= 0 {
+                AlarmSilenceStore.set(nil)
+                await notificationsManager.applySnooze(for: 0)
+            } else {
+                AlarmSilenceStore.set(style)
+                await notificationsManager.applySnooze(for: TimeInterval(minutes * 60))
+            }
+            sendAcknowledgment(
+                toWatch: true,
+                message: minutes <= 0 ? "Alarms on" : "Alarms silenced",
+                ackCode: .genericSuccess
+            )
+        case let .confirm(kind, note, suggestionID):
+            let text = await rheosCoordinator.confirmKind(kind: kind, note: note, suggestionID: suggestionID)
+            sendAcknowledgment(toWatch: true, message: text, ackCode: .genericSuccess)
+        case let .reject(kind, note, suggestionID):
+            let text = rheosCoordinator.reject(kind: kind, note: note, suggestionID: suggestionID)
+            sendAcknowledgment(toWatch: true, message: text, ackCode: .genericSuccess)
+        case let .chat(question):
+            let reply = await rheosCoordinator.replyFromWatch(question: question)
+            sendAcknowledgment(toWatch: true, message: reply, ackCode: .genericSuccess)
+        }
+        pushRheosSnapshot()
+        return true
+    }
+
+    private func pushRheosSnapshot() {
+        guard let session, session.activationState == .activated else { return }
+        let snapshot = rheosCoordinator.watchSnapshot()
+        let message: [String: Any] = [
+            WatchMessageKeys.rheosMode: snapshot.mode,
+            WatchMessageKeys.rheosChatReply: snapshot.chatReply,
+            WatchMessageKeys.rheosSuggestions: snapshot.suggestions.map { line in
+                [
+                    "id": line.id,
+                    "kind": line.kind,
+                    "title": line.title,
+                    "note": line.note
+                ]
+            }
+        ]
+        if session.isReachable {
+            session.sendMessage(message, replyHandler: nil) { _ in
+                session.transferUserInfo(message)
+            }
+        } else {
+            session.transferUserInfo(message)
+        }
+    }
+
+    private static func intValue(_ message: [String: Any], _ key: String) -> Int? {
+        if let value = message[key] as? Int { return value }
+        if let value = message[key] as? NSNumber { return value.intValue }
+        return nil
     }
 
     #if os(iOS)
@@ -807,6 +1072,7 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
     func sessionReachabilityDidChange(_ session: WCSession) {
         debug(.watchManager, "📱 Phone reachability changed: \(session.isReachable)")
 
+        checkHandyFreiHandoff()
         if session.isReachable {
             // Try to send data when connection is established
             Task {
@@ -819,6 +1085,36 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
                 self?.retryConnection()
             }
         }
+    }
+
+    /// Asks a reachable watch whether Handy-frei is still running. A reply, or a pushed heartbeat, can return the sensor.
+    private func checkHandyFreiHandoff() {
+        let cgm = fetchGlucoseManager.cgmManager
+        HandyFreiPhone.bindLibre(cgm)
+        guard HandyFreiPhone.radioIsHandedOff, let session, session.activationState == .activated else { return }
+        guard session.isReachable else {
+            HandyFreiPhone.noteWatch(reachable: false, running: nil, heartbeat: nil, cgm: cgm)
+            return
+        }
+        session.sendMessage(["handyFreiStatusRequest": true], replyHandler: { [weak self] reply in
+            let running = reply["handyFreiRunning"] as? Bool
+            let beat = (reply["handyFreiHeartbeat"] as? NSNumber)?.doubleValue
+            HandyFreiPhone.noteWatch(reachable: true, running: running, heartbeat: beat, cgm: self?.fetchGlucoseManager.cgmManager)
+        }, errorHandler: { [weak self] _ in
+            HandyFreiPhone.noteWatch(reachable: false, running: nil, heartbeat: nil, cgm: self?.fetchGlucoseManager.cgmManager)
+        })
+    }
+
+    private func recordHandyFreiWatch(_ message: [String: Any], reachable: Bool) {
+        let running = message["handyFreiRunning"] as? Bool
+        let beat = (message["handyFreiHeartbeat"] as? NSNumber)?.doubleValue
+            ?? (message["handyFreiHeartbeat"] as? TimeInterval)
+        HandyFreiPhone.noteWatch(
+            reachable: reachable,
+            running: running,
+            heartbeat: beat,
+            cgm: fetchGlucoseManager.cgmManager
+        )
     }
 
     /// Processes bolus requests received from the Watch
@@ -841,49 +1137,42 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
     /// - Parameters:
     ///   - amount: The carbs amount in grams
     ///   - date: Timestamp for the carbs entry
-    private func handleCarbsRequest(_ amount: Int, _ date: Date) {
+    private func handleCarbsRequest(
+        _ amount: Int,
+        _ date: Date,
+        fat: Double = 0,
+        protein: Double = 0,
+        id: String? = nil,
+        name: String = ""
+    ) {
         Task {
-            let context = CoreDataStack.shared.newTaskContext()
-
-            await context.perform {
-                let carbEntry = CarbEntryStored(context: context)
-                carbEntry.id = UUID()
-                carbEntry.carbs = Double(truncating: amount as NSNumber)
-                carbEntry.date = date
-                carbEntry.note = String(localized: "Via Watch", comment: "Note added to carb entry when entered via watch")
-                carbEntry.isFPU = false // set this to false to ensure watch-entered carbs are displayed in main chart
-                carbEntry.isUploadedToNS = false
-                carbEntry.isUploadedToHealth = false
-                carbEntry.isUploadedToTidepool = false
-
-                do {
-                    guard context.hasChanges else {
-                        // Acknowledge failure
-                        self.sendAcknowledgment(
-                            toWatch: false,
-                            message: "Error! Something went wrong when processing your request.",
-                            ackCode: .genericFailure
-                        )
-                        return
-                    }
-                    try context.save()
-                    debug(.watchManager, "📱 Saved carbs from watch: \(amount)g at \(date)")
-
-                    // Acknowledge success
-                    self.sendAcknowledgment(
-                        toWatch: true,
-                        message: String(
-                            localized: "Carbs logged successfully.",
-                            comment: "Success message sent to watch when carbs are logged successfully"
-                        ),
-                        ackCode: .carbsLogged
-                    )
-                } catch {
-                    debug(.watchManager, "❌ Error saving carbs: \(error)")
-
-                    // Acknowledge failure
-                    self.sendAcknowledgment(toWatch: false, message: "Error logging carbs", ackCode: .genericFailure)
-                }
+            let uuid = UUID(uuidString: id ?? "") ?? UUID()
+            let entry = CarbsEntry(
+                id: uuid.uuidString,
+                createdAt: date,
+                actualDate: date,
+                carbs: NSDecimalNumber(value: amount).decimalValue,
+                fat: NSDecimalNumber(value: fat).decimalValue,
+                protein: NSDecimalNumber(value: protein).decimalValue,
+                note: name.isEmpty ? "Via Watch" : name,
+                enteredBy: CarbsEntry.local,
+                isFPU: false,
+                fpuID: fat > 0 || protein > 0 ? uuid.uuidString : nil
+            )
+            do {
+                try await carbsStorage.storeCarbs([entry], areFetchedFromRemote: false)
+                debug(.watchManager, "📱 Saved carbs from watch: \(amount)g at \(date)")
+                self.sendAcknowledgment(
+                    toWatch: true,
+                    message: String(
+                        localized: "Carbs logged successfully.",
+                        comment: "Success message sent to watch when carbs are logged successfully"
+                    ),
+                    ackCode: .carbsLogged
+                )
+            } catch {
+                debug(.watchManager, "❌ Error saving carbs: \(error)")
+                self.sendAcknowledgment(toWatch: false, message: "Error logging carbs", ackCode: .genericFailure)
             }
         }
     }

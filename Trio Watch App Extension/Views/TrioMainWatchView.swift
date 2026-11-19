@@ -4,6 +4,7 @@ import WatchKit
 
 struct TrioMainWatchView: View {
     @State private var state = WatchState()
+    @Environment(\.scenePhase) private var scenePhase
 
     // misc
     @State private var currentPage: Int = 0
@@ -12,7 +13,10 @@ struct TrioMainWatchView: View {
 
     // view visbility
     @State private var showingTreatmentMenuSheet: Bool = false
+    @State private var showingHandyFrei = false
     @State private var showingOverrideSheet: Bool = false
+    @State private var showingInsulinHistory = false
+    @State private var showingMealHistory = false
     // navigation flag for meal bolus combo
     @State private var continueToBolus = false
     @State private var navigationPath = NavigationPath()
@@ -21,6 +25,7 @@ struct TrioMainWatchView: View {
     @State private var selectedTreatment: TreatmentOption?
 
     var isWatchStateDated: Bool {
+        if state.handyFreiRunning { return false }
         // If `lastWatchStateUpdate` is nil, treat as "dated"
         guard let lastUpdateTimestamp = state.lastWatchStateUpdate else {
             return true
@@ -32,6 +37,7 @@ struct TrioMainWatchView: View {
     }
 
     var isSessionUnreachable: Bool {
+        if state.handyFreiRunning { return false }
         guard let session = state.session else {
             return true // No session at all => unreachable
         }
@@ -70,6 +76,11 @@ struct TrioMainWatchView: View {
                         isWatchStateDated: isWatchStateDated || isSessionUnreachable
                     )
 
+                    Button("Handy-frei") { showingHandyFrei = true }
+                        .font(.footnote)
+                        .buttonStyle(.bordered)
+                        .frame(maxHeight: .infinity, alignment: .top)
+
                     if state.showSyncingAnimation {
                         Image(systemName: "iphone.radiowaves.left.and.right")
                             .symbolRenderingMode(.palette)
@@ -93,6 +104,9 @@ struct TrioMainWatchView: View {
                     glucoseValues: state.glucoseValues
                 )
                 .tag(1)
+
+                RheosWatchView(state: state)
+                    .tag(2)
             }
             .onAppear {
                 /// Hard reset variables when main view appears
@@ -102,7 +116,7 @@ struct TrioMainWatchView: View {
             }
             .background(trioBackgroundColor)
             .tabViewStyle(.verticalPage)
-            .digitalCrownRotation($currentPage.doubleBinding(), from: 0, through: 1, by: 1)
+            .digitalCrownRotation($currentPage.doubleBinding(), from: 0, through: 2, by: 1)
             .onChange(of: state.trend) { _, newTrend in
                 withAnimation {
                     updateRotation(for: newTrend)
@@ -110,27 +124,35 @@ struct TrioMainWatchView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    VStack {
-                        Image(systemName: "syringe.fill")
-                            .foregroundStyle(Color.insulin)
-
-                        Text(isWatchStateDated || isSessionUnreachable ? "--" : state.iob ?? "--")
-                            .foregroundStyle(isWatchStateDated ? Color.secondary : Color.white)
-                            .frame(alignment: .leading)
-                            .minimumScaleFactor(0.5)
-                    }.font(.caption2)
+                    Button {
+                        showingInsulinHistory = true
+                    } label: {
+                        VStack {
+                            Image(systemName: "syringe.fill")
+                                .foregroundStyle(Color.insulin)
+                            Text(shownIOB)
+                                .foregroundStyle(isWatchStateDated ? Color.secondary : Color.white)
+                                .frame(alignment: .leading)
+                                .minimumScaleFactor(0.5)
+                        }.font(.caption2)
+                    }
+                    .buttonStyle(.plain)
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
-                    VStack {
-                        Image(systemName: "fork.knife")
-                            .foregroundStyle(Color.orange)
-
-                        Text(isWatchStateDated || isSessionUnreachable ? "--" : state.cob ?? "--")
-                            .foregroundStyle(isWatchStateDated || isSessionUnreachable ? Color.secondary : Color.white)
-                            .frame(alignment: .trailing)
-                            .minimumScaleFactor(0.5)
-                    }.font(.caption2)
+                    Button {
+                        showingMealHistory = true
+                    } label: {
+                        VStack {
+                            Image(systemName: "fork.knife")
+                                .foregroundStyle(Color.orange)
+                            Text(shownCOB)
+                                .foregroundStyle(isWatchStateDated || isSessionUnreachable ? Color.secondary : Color.white)
+                                .frame(alignment: .trailing)
+                                .minimumScaleFactor(0.5)
+                        }.font(.caption2)
+                    }
+                    .buttonStyle(.plain)
                 }
 
                 ToolbarItemGroup(placement: .bottomBar) {
@@ -181,6 +203,15 @@ struct TrioMainWatchView: View {
                     navigationPath.append(NavigationDestinations.acknowledgmentPending)
                 }
             }
+            .sheet(isPresented: $showingHandyFrei) {
+                HandyFreiWatchView(state: state)
+            }
+            .onChange(of: state.mealNeedsBolus) { _, needs in
+                guard needs else { return }
+                state.mealNeedsBolus = false
+                showingHandyFrei = false
+                navigationPath.append(NavigationDestinations.bolusInput)
+            }
             .sheet(isPresented: $showingTempTargetSheet) {
                 TempTargetPresetsView(
                     state: state,
@@ -216,6 +247,8 @@ struct TrioMainWatchView: View {
                         bolusAmount: $state.bolusAmount,
                         confirmationProgress: $state.confirmationProgress
                     )
+                case .mealPresets:
+                    MealPresetListView(state: state)
                 }
             }
             .onChange(of: navigationPath) { _, newPath in
@@ -226,6 +259,48 @@ struct TrioMainWatchView: View {
             }
         }
         .ignoresSafeArea()
+        .sheet(isPresented: $showingInsulinHistory) {
+            WatchHistorySheet(title: "Insulin", lines: insulinLines)
+        }
+        .sheet(isPresented: $showingMealHistory) {
+            WatchHistorySheet(title: "Mahlzeiten", lines: mealLines)
+        }
+        .onAppear {
+            HandyFreiSession.shared.resumeIfNeeded(state)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .inactive || phase == .active || phase == .background {
+                HandyFreiSession.shared.wakeFromBackground()
+            }
+        }
+    }
+
+    private var insulinLines: [WatchHistoryLine] {
+        if state.handyFreiRunning {
+            return HandyFreiSession.shared.insulinHistory(state).map {
+                WatchHistoryLine(id: $0.id, date: $0.date, title: $0.title, detail: $0.detail, isFPU: $0.isFPU)
+            }
+        }
+        return state.phoneInsulinHistory
+    }
+
+    private var mealLines: [WatchHistoryLine] {
+        if state.handyFreiRunning {
+            return HandyFreiSession.shared.mealHistory(state).map {
+                WatchHistoryLine(id: $0.id, date: $0.date, title: $0.title, detail: $0.detail, isFPU: $0.isFPU)
+            }
+        }
+        return state.phoneMealHistory
+    }
+
+    private var shownIOB: String {
+        if state.handyFreiRunning { return state.iob ?? "--" }
+        return isWatchStateDated || isSessionUnreachable ? "--" : (state.iob ?? "--")
+    }
+
+    private var shownCOB: String {
+        if state.handyFreiRunning { return state.cob ?? "--" }
+        return isWatchStateDated || isSessionUnreachable ? "--" : (state.cob ?? "--")
     }
 
     private func updateRotation(for trend: String?) {
@@ -255,6 +330,8 @@ struct TrioMainWatchView: View {
         switch treatment {
         case .meal:
             navigationPath.append(NavigationDestinations.carbsInput)
+        case .savedMeal:
+            navigationPath.append(NavigationDestinations.mealPresets)
         case .bolus:
             // Reset carbs amount when directly going to bolus input
             state.carbsAmount = 0
@@ -263,6 +340,35 @@ struct TrioMainWatchView: View {
             continueToBolus = true // Explicitely set subsequent view navigation
             navigationPath.append(NavigationDestinations.carbsInput)
         }
+    }
+}
+
+struct WatchHistorySheet: View {
+    let title: String
+    let lines: [WatchHistoryLine]
+
+    var body: some View {
+        List {
+            if lines.isEmpty {
+                Text("Keine Einträge der letzten 24 Stunden.")
+                    .font(.footnote)
+            }
+            ForEach(lines) { line in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(line.isFPU ? "FPU \(Self.clock(line.date))" : "\(line.title) \(Self.clock(line.date))")
+                        .font(.headline)
+                    Text(line.detail)
+                        .font(.footnote)
+                        .foregroundStyle(line.isFPU ? Color.orange : Color.secondary)
+                }
+            }
+        }
+        .navigationTitle(title)
+    }
+
+    private static func clock(_ date: Date) -> String {
+        let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
+        return String(format: "%02d:%02d", parts.hour ?? 0, parts.minute ?? 0)
     }
 }
 

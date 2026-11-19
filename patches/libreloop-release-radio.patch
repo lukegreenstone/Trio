@@ -1,0 +1,91 @@
+diff --git a/LibreLoop/LibreLoop/LibreLoopCGMManager/LibreLoopCGMManager.swift b/LibreLoop/LibreLoop/LibreLoopCGMManager/LibreLoopCGMManager.swift
+--- a/LibreLoop/LibreLoop/LibreLoopCGMManager/LibreLoopCGMManager.swift	2026-11-18 19:16:06.919148539 +0000
++++ b/LibreLoop/LibreLoop/LibreLoopCGMManager/LibreLoopCGMManager.swift	2026-11-18 19:16:06.947150002 +0000
+@@ -62,6 +62,11 @@
+     /// the new pairing's handshake. Guards reconnect scheduling.
+     private(set) var isDeleted = false
+ 
++    /// Handy-frei holds the sensor. Reconnect stays off until the phone is allowed back.
++    /// Stored so a relaunch does not connect while the watch session is still active.
++    private(set) var radioHandedToWatch = false
++    static let radioHandoffKey = "org.loopkit.LibreLoop.radioHandedToWatch"
++
+     /// Alert identifier for the sensor-attention alert (replace/ended), routed
+     /// through LoopKit's AlertManager. Separate from the scheduled expiry alerts.
+     static let sensorAttentionAlertID: Alert.AlertIdentifier = "sensorAttention"
+@@ -629,7 +634,7 @@
+             // only fires for an already-paired sensor.
+             if let id = self.state.peripheralID, d.id == id {
+                 llog("ble: didDiscover \(d.id.uuidString) rssi=\(d.rssi) (our sensor advertising)")
+-                if self.monitor == nil {
++                if self.monitor == nil, !self.radioHandedToWatch {
+                     self.scanner.requestConnect(d.peripheral)
+                 }
+             }
+@@ -656,6 +661,7 @@
+ 
+     public init() {
+         self.state = LibreLoopCGMManagerState()
++        radioHandedToWatch = UserDefaults.standard.bool(forKey: Self.radioHandoffKey)
+         observeAppLifecycle()
+         registerDeviceLogForwarding()
+     }
+@@ -838,6 +844,43 @@
+         }
+     }
+ 
++    /// The pairing file reloads the stored hand-off. The setter stays in this file.
++    func refreshRadioHandoffFromStore() {
++        radioHandedToWatch = UserDefaults.standard.bool(forKey: Self.radioHandoffKey)
++    }
++
++    /// Drops this phone's BLE link so the watch can be the Libre 3's one central.
++    /// The sensor is not ended, the keychain item is not deleted, and the saved
++    /// serial, address, and pin stay.
++    public func releaseRadioKeepingPairing() {
++        radioHandedToWatch = true
++        UserDefaults.standard.set(true, forKey: Self.radioHandoffKey)
++        cancelReconnect()
++        monitor?.stop()
++        monitor = nil
++        guard eventListenerTask != nil else {
++            llog("handy-frei: no live central, pairing kept")
++            return
++        }
++        scanner.stopScan()
++        if let id = state.peripheralID,
++           let peripheral = scanner.retrievePeripherals(withIdentifiers: [id]).first {
++            scanner.cancelConnection(peripheral)
++        }
++        llog("handy-frei: released BLE link, pairing kept")
++    }
++
++    /// Lets the phone connect again after the watch hands the sensor back.
++    public func resumeRadioAfterHandoff() {
++        guard radioHandedToWatch || UserDefaults.standard.bool(forKey: Self.radioHandoffKey) else { return }
++        radioHandedToWatch = false
++        UserDefaults.standard.set(false, forKey: Self.radioHandoffKey)
++        llog("handy-frei: phone may connect again")
++        if state.blePIN != nil, state.sensorSerial != nil {
++            scheduleReconnect()
++        }
++    }
++
+     public func delete(completion: @escaping () -> Void) {
+         // The central is shared and outlives this manager, so a deleted manager
+         // must stop driving it — otherwise its event listener + reconnect loop
+diff --git a/LibreLoop/LibreLoop/Pairing/LibreLoopCGMManager+Pairing.swift b/LibreLoop/LibreLoop/Pairing/LibreLoopCGMManager+Pairing.swift
+--- a/LibreLoop/LibreLoop/Pairing/LibreLoopCGMManager+Pairing.swift	2026-11-18 19:16:06.919148539 +0000
++++ b/LibreLoop/LibreLoop/Pairing/LibreLoopCGMManager+Pairing.swift	2026-11-18 19:16:06.947150002 +0000
+@@ -846,6 +846,11 @@
+             llog("reconnect: manager deleted; not scheduling")
+             return
+         }
++        refreshRadioHandoffFromStore()
++        guard !radioHandedToWatch else {
++            llog("reconnect: radio handed to the watch; not scheduling")
++            return
++        }
+         guard monitor == nil else { return }
+         guard state.blePIN != nil, state.sensorSerial != nil else {
+             llog("reconnect: no saved state; not scheduling")

@@ -43,6 +43,43 @@ final class BasePumpHistoryStorage: PumpHistoryStorage, Injectable {
     typealias PumpEvent = PumpEventStored.EventType
     typealias TempType = PumpEventStored.TempType
 
+    /// True when a Handy-frei row already records this bolus or temp basal.
+    private func handyFreiAlreadyStored(
+        _ type: PumpEventStored.EventType,
+        event: NewPumpEvent,
+        in context: NSManagedObjectContext
+    ) -> Bool {
+        guard let dose = event.dose else { return false }
+        let units: Double
+        let types: [String]
+        switch type {
+        case .bolus:
+            units = dose.unitsInDeliverableIncrements
+            types = [PumpEventStored.EventType.bolus.rawValue, PumpEventStored.EventType.smb.rawValue]
+        case .tempBasal:
+            guard event.type == .tempBasal else { return false }
+            units = dose.unitsPerHour
+            types = [PumpEventStored.EventType.tempBasal.rawValue]
+        default:
+            return false
+        }
+        let request = PumpEventStored.fetchRequest()
+        request.predicate = NSPredicate(
+            format: "type IN %@ AND timestamp >= %@ AND timestamp <= %@ AND syncIdentifier BEGINSWITH %@",
+            types,
+            event.date.addingTimeInterval(-180) as NSDate,
+            event.date.addingTimeInterval(180) as NSDate,
+            "handyfrei-"
+        )
+        let rows = (try? context.fetch(request)) ?? []
+        return rows.contains { row in
+            let stored = type == .bolus
+                ? (row.bolus?.amount?.doubleValue ?? -999)
+                : (row.tempBasal?.rate?.doubleValue ?? -999)
+            return abs(stored - units) < 0.051
+        }
+    }
+
     private func roundDose(_ dose: Double, toIncrement increment: Double) -> Decimal {
         let roundedValue = (dose / increment).rounded() * increment
         return Decimal(roundedValue)
@@ -121,6 +158,11 @@ final class BasePumpHistoryStorage: PumpHistoryStorage, Injectable {
                     if match.isMutable, let dose = event.dose {
                         self.updateMutablePumpEvent(match, with: dose)
                     }
+                    continue
+                }
+
+                // The watch already stored this delivery. A later pump sync must not count it again.
+                if self.handyFreiAlreadyStored(storedType, event: event, in: context) {
                     continue
                 }
 

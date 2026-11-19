@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>AppGroupID</key>
+	<string>$(APP_GROUP_ID)</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Die Uhr verbindet sich mit dem bestehenden Libre-Sensor und der bestehenden Medtrum-Pumpe, solange Handy-frei läuft.</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>Eine Workout-Sitzung hält die Uhr wach, während Handy-frei Sensor und Pumpe steuert.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>Eine Workout-Sitzung hält die Uhr wach, während Handy-frei Sensor und Pumpe steuert.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>bluetooth-central</string>
+	</array>
+	<key>WKBackgroundModes</key>
+	<array>
+		<string>workout-processing</string>
+	</array>
+</dict>
+</plist>

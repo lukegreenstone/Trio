@@ -8,6 +8,7 @@ struct TreatmentMenuView: View {
 
     // Define in array to achieve custom order of treatment options
     let treatments: [TreatmentOption] = [
+        .savedMeal,
         .meal, // First
         .bolus, // Second
         .mealBolusCombo // Third
@@ -53,7 +54,8 @@ struct TreatmentMenuView: View {
                     }) {
                         HStack(spacing: 10) {
                             switch treatment {
-                            case .meal:
+                            case .meal,
+                                 .savedMeal:
                                 mealIcon
                                 Text(treatment.displayName)
                             case .bolus:
@@ -100,12 +102,14 @@ enum TreatmentOption: String, CaseIterable, Identifiable {
     case mealBolusCombo
     case meal
     case bolus
+    case savedMeal
 
     var displayName: String {
         switch self {
         case .mealBolusCombo: return String(localized: "Meal & Bolus", comment: "Watch App Treatment Option 'Meal & Bolus'")
         case .meal: return String(localized: "Meal", comment: "Watch App Treatment Option 'Meal'")
         case .bolus: return String(localized: "Bolus", comment: "Watch App Treatment Option 'Bolus'")
+        case .savedMeal: return "Gespeicherte Mahlzeit"
         }
     }
 }

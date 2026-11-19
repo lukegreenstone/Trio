@@ -1,6 +1,15 @@
 import Foundation
 import SwiftUI
+import Trio
 import WatchConnectivity
+
+struct WatchHistoryLine: Identifiable, Equatable {
+    var id: String
+    var date: Date
+    var title: String
+    var detail: String
+    var isFPU: Bool
+}
 
 /// WatchState manages the communication between the Watch app and the iPhone app using WatchConnectivity.
 /// It handles glucose data synchronization and sending treatment requests (bolus, carbs) to the phone.
@@ -24,6 +33,8 @@ import WatchConnectivity
     var maxYAxisValue: Decimal = 200
     var cob: String? = "--"
     var iob: String? = "--"
+    var phoneInsulinHistory: [WatchHistoryLine] = []
+    var phoneMealHistory: [WatchHistoryLine] = []
     var lastLoopTime: String? = "--"
     var overridePresets: [OverridePresetWatch] = []
     var tempTargetPresets: [TempTargetPresetWatch] = []
@@ -35,6 +46,39 @@ import WatchConnectivity
     var proteinAmount: Int = 0
     var bolusAmount: Double = 0.0
     var confirmationProgress: Double = 0.0
+    /// Last Handy-frei note from the iPhone. The watch does not connect by itself.
+    var handyFreiStatus = "Handy-frei ist aus."
+    var handyFreiReadyToConfirm = false
+    var handyFreiRunning = false
+    var handyFreiAlarm = ""
+    var handyFreiBleAddress = ""
+    var handyFreiSensorPeripheralID = ""
+    var handyFreiBlePIN = ""
+    var handyFreiPhase5 = ""
+    var handyFreiPumpSerial = ""
+    var handyFreiSessionToken = ""
+    var handyFreiBackupToken = ""
+    var handyFreiGlucose: Int?
+    var handyFreiGlucoseDate: Date?
+    /// When the last key snapshot arrived. A start without the phone uses this copy as-is.
+    var handyFreiSnapshotAt: Date?
+    /// Last loop time, determination, and pump result. Sensor packets do not overwrite this.
+    var handyFreiLoopLine = ""
+    var handyFreiFiles: [String: String] = [:]
+    var handyFreiBasal: [Double] = []
+    var handyFreiISF: [Double] = []
+    var handyFreiCarbRatio: [Double] = []
+    var mealPresets: [MealPresetWatch] = []
+    var showingMealPresets = false
+    var mealNeedsBolus = false
+    var pendingMealName = ""
+    var fattyMeals = false
+    var fattyMealFactor: Decimal = 0.7
+    var sweetMeals = false
+    var sweetMealFactor: Decimal = 1
+    var bolusFraction: Decimal = 0.8
+    var useReducedBolus = false
+    var useSuperBolus = false
 
     // Safety limits
     var maxBolus: Decimal = 10
@@ -53,6 +97,12 @@ import WatchConnectivity
     var forecastConeMin: [Double] = []
     var forecastConeMax: [Double] = []
     var forecastLines: [String: [Double]] = [:] // "iob" / "cob" / "uam" / "zt" -> values
+
+    /// Rheos notes pushed by the phone. They never include a bolus amount.
+    var rheosMode: String = "aus"
+    var rheosSuggestions: [WatchRheosSuggestion] = []
+    var rheosChatReply: String = ""
+    var silenceUntil: Date?
 
     // Acknowlegement handling
     var showCommsAnimation: Bool = false
@@ -188,7 +238,45 @@ import WatchConnectivity
     }
 
     /// Handles incoming messages from the paired iPhone when Phone is in the foreground
+    func session(_ session: WCSession, didReceiveMessage message: [String: Any], replyHandler: @escaping ([String: Any]) -> Void) {
+        if message["handyFreiStatusRequest"] as? Bool == true {
+            replyHandler([
+                "handyFreiRunning": handyFreiRunning,
+                "handyFreiHeartbeat": Date().timeIntervalSince1970
+            ])
+            return
+        }
+        replyHandler([:])
+        self.session(session, didReceiveMessage: message)
+    }
+
+    func reportHandyFreiHeartbeat() {
+        guard let session, session.activationState == .activated, session.isReachable else { return }
+        session.sendMessage([
+            "handyFreiHeartbeat": Date().timeIntervalSince1970,
+            "handyFreiRunning": handyFreiRunning
+        ], replyHandler: nil) { _ in }
+    }
+
     func session(_: WCSession, didReceiveMessage message: [String: Any]) {
+        if (message["handyFreiSendLog"] as? Bool) == true || (message["handyFreiSendLog"] as? NSNumber)?.boolValue == true {
+            HandyFreiSession.shared.flushOutbox(final: true)
+            return
+        }
+        if let ack = message["handyFreiLogAck"] as? [String] {
+            HandyFreiSession.shared.noteAck(ack)
+            return
+        }
+        if let ack = message["handyFreiLogAck"] as? [Any] {
+            HandyFreiSession.shared.noteAck(ack.compactMap { $0 as? String })
+            return
+        }
+        if message["handyFrei"] != nil {
+            Task { await WatchLogger.shared.log("⌚️ Watch received Handy-frei") }
+            absorbHandyFrei(message)
+            return
+        }
+
         Task {
             await WatchLogger.shared.log("⌚️ Watch received data: \(message)")
         }
@@ -221,11 +309,98 @@ import WatchConnectivity
             return
         }
 
+        if absorbRheosUpdate(message) { return }
+
         handleIncomingWatchStatePayload(message)
     }
 
     func session(_: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
+        if (userInfo["handyFreiSendLog"] as? Bool) == true || (userInfo["handyFreiSendLog"] as? NSNumber)?.boolValue == true {
+            HandyFreiSession.shared.flushOutbox(final: true)
+            return
+        }
+        if let ack = userInfo["handyFreiLogAck"] as? [String] {
+            HandyFreiSession.shared.noteAck(ack)
+            return
+        }
+        if let ack = userInfo["handyFreiLogAck"] as? [Any] {
+            HandyFreiSession.shared.noteAck(ack.compactMap { $0 as? String })
+            return
+        }
+        if userInfo["handyFrei"] != nil {
+            absorbHandyFrei(userInfo)
+            return
+        }
+        if absorbRheosUpdate(userInfo) { return }
         handleIncomingWatchStatePayload(userInfo)
+    }
+
+    /// Snapshot from the iPhone. Secrets stay in memory for the reconnect and are not written to the log.
+    private func absorbHandyFrei(_ message: [String: Any]) {
+        guard let handyFrei = message["handyFrei"] as? [String: Any] else { return }
+        let note = handyFrei["note"] as? String ?? "Handy-frei."
+        let shadow = handyFrei["shadow"] as? String ?? ""
+        let kind = handyFrei["kind"] as? String
+        DispatchQueue.main.async {
+            self.handyFreiStatus = [note, shadow].filter { !$0.isEmpty }.joined(separator: " ")
+            if let snapshot = handyFrei["snapshot"] as? [String: Any] {
+                self.handyFreiReadyToConfirm = true
+                self.handyFreiSnapshotAt = Date()
+                self.handyFreiBleAddress = snapshot["bleAddress"] as? String ?? ""
+                self.handyFreiSensorPeripheralID = snapshot["sensorPeripheralID"] as? String ?? ""
+                self.handyFreiBlePIN = snapshot["blePIN"] as? String ?? ""
+                self.handyFreiPhase5 = snapshot["phase5RawKey"] as? String ?? ""
+                self.handyFreiPumpSerial = snapshot["pumpSerial"] as? String ?? ""
+                    self.handyFreiSessionToken = snapshot["sessionToken"] as? String ?? ""
+                    self.handyFreiBackupToken = snapshot["backupSessionToken"] as? String ?? ""
+                let files = Self.stringMap(snapshot["loopFiles"])
+                if !files.isEmpty { self.handyFreiFiles = files }
+                let basal = Self.doubles(snapshot["rheosBasal"])
+                let isf = Self.doubles(snapshot["rheosISF"])
+                let carbRatio = Self.doubles(snapshot["rheosCarbRatio"])
+                if !basal.isEmpty { self.handyFreiBasal = basal }
+                if !isf.isEmpty { self.handyFreiISF = isf }
+                if !carbRatio.isEmpty { self.handyFreiCarbRatio = carbRatio }
+                let presets = Self.mealPresets(from: snapshot["mealPresets"])
+                if !presets.isEmpty { self.mealPresets = presets }
+                if let maxBolus = snapshot["maxBolus"] as? NSNumber, maxBolus.doubleValue > 0 {
+                    self.maxBolus = maxBolus.decimalValue
+                }
+                let meal = HandyFreiLoop.mealSettings(self.handyFreiFiles)
+                self.fattyMeals = meal.fatty
+                self.fattyMealFactor = meal.fattyFactor
+                self.sweetMeals = meal.sweet
+                self.sweetMealFactor = meal.sweetFactor
+                self.bolusFraction = meal.fraction
+                HandyFreiSession.HandyFreiDisk.saveSnapshot(self)
+            }
+            if kind == "watch-owns" {
+                if self.handyFreiRunning {
+                    self.restartHandyFreiFromCache()
+                } else {
+                    self.startHandyFrei()
+                }
+            }
+        }
+    }
+
+    /// A Rheos snapshot sent on its own, without the glucose `watchState` wrapper.
+    /// Bolus and carb payloads are never treated as Rheos updates.
+    private func absorbRheosUpdate(_ message: [String: Any]) -> Bool {
+        let hasRheos = message[WatchMessageKeys.rheosMode] != nil
+            || message[WatchMessageKeys.rheosChatReply] != nil
+            || message[WatchMessageKeys.rheosSuggestions] != nil
+        guard hasRheos,
+              message[WatchMessageKeys.watchState] == nil,
+              message[WatchMessageKeys.bolus] == nil,
+              message[WatchMessageKeys.carbs] == nil
+        else { return false }
+        DispatchQueue.main.async {
+            self.applyRheosFields(message)
+            self.publishWatchFace()
+            self.showSyncingAnimation = false
+        }
+        return true
     }
 
     /// Shared path for watch-state payloads from either delegate method.
@@ -282,6 +457,7 @@ import WatchConnectivity
             }
 
             if session.isReachable {
+                self.reportHandyFreiHeartbeat()
                 self.forceConditionalWatchStateUpdate()
 
                 // reset input amounts
@@ -481,6 +657,13 @@ import WatchConnectivity
             self.cob = cob
         }
 
+        if let insulin = message[WatchMessageKeys.insulinHistory] as? [[String: Any]] {
+            phoneInsulinHistory = Self.historyLines(insulin)
+        }
+        if let meals = message[WatchMessageKeys.mealHistory] as? [[String: Any]] {
+            phoneMealHistory = Self.historyLines(meals)
+        }
+
         if let lastLoopTime = message[WatchMessageKeys.lastLoopTime] as? String {
             self.lastLoopTime = lastLoopTime
         }
@@ -522,6 +705,14 @@ import WatchConnectivity
             }
         }
 
+        if let mealData = message[WatchMessageKeys.mealPresets] as? [[String: Any]] {
+            let parsed = Self.mealPresets(from: mealData)
+            if !parsed.isEmpty {
+                mealPresets = parsed
+                HandyFreiSession.HandyFreiDisk.saveSnapshot(self)
+            }
+        }
+
         if let tempTargetData = message[WatchMessageKeys.tempTargetPresets] as? [[String: Any]] {
             tempTargetPresets = tempTargetData.compactMap { data in
                 guard let name = data["name"] as? String,
@@ -530,6 +721,12 @@ import WatchConnectivity
                 return TempTargetPresetWatch(name: name, isEnabled: isEnabled)
             }
         }
+
+        if let fatty = message["fattyMeals"] as? Bool { fattyMeals = fatty }
+        if let factor = message["fattyMealFactor"] as? NSNumber { fattyMealFactor = factor.decimalValue }
+        if let sweet = message["sweetMeals"] as? Bool { sweetMeals = sweet }
+        if let factor = message["sweetMealFactor"] as? NSNumber { sweetMealFactor = factor.decimalValue }
+        if let fraction = message["bolusFraction"] as? NSNumber { bolusFraction = fraction.decimalValue }
 
         if let maxBolusValue = message[WatchMessageKeys.maxBolus] {
             if let decimalValue = (maxBolusValue as? NSNumber)?.decimalValue {
@@ -584,5 +781,187 @@ import WatchConnectivity
             forecastConeMax = forecastPayload[WatchMessageKeys.forecastConeMax] as? [Double] ?? []
             forecastLines = forecastPayload[WatchMessageKeys.forecastLines] as? [String: [Double]] ?? [:]
         }
+
+        applyRheosFields(message)
+        publishWatchFace()
+    }
+
+    func stageMeal(_ preset: MealPresetWatch) {
+        let carbCap = max(0, NSDecimalNumber(decimal: maxCarbs).intValue)
+        let fatCap = max(0, NSDecimalNumber(decimal: maxFat).intValue)
+        let proteinCap = max(0, NSDecimalNumber(decimal: maxProtein).intValue)
+        carbsAmount = min(carbCap, Int(preset.carbs.rounded()))
+        fatAmount = min(fatCap, Int(preset.fat.rounded()))
+        proteinAmount = min(proteinCap, Int(preset.protein.rounded()))
+        pendingMealName = preset.name
+        bolusAmount = 0
+    }
+
+    private static func historyLines(_ rows: [[String: Any]]) -> [WatchHistoryLine] {
+        rows.compactMap { row in
+            guard let title = row["title"] as? String else { return nil }
+            let stamp = (row["date"] as? NSNumber)?.doubleValue ?? 0
+            guard stamp > 0 else { return nil }
+            return WatchHistoryLine(
+                id: row["id"] as? String ?? "\(stamp)-\(title)",
+                date: Date(timeIntervalSince1970: stamp),
+                title: title,
+                detail: row["detail"] as? String ?? "",
+                isFPU: (row["isFPU"] as? NSNumber)?.boolValue ?? (row["isFPU"] as? Bool ?? false)
+            )
+        }
+    }
+
+    private static func doubles(_ value: Any?) -> [Double] {
+        if let numbers = value as? [NSNumber] { return numbers.map(\.doubleValue) }
+        if let numbers = value as? [Double] { return numbers }
+        return []
+    }
+
+    static func stringMap(_ value: Any?) -> [String: String] {
+        if let map = value as? [String: String] { return map }
+        guard let any = value as? [String: Any] else { return [:] }
+        var out: [String: String] = [:]
+        for (key, item) in any {
+            if let text = item as? String {
+                out[key] = text
+            }
+        }
+        return out
+    }
+
+    static func mealPresets(from value: Any?) -> [MealPresetWatch] {
+        guard let rows = value as? [[String: Any]] else { return [] }
+        return rows.compactMap { row in
+            let name = row["name"] as? String ?? ""
+            let carbs = (row["carbs"] as? NSNumber)?.doubleValue ?? 0
+            guard !name.isEmpty || carbs > 0 else { return nil }
+            return MealPresetWatch(
+                id: row["id"] as? String ?? name,
+                name: name.isEmpty ? "Mahlzeit" : name,
+                carbs: carbs,
+                fat: (row["fat"] as? NSNumber)?.doubleValue ?? 0,
+                protein: (row["protein"] as? NSNumber)?.doubleValue ?? 0
+            )
+        }
+    }
+
+    /// The main bubble reads these fields. During Handy-frei they come from the watch, not the phone.
+    func applyHandyFreiDisplay(mgdl: Int, iob: Double, cob: Double, loopLine: String, loopAgeMinutes: Int) {
+        let now = Date()
+        handyFreiGlucose = mgdl
+        handyFreiGlucoseDate = now
+        handyFreiLoopLine = loopLine
+        currentGlucose = "\(mgdl)"
+        let previous = glucoseValues.last
+        if let previous {
+            let minutes = max(now.timeIntervalSince(previous.date) / 60, 0.1)
+            let deltaValue = Double(mgdl) - previous.glucose
+            let perFive = deltaValue / minutes * 5
+            delta = String(format: "%+.0f", deltaValue)
+            trend = Self.handyFreiTrend(perFive)
+        }
+        glucoseValues.append((date: now, glucose: Double(mgdl), color: currentGlucoseColorString.toColor()))
+        if glucoseValues.count > 36 {
+            glucoseValues.removeFirst(glucoseValues.count - 36)
+        }
+        self.iob = String(format: "%.1f", iob)
+        self.cob = String(format: "%.0f", cob)
+        lastLoopTime = "\(max(0, loopAgeMinutes)) min"
+        lastWatchStateUpdate = now.timeIntervalSince1970
+        publishWatchFace()
+    }
+
+    private static func handyFreiTrend(_ perFive: Double) -> String {
+        switch perFive {
+        case 15...: return "DoubleUp"
+        case 10 ..< 15: return "SingleUp"
+        case 5 ..< 10: return "FortyFiveUp"
+        case -5 ..< 5: return "Flat"
+        case -10 ..< -5: return "FortyFiveDown"
+        case -15 ..< -10: return "SingleDown"
+        default: return "DoubleDown"
+        }
+    }
+
+    private func publishWatchFace() {
+        let readingDate = glucoseValues.max(by: { $0.date < $1.date })?.date
+            ?? lastWatchStateUpdate.map { Date(timeIntervalSince1970: $0) }
+            ?? Date()
+        WatchFacePublisher.publish(
+            glucose: currentGlucose,
+            trend: trend ?? "",
+            readingDate: readingDate,
+            rheosMode: rheosMode
+        )
+    }
+
+    func applyRheosFields(_ message: [String: Any]) {
+        if let mode = message[WatchMessageKeys.rheosMode] as? String, !mode.isEmpty {
+            rheosMode = mode
+        }
+        if let reply = message[WatchMessageKeys.rheosChatReply] as? String {
+            rheosChatReply = reply
+        }
+        if let rows = message[WatchMessageKeys.rheosSuggestions] as? [[String: Any]] {
+            rheosSuggestions = rows.compactMap { row in
+                guard let id = row["id"] as? String, let kind = row["kind"] as? String else { return nil }
+                return WatchRheosSuggestion(
+                    id: id,
+                    kind: kind,
+                    title: row["title"] as? String ?? kind,
+                    note: row["note"] as? String ?? ""
+                )
+            }
+        }
+    }
+}
+
+struct WatchRheosSuggestion: Identifiable, Equatable {
+    var id: String
+    var kind: String
+    var title: String
+    var note: String
+}
+
+struct MealPresetWatch: Identifiable, Equatable, Codable {
+    var id: String
+    var name: String
+    var carbs: Double
+    var fat: Double
+    var protein: Double
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case carbs
+        case fat
+        case protein
+    }
+
+    init(id: String, name: String, carbs: Double, fat: Double, protein: Double) {
+        self.id = id
+        self.name = name
+        self.carbs = carbs
+        self.fat = fat
+        self.protein = protein
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? "Mahlzeit"
+        carbs = try container.decodeIfPresent(Double.self, forKey: .carbs) ?? 0
+        fat = try container.decodeIfPresent(Double.self, forKey: .fat) ?? 0
+        protein = try container.decodeIfPresent(Double.self, forKey: .protein) ?? 0
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(carbs, forKey: .carbs)
+        try container.encode(fat, forKey: .fat)
+        try container.encode(protein, forKey: .protein)
     }
 }

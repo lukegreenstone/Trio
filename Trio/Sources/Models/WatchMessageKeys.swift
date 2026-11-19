@@ -37,12 +37,19 @@ enum WatchMessageKeys {
     static let delta = "delta"
     static let iob = "iob"
     static let cob = "cob"
+    static let insulinHistory = "insulinHistory"
+    static let mealHistory = "mealHistory"
     static let lastLoopTime = "lastLoopTime"
     static let glucoseValues = "glucoseValues"
     static let minYAxisValue = "minYAxisValue"
     static let maxYAxisValue = "maxYAxisValue"
     static let overridePresets = "overridePresets"
     static let tempTargetPresets = "tempTargetPresets"
+    static let mealPresets = "mealPresets"
+    static let fat = "fat"
+    static let protein = "protein"
+    static let mealName = "mealName"
+    static let carbID = "carbID"
 
     // Limits and Settings Keys
     static let maxBolus = "maxBolus"
@@ -54,6 +61,18 @@ enum WatchMessageKeys {
 
     // Notification Actions
     static let snoozeDuration = "snoozeDuration"
+    /// `vibrateOnly` or `fullySilent`. Absent means the older full mute of non-urgent alarms.
+    static let snoozeStyle = "snoozeStyle"
+
+    // Rheos. These notes never carry a bolus amount. Bolus stays on `bolus`.
+    static let rheosMode = "rheosMode"
+    static let rheosSuggestions = "rheosSuggestions"
+    static let rheosDecision = "rheosDecision"
+    static let rheosKind = "rheosKind"
+    static let rheosNote = "rheosNote"
+    static let rheosSuggestionID = "rheosSuggestionID"
+    static let rheosChat = "rheosChat"
+    static let rheosChatReply = "rheosChatReply"
 
     // Forecast
     static let showForecastWatch = "showForecastWatch"

@@ -12,6 +12,10 @@ struct CurrentGlucoseView: View {
     var currentGlucoseTarget: Decimal
     let glucoseColorScheme: GlucoseColorScheme
     let glucose: [GlucoseStored] // This contains the last two glucose values, no matter if its manual or a cgm reading
+    /// Newer than the stored pair when the CGM sent a 1-minute sample the store did not keep.
+    var liveDate: Date? = nil
+    var liveMgdl: Int? = nil
+    var liveDirection: BloodGlucose.Direction? = nil
 
     /// Drives the outer ring.
     var cgmProgress: DeviceLifecycleProgress?
@@ -129,9 +133,9 @@ struct CurrentGlucoseView: View {
                     .zIndex(1)
             }
         }
-        .onChange(of: glucose.last?.directionEnum) {
+        .onChange(of: shownDirection) {
             withAnimation {
-                switch glucose.last?.directionEnum {
+                switch shownDirection {
                 case .doubleUp,
                      .singleUp,
                      .tripleUp:
@@ -160,13 +164,41 @@ struct CurrentGlucoseView: View {
         .accessibilityLabel(Text(bobbleAccessibilityLabel))
     }
 
-    private var delta: String {
-        guard glucose.count >= 2 else {
-            return "--"
+    /// The value on the bubble. A live CGM sample wins when it is newer than Core Data.
+    private var shownMgdl: Int16? {
+        if let liveMgdl, let liveDate, liveDate > (glucose.last?.date ?? .distantPast) {
+            return Int16(liveMgdl)
         }
+        return glucose.last?.glucose
+    }
 
-        var lastGlucose = Decimal(glucose.last?.glucose ?? 0)
-        var secondLastGlucose = Decimal(glucose.first?.glucose ?? 0)
+    private var shownDate: Date? {
+        if let liveDate, liveDate > (glucose.last?.date ?? .distantPast) {
+            return liveDate
+        }
+        return glucose.last?.date
+    }
+
+    private var shownDirection: BloodGlucose.Direction? {
+        if let liveDate, liveDate > (glucose.last?.date ?? .distantPast) {
+            return liveDirection ?? glucose.last?.directionEnum
+        }
+        return glucose.last?.directionEnum
+    }
+
+    private var delta: String {
+        let current: Decimal
+        let previous: Decimal
+        if let liveMgdl, let liveDate, liveDate > (glucose.last?.date ?? .distantPast), let stored = glucose.last?.glucose {
+            current = Decimal(liveMgdl)
+            previous = Decimal(stored)
+        } else {
+            guard glucose.count >= 2 else { return "--" }
+            current = Decimal(glucose.last?.glucose ?? 0)
+            previous = Decimal(glucose.first?.glucose ?? 0)
+        }
+        var lastGlucose = current
+        var secondLastGlucose = previous
         if units == .mmolL {
             lastGlucose = lastGlucose.asMmolL
             secondLastGlucose = secondLastGlucose.asMmolL
@@ -177,7 +209,7 @@ struct CurrentGlucoseView: View {
 
     /// Spoken trend from the CGM direction arrow (which is otherwise image-only).
     private var trendDescription: String? {
-        switch glucose.last?.directionEnum {
+        switch shownDirection {
         case .doubleUp,
              .tripleUp:
             return String(localized: "rising quickly", comment: "Accessibility: glucose trend")
@@ -214,7 +246,7 @@ struct CurrentGlucoseView: View {
     /// One combined VoiceOver description for the bobble, e.g.
     /// "Glucose 79 mg/dL, in range, falling, delta -2, 1 minute ago".
     private var bobbleAccessibilityLabel: String {
-        guard let glucoseValue = glucose.last?.glucose, isReadingFresh else {
+        guard let glucoseValue = shownMgdl, isReadingFresh else {
             return String(localized: "Glucose unavailable", comment: "Accessibility: no fresh glucose")
         }
         let valueString = glucoseValue == 400
@@ -226,7 +258,7 @@ struct CurrentGlucoseView: View {
         if delta != "--" {
             parts.append(String(localized: "delta", comment: "Accessibility: glucose delta") + " \(delta)")
         }
-        parts.append(TimeAgoFormatter.minutesAgoAccessible(from: glucose.last?.date))
+        parts.append(TimeAgoFormatter.minutesAgoAccessible(from: shownDate))
         // Fold in the sensor-lifecycle tag (warmup countdown, "expired", "stabilizing") so
         // it is spoken; the visual tag is a child that the ignore above would otherwise drop.
         if let tag = tagLabel, !trendIsDownward, !tag.text.isEmpty {
@@ -237,7 +269,7 @@ struct CurrentGlucoseView: View {
 
     @ViewBuilder private func bobbleContent() -> some View {
         HStack {
-            if let glucoseValue = glucose.last?.glucose, isReadingFresh {
+            if let glucoseValue = shownMgdl, isReadingFresh {
                 let displayGlucose = units == .mgdL
                     ? Decimal(glucoseValue).description
                     : Decimal(glucoseValue).formattedAsMmolL
@@ -252,7 +284,7 @@ struct CurrentGlucoseView: View {
         }
         if isReadingFresh {
             HStack {
-                let minutesAgoString = TimeAgoFormatter.minutesAgo(from: glucose.last?.date)
+                let minutesAgoString = TimeAgoFormatter.minutesAgo(from: shownDate)
                 Group {
                     Text(minutesAgoString)
                     Text(delta)
@@ -269,7 +301,7 @@ struct CurrentGlucoseView: View {
     /// masked to dashes. Handles warmup + sensor failure naturally: no
     /// fresh data → no number on the bobble.
     private var isReadingFresh: Bool {
-        guard let date = glucose.last?.date else { return false }
+        guard let date = shownDate else { return false }
         return Date().timeIntervalSince(date) < 12 * 60
     }
 

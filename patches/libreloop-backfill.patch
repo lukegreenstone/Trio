@@ -1,0 +1,243 @@
+diff --git a/LibreLoop/LibreLoop/LibreLoopCGMManager/LibreLoopCGMManager.swift b/LibreLoop/LibreLoop/LibreLoopCGMManager/LibreLoopCGMManager.swift
+index 2d92a4e..c286cc1 100644
+--- a/LibreLoop/LibreLoop/LibreLoopCGMManager/LibreLoopCGMManager.swift
++++ b/LibreLoop/LibreLoop/LibreLoopCGMManager/LibreLoopCGMManager.swift
+@@ -467,9 +467,24 @@ public final class LibreLoopCGMManager: CGMManager {
+     /// ATT 0xFD command rejection) doesn't re-attempt every ~60s for the whole
+     /// session. Reset when the monitor is cleared.
+     var backfillFailuresThisSession: Int = 0
+-    /// Max backfill attempts per BLE session before giving up until reconnect.
++    /// Kept so older logs stay readable. A failed request is retried on the
++    /// next reading instead of stopping for the rest of the session.
+     static let maxBackfillFailuresPerSession = 3
+ 
++    /// True while a historical request is on the wire. Stops a second request
++    /// from stacking on every minute reading.
++    var backfillRequestInFlight: Bool = false
++
++    /// History pages that arrived before `activatedAt` was known.
++    var heldHistoricalPages: [HistoricalReadingPage] = []
++
++    /// Shown on the Libre settings screen.
++    public internal(set) var lastBackfillAt: Date?
++    public internal(set) var lastBackfillCount: Int = 0
++    public internal(set) var lastBackfillResult: String? {
++        didSet { notifyStateObservers() }
++    }
++
+     /// Set of lifeCounts we've forwarded as backfill (historical or clinical)
+     /// during the current BLE session. Used to suppress clinical samples that
+     /// overlap historical and vice versa, on top of the realtime-overlap
+diff --git a/LibreLoop/LibreLoop/Pairing/LibreLoopCGMManager+Pairing.swift b/LibreLoop/LibreLoop/Pairing/LibreLoopCGMManager+Pairing.swift
+index 927a46d..dde25d2 100644
+--- a/LibreLoop/LibreLoop/Pairing/LibreLoopCGMManager+Pairing.swift
++++ b/LibreLoop/LibreLoop/Pairing/LibreLoopCGMManager+Pairing.swift
+@@ -246,9 +246,15 @@ extension LibreLoopCGMManager {
+     ///   may have missed. Combined with the embedded harvest these two
+     ///   passes fully close the post-reconnect gap.
+     func requestBackfillIfNeeded(currentLifeCount: UInt16) {
+-        guard !hasRequestedBackfillThisSession else { return }
++        let watermark = state.lastHistoricalLifeCount ?? 0
++        let gap: UInt16 = currentLifeCount > watermark ? currentLifeCount &- watermark : 0
++        // More than 6 minutes missing: ask again even inside the same BLE session.
++        let gapNeedsFill = watermark > 0 && gap > 6
++        if backfillRequestInFlight { return }
++        if hasRequestedBackfillThisSession && !gapNeedsFill { return }
+         guard let monitor else { return }
+         hasRequestedBackfillThisSession = true
++        backfillRequestInFlight = true
+         let from = backfillStartLifeCount(currentLifeCount: currentLifeCount)
+         // Clinical backfill is per-minute; covering a multi-hour disconnect at
+         // 1-min resolution floods Loop with points. Limit clinical to a recent
+@@ -259,20 +265,22 @@ extension LibreLoopCGMManager {
+             ? currentLifeCount &- recentClinicalWindow
+             : from
+         Task { [weak self, weak monitor] in
+-            guard let monitor else { return }
++            guard let monitor else {
++                self?.backfillRequestInFlight = false
++                self?.hasRequestedBackfillThisSession = false
++                return
++            }
++            self?.noteBackfill(result: "requested from life count \(from)", added: 0)
+             do {
+                 try await monitor.requestHistoricalBackfill(fromLifeCount: from)
+             } catch {
+                 guard let self else { return }
++                self.backfillRequestInFlight = false
+                 self.backfillFailuresThisSession += 1
+-                llog("backfill request failed (\(self.backfillFailuresThisSession)/\(Self.maxBackfillFailuresPerSession)): \(String(describing: error))")
+-                if self.backfillFailuresThisSession < Self.maxBackfillFailuresPerSession {
+-                    self.hasRequestedBackfillThisSession = false   // retry on next reading
+-                } else {
+-                    llog("backfill giving up for this session after \(self.backfillFailuresThisSession) failures; will retry on reconnect")
+-                    // leave hasRequestedBackfillThisSession = true so we stop
+-                    // hammering the sensor (and churning) every ~60s.
+-                }
++                self.hasRequestedBackfillThisSession = false
++                let message = "failed: \(error.localizedDescription)"
++                llog("backfill request failed (\(self.backfillFailuresThisSession)): \(String(describing: error)); will retry on the next reading")
++                self.noteBackfill(result: message, added: 0)
+                 return
+             }
+             // Wait for the historical stream to drain before issuing the
+@@ -307,8 +315,12 @@ extension LibreLoopCGMManager {
+                     let isLast = (i == backoffs.count - 1)
+                     let prefix = isLast ? "clinical backfill failed after \(i + 1) attempts" : "clinical backfill attempt \(i + 1) failed, will retry"
+                     llog("\(prefix): \(String(describing: error))")
++                    if isLast {
++                        self.noteBackfill(result: "clinical failed: \(error.localizedDescription)", added: 0)
++                    }
+                 }
+             }
++            self.backfillRequestInFlight = false
+ 
+             // Pass 2: wait 22 min then re-request historical from the
+             // current watermark. The sensor commits 5-min historical
+@@ -325,6 +337,7 @@ extension LibreLoopCGMManager {
+                 try await followUpMonitor.requestHistoricalBackfill(fromLifeCount: followUpFrom)
+             } catch {
+                 llog("backfill pass 2 failed: \(String(describing: error))")
++                self.noteBackfill(result: "failed: \(error.localizedDescription)", added: 0)
+             }
+         }
+     }
+@@ -471,7 +484,11 @@ extension LibreLoopCGMManager {
+         // stall realtime entirely). Bumping it here means a reconnect
+         // backfill only covers what we actually missed.
+         let priorWatermark = updated.lastHistoricalLifeCount ?? 0
+-        if sample.lifeCount > priorWatermark {
++        let jump: UInt16 = sample.lifeCount > priorWatermark ? sample.lifeCount &- priorWatermark : 0
++        // A hole longer than 6 minutes must keep the old watermark. Moving it
++        // to the new live reading made the retry, and the 22-minute second
++        // pass, ask only for the last few minutes.
++        if (priorWatermark == 0 || jump <= 6), sample.lifeCount > priorWatermark {
+             updated.lastHistoricalLifeCount = sample.lifeCount
+         }
+         // Back-derive activation timestamp from the sensor's own age counter
+@@ -521,6 +538,7 @@ extension LibreLoopCGMManager {
+             updated.firstReadingAt = sample.date
+         }
+         setState(updated)
++        flushHeldHistoricalPages()
+ 
+         notifyStateObservers()
+ 
+@@ -631,8 +649,41 @@ extension LibreLoopCGMManager {
+         // the post-historical clinical-request scheduler to detect when
+         // the historical stream has drained.
+         lastHistoricalPageAt = Date()
++        guard state.activatedAt != nil else {
++            heldHistoricalPages.append(page)
++            llog("holding historical page until activatedAt is known (lifeCount \(page.startLifeCount)..\(page.endLifeCount))")
++            return
++        }
++        forwardHistoricalPage(page)
++    }
++
++    func noteBackfill(result: String, added: Int) {
++        let apply = {
++            self.lastBackfillCount += added
++            self.lastBackfillAt = Date()
++            self.lastBackfillResult = added > 0 ? "stored \(self.lastBackfillCount) points" : result
++            self.notifyStateObservers()
++        }
++        if Thread.isMainThread {
++            apply()
++        } else {
++            DispatchQueue.main.async(execute: apply)
++        }
++    }
++
++    private func flushHeldHistoricalPages() {
++        guard state.activatedAt != nil, !heldHistoricalPages.isEmpty else { return }
++        let pages = heldHistoricalPages
++        heldHistoricalPages.removeAll()
++        llog("forwarding \(pages.count) held historical page(s)")
++        for page in pages {
++            forwardHistoricalPage(page)
++        }
++    }
++
++    private func forwardHistoricalPage(_ page: HistoricalReadingPage) {
+         guard let activatedAt = state.activatedAt else {
+-            llog("backfill page received before activatedAt known; deferring")
++            heldHistoricalPages.append(page)
+             return
+         }
+         let serial = state.sensorSerial ?? "unknown"
+@@ -688,6 +739,7 @@ extension LibreLoopCGMManager {
+             if droppedBackfillDup > 0 { suffixParts.append("\(droppedBackfillDup) backfill-dup") }
+             let suffix = suffixParts.isEmpty ? "" : " (dropped \(suffixParts.joined(separator: ", ")))"
+             llog("forwarded \(newSamples.count) \(sourceLabel) backfill samples to Loop: lifeCount \(page.startLifeCount)..\(page.endLifeCount), dates \(firstDate)..\(lastDate), mgdl=\(values)\(suffix)")
++            noteBackfill(result: "stored", added: newSamples.count)
+         } else if droppedRealtimeDup + droppedBackfillDup > 0 {
+             llog("dropped all \(droppedRealtimeDup + droppedBackfillDup) \(sourceLabel) backfill sample(s) in page lifeCount \(page.startLifeCount)..\(page.endLifeCount) (realtime-dup=\(droppedRealtimeDup), backfill-dup=\(droppedBackfillDup))")
+         }
+@@ -778,6 +830,7 @@ extension LibreLoopCGMManager {
+         )
+         backfillForwardedLifeCounts.insert(lifeCount)
+         llog("forwarded clinical \(kind) sample to Loop: \(mgdl) mg/dL lifeCount=\(lifeCount) sampleDate=\(date.timeIntervalSince1970)")
++        noteBackfill(result: "stored", added: 1)
+         delegateQueue?.async { [weak self] in
+             guard let self else { return }
+             self.cgmManagerDelegate?.cgmManager(self, hasNew: .newData([sample]))
+diff --git a/LibreLoop/LibreLoopUI/Views/LibreLoopSettingsView.swift b/LibreLoop/LibreLoopUI/Views/LibreLoopSettingsView.swift
+index 1c85e67..c57b6e7 100644
+--- a/LibreLoop/LibreLoopUI/Views/LibreLoopSettingsView.swift
++++ b/LibreLoop/LibreLoopUI/Views/LibreLoopSettingsView.swift
+@@ -156,6 +156,24 @@ struct LibreLoopSettingsView: View {
+             || viewModel.region != nil
+             || viewModel.pairedWith != nil
+         if hasAny {
++            Section(LocalizedString("Backfill", comment: "Libre historical backfill status")) {
++                LabeledContent(
++                    LocalizedString("Last backfill", comment: "When the last backfill request finished"),
++                    value: viewModel.lastBackfillAt?.formatted(date: .abbreviated, time: .standard)
++                        ?? LocalizedString("none yet", comment: "No backfill has run")
++                )
++                .font(.footnote)
++                LabeledContent(
++                    LocalizedString("Points", comment: "How many backfill glucose points were forwarded"),
++                    value: String(viewModel.lastBackfillCount)
++                )
++                .font(.footnote)
++                if let result = viewModel.lastBackfillResult {
++                    Text(result)
++                        .font(.footnote)
++                        .textSelection(.enabled)
++                }
++            }
+             Section(LocalizedString("Debug Info", comment: "Settings section: debug info")) {
+                 if let serial = viewModel.sensorSerial {
+                     LabeledContent(LocalizedString("Serial", comment: "Sensor serial row label"), value: serial)
+@@ -681,6 +699,9 @@ final class LibreLoopSettingsViewModel: ObservableObject, LibreLoopStateObserver
+     @Published private(set) var region: String?
+     @Published private(set) var pairedWith: String?
+     @Published private(set) var minuteByMinuteForwardingEnabled: Bool
++    @Published private(set) var lastBackfillAt: Date?
++    @Published private(set) var lastBackfillCount: Int
++    @Published private(set) var lastBackfillResult: String?
+ 
+     init(cgmManager: LibreLoopCGMManager) {
+         self.cgmManager = cgmManager
+@@ -703,6 +724,9 @@ final class LibreLoopSettingsViewModel: ObservableObject, LibreLoopStateObserver
+         self.region = cgmManager.state.region.map(Self.regionName)
+         self.pairedWith = cgmManager.pairedWith
+         self.minuteByMinuteForwardingEnabled = cgmManager.state.experimentalMinuteByMinuteForwarding
++        self.lastBackfillAt = cgmManager.lastBackfillAt
++        self.lastBackfillCount = cgmManager.lastBackfillCount
++        self.lastBackfillResult = cgmManager.lastBackfillResult
+     }
+ 
+     /// Region codes as DiaBLE names them, with the raw code kept for reports.
+@@ -769,6 +793,9 @@ final class LibreLoopSettingsViewModel: ObservableObject, LibreLoopStateObserver
+             self.region = state.region.map(Self.regionName)
+             self.pairedWith = manager.pairedWith
+             self.minuteByMinuteForwardingEnabled = state.experimentalMinuteByMinuteForwarding
++            self.lastBackfillAt = manager.lastBackfillAt
++            self.lastBackfillCount = manager.lastBackfillCount
++            self.lastBackfillResult = manager.lastBackfillResult
+         }
+     }
+ }

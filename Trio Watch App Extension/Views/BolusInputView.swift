@@ -8,7 +8,7 @@ struct BolusInputView: View {
     @Binding var navigationPath: NavigationPath
     @State private var bolusAmount = 0.0
 
-    let state: WatchState
+    @Bindable var state: WatchState
 
     @FocusState private var isCrownFocused: Bool
 
@@ -114,6 +114,18 @@ struct BolusInputView: View {
 
                     Spacer()
 
+                    if state.carbsAmount > 0 || state.fatAmount > 0 || state.proteinAmount > 0 {
+                        Text("KH \(state.carbsAmount) g · F \(state.fatAmount) g · E \(state.proteinAmount) g")
+                            .font(.footnote)
+                    }
+                    if state.fattyMeals {
+                        Toggle("Reduzierter Bolus", isOn: $state.useReducedBolus)
+                            .font(.footnote)
+                    }
+                    if state.sweetMeals {
+                        Toggle("Super Bolus", isOn: $state.useSuperBolus)
+                            .font(.footnote)
+                    }
                     if bolusAmount > 0.0 && bolusAmount >= effectiveBolusLimit {
                         Text("Bolus Limit Reached!")
                             .font(.footnote)
@@ -165,6 +177,8 @@ struct BolusInputView: View {
             }
         }
         // Add onChange to update bolus amount when recommendation changes
+        .onChange(of: state.useReducedBolus) { _, _ in state.requestBolusRecommendation() }
+        .onChange(of: state.useSuperBolus) { _, _ in state.requestBolusRecommendation() }
         .onChange(of: state.recommendedBolus) { oldValue, newValue in
             // Only update if user hasn't modified the value OR if recommendation hasn't changed
             if bolusAmount == 0 || oldValue != newValue {

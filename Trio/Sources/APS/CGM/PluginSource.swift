@@ -18,7 +18,10 @@ final class PluginSource: GlucoseSource {
     let cgmProgressHighlight = CurrentValueSubject<DeviceLifecycleProgress?, Never>(nil)
 
     var cgmManager: CGMManagerUI? {
-        didSet { publishCGMStatus() }
+        didSet {
+            publishCGMStatus()
+            publishLibreLoopDisplayReading()
+        }
     }
 
     var cgmHasValidSensorSession: Bool = false
@@ -32,6 +35,7 @@ final class PluginSource: GlucoseSource {
         cgmManager?.cgmManagerDelegate = self
         // didSet doesn't fire from the defining class's own init.
         publishCGMStatus()
+        publishLibreLoopDisplayReading()
     }
 
     /// Republishes the manager's lifecycle/highlight to the subjects.
@@ -226,6 +230,46 @@ extension PluginSource: CGMManagerDelegate {
             )
 
             self.publishCGMStatus()
+            self.publishLibreLoopDisplayReading(from: cgmManager)
+        }
+    }
+
+    /// Libre 3 keeps every minute in `latestSample` (the settings "Last Reading")
+    /// and only forwards about one reading in five through `hasNew`. This copies
+    /// that same sample onto the home bubble. It is not stored and not given to the loop.
+    func publishLibreLoopDisplayReading(from manager: CGMManager? = nil) {
+        guard let libre = (manager ?? cgmManager) as? LibreLoopCGMManager,
+              let sample = libre.latestSample,
+              sample.valueMgDL.isFinite,
+              sample.valueMgDL > 0
+        else { return }
+        let mgdl = Int(sample.valueMgDL.rounded())
+        let reading = BloodGlucose(
+            sgv: mgdl,
+            direction: Self.displayDirection(sample.trend),
+            date: Decimal(Int(sample.date.timeIntervalSince1970 * 1000)),
+            dateString: sample.date,
+            glucose: mgdl,
+            type: "sgv"
+        )
+        glucoseManager?.latestLiveGlucose.send(reading)
+    }
+
+    /// Same arrows a forwarded Libre reading gets via `BloodGlucose.Direction.init(trendType:)`.
+    private static func displayDirection(_ trend: LibreLoopGlucoseSample.Trend) -> BloodGlucose.Direction {
+        switch trend {
+        case .notDetermined:
+            return .notComputable
+        case .fallingQuickly:
+            return .singleDown
+        case .falling:
+            return .fortyFiveDown
+        case .stable:
+            return .flat
+        case .rising:
+            return .fortyFiveUp
+        case .risingQuickly:
+            return .singleUp
         }
     }
 

@@ -50,6 +50,9 @@ extension Stat.StateModel {
             resumeEvents
         ) = try await fetchHourlyInsulinRecords(on: tddTaskContext)
 
+        let basalProfile = resolver?.resolve(FileStorage.self)?
+            .retrieve(OpenAPS.Settings.basalProfile, as: [BasalProfileEntry].self) ?? []
+
         // MARK: - Process Data on Background Context
 
         var hourlyStats: [TDDStats] = []
@@ -74,6 +77,7 @@ extension Stat.StateModel {
                     tempBasals: fetchedTempBasals,
                     suspendEvents: fetchedSuspendEvents,
                     resumeEvents: fetchedResumeEvents,
+                    basalProfile: basalProfile,
                     calendar: calendar
                 )
             }
@@ -199,6 +203,7 @@ extension Stat.StateModel {
         tempBasals: [TempBasalStored],
         suspendEvents: [PumpEventStored],
         resumeEvents: [PumpEventStored],
+        basalProfile: [BasalProfileEntry],
         calendar: Calendar
     ) -> [TDDStats] {
         // Dictionary to store insulin amounts indexed by hour
@@ -234,6 +239,8 @@ extension Stat.StateModel {
             ($0.pumpEvent?.timestamp ?? Date.distantPast) < ($1.pumpEvent?.timestamp ?? Date.distantPast)
         }
 
+        var tempIntervals: [(start: Date, end: Date)] = []
+
         // Process each temporary basal event
         for (index, tempBasal) in sortedTempBasals.enumerated() {
             guard let timestamp = tempBasal.pumpEvent?.timestamp,
@@ -263,6 +270,7 @@ extension Stat.StateModel {
 
             // Convert duration from minutes to hours for insulin calculation
             let durationInHours = actualDurationInMinutes / 60.0
+            tempIntervals.append((timestamp, timestamp.addingTimeInterval(max(0, actualDurationInMinutes) * 60)))
 
             // A finalized row reports what the pump actually delivered (suspensions and
             // pulse quantization included), so spread that total over the unsuspended
@@ -289,6 +297,29 @@ extension Stat.StateModel {
                 insulinByHour: &insulinByHour,
                 calendar: calendar
             )
+        }
+
+        // Hours with no temp basal and no suspension still delivered the profile rate.
+        // Week and month already include that rate inside TDDStored.total.
+        let now = Date()
+        let windowStart = calendar.date(byAdding: .day, value: -20, to: now) ?? now
+        let resumeTimes = resumeEvents.compactMap(\.timestamp).sorted()
+        var suspensions: [(start: Date, end: Date)] = []
+        for suspend in suspendEvents {
+            guard let start = suspend.timestamp else { continue }
+            let end = resumeTimes.first { $0 > start } ?? now
+            if end > start { suspensions.append((start, end)) }
+        }
+        let scheduled = ScheduledBasalInference.scheduledInsulinByHour(
+            windowStart: windowStart,
+            now: now,
+            profile: basalProfile,
+            tempIntervals: tempIntervals,
+            suspensions: suspensions,
+            calendar: calendar
+        )
+        for (hour, units) in scheduled where units > 0 {
+            insulinByHour[hour, default: 0] += units
         }
 
         // MARK: - Convert Results to TDDStats Array

@@ -307,7 +307,14 @@ final class GlucoseAlertCoordinator: Injectable {
             interruptionLevel: alarm.overridesSilenceAndDND ? .critical : .timeSensitive,
             sound: alarm.playsSound ? .sound(name: alarm.soundFilename) : nil
         )
-        trioAlertManager.issueAlert(alert)
+        let mgdl = NSDecimalNumber(decimal: valueMgDL).doubleValue
+        if alarm.type.isReadingDriven {
+            AlarmSilenceContext.perform(glucoseMgdl: mgdl) {
+                trioAlertManager.issueAlert(alert)
+            }
+        } else {
+            trioAlertManager.issueAlert(alert)
+        }
     }
 
     private func retractIfFiring(_ alarm: GlucoseAlert) {

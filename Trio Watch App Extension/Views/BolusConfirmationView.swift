@@ -32,6 +32,13 @@ struct BolusConfirmationView: View {
                             .bold()
                             .foregroundStyle(.orange)
                     }.padding(.horizontal)
+                    if state.fatAmount > 0 || state.proteinAmount > 0 {
+                        HStack {
+                            Text("F \(state.fatAmount) g · E \(state.proteinAmount) g")
+                                .font(.footnote)
+                            Spacer()
+                        }.padding(.horizontal)
+                    }
                 }
 
                 HStack {
@@ -84,7 +91,10 @@ struct BolusConfirmationView: View {
                         state.sendCarbsRequest(state.carbsAmount, Date())
                         state.carbsAmount = 0 // reset carbs in state
                     }
-                    state.sendBolusRequest(Decimal(bolusAmount))
+                    let cap = Double(truncating: state.maxBolus as NSNumber)
+                    if bolusAmount > 0 {
+                        state.sendBolusRequest(Decimal(min(bolusAmount, cap)))
+                    }
                     bolusAmount = 0 // reset bolus in state
                     confirmationProgress = 0 // reset auth progress
                     navigationPath.append(NavigationDestinations.acknowledgmentPending)

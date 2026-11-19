@@ -35,6 +35,7 @@ extension Home {
         @State var showSnoozeSheet: Bool = false
         @State var showManualGlucose: Bool = false
         @State var showReleaseNotes: Bool = false
+        @State var showRheosSheet: Bool = false
         @State var alarmsSnoozeUntil: Date = .distantPast
         @ObservedObject var releaseNotesService = ReleaseNotesService.shared
         // Pull-down-to-force-loop (see HomeRootView+Refresh.swift)
@@ -155,6 +156,14 @@ extension Home {
             return value + String(localized: " U/hr", comment: "Unit per hour with space")
         }
 
+        private func openTreatmentsAfterRheos() {
+            guard RheosMealHandoff.consumeOpen() else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                resolver.resolve(Router.self)?.mainModalScreen.send(.treatmentView)
+                debug(.default, "Rheos opened Treatments after the home sheet closed")
+            }
+        }
+
         private func basalRateAccessibilityLabel(_ rate: Decimal) -> String {
             let value = Formatter.decimalFormatterWithTwoFractionDigits
                 .string(from: NSDecimalNumber(decimal: rate)) ?? "\(rate)"
@@ -245,6 +254,12 @@ extension Home {
                 }
                 // fixed slot: header state changes never reflow the zones below
                 .frame(height: HomeLayout.headerHeight)
+
+                RheosModeBanner()
+                Button("Rheos") { showRheosSheet = true }
+                    .font(.footnote.weight(.semibold))
+                    .buttonStyle(.bordered)
+                    .padding(.bottom, 4)
 
                 mealPanel()
                     .frame(height: HomeLayout.mealSlotHeight)
@@ -579,6 +594,9 @@ extension Home {
                     },
                     isPresented: $showQuickPickTreatmentsPicker
                 )
+            }
+            .sheet(isPresented: $showRheosSheet, onDismiss: openTreatmentsAfterRheos) {
+                RheosHomeSheet(resolver: resolver)
             }
             .alert(
                 String(

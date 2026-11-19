@@ -212,6 +212,7 @@ extension Treatments {
             guard isActive else {
                 return
             }
+            applyRheosMealDraft()
 
             debug(.bolusState, "subscribe fired")
             setupBolusStateConcurrently()
@@ -689,6 +690,21 @@ extension Treatments {
                     self.determinationFailureMessage = parseAuthenticationError(from: error)
                 }
             }
+        }
+
+        /// Rheos writes this draft, then opens this screen. The user still saves.
+        private func applyRheosMealDraft() {
+            guard let draft = RheosMealDraftStore.take() else { return }
+            carbs = Decimal(draft.carbs)
+            fat = Decimal(draft.fat)
+            protein = Decimal(draft.protein)
+            if note.isEmpty {
+                note = String(draft.note.prefix(180))
+            }
+            if settingsManager.settings.useFPUconversion == false, fat > 0 || protein > 0 {
+                note += " Fett und Protein sind eingetragen. Trio zeigt die Felder, wenn die Fett/Protein-Umrechnung an ist."
+            }
+            debug(.bolusState, "Rheos meal draft applied: \(carbs) g carbs, \(fat) g fat, \(protein) g protein")
         }
 
         // MARK: - Carbs
